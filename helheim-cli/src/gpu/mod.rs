@@ -74,9 +74,28 @@ pub fn gpu_work_real(size: usize, device_id: usize) -> Result<()> {
     let stream = dev.default_stream();
     println!("CUDA initialized in {:.2?}", start_init.elapsed());
 
-    let ptx_fp16 = cudarc::nvrtc::Ptx::from_src(include_str!("matmul_fp16.ptx"));
-    let module = dev.load_module(ptx_fp16)?;
-    let f = module.load_function("matmul_fp16")?;
+    // Detect compute capability — Blackwell (sm_100+) needs FP32 fallback
+    let cc_major = unsafe {
+        let mut val = 0i32;
+        cudarc::driver::sys::cuDeviceGetAttribute(
+            &mut val,
+            cudarc::driver::sys::CUdevice_attribute_enum::CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR,
+            device_id as i32,
+        );
+        val
+    };
+    println!("GPU {} compute capability: sm_{}x", device_id, cc_major);
+
+    let (module, kernel_name): (_, &str) = if cc_major >= 10 {
+        println!("Blackwell detected — using FP32 tiled kernel (CUDA 12.4 limit)");
+        let ptx = compile_ptx(PTX_SRC)
+            .map_err(|e| anyhow::anyhow!("NVRTC FP32 compile failed: {:?}", e))?;
+        (dev.load_module(ptx)?, "matmul")
+    } else {
+        let ptx_fp16 = cudarc::nvrtc::Ptx::from_src(include_str!("matmul_fp16.ptx"));
+        (dev.load_module(ptx_fp16)?, "matmul_fp16")
+    };
+    let f = module.load_function(kernel_name)?;
 
     let m = size;
     let n = size;
