@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Helheim AI &mdash; Private AI Inference API</title>
+    <meta name="description" content="OpenAI-compatible API powered by your own GPU cluster. Private, fast, affordable. Hosted in the Netherlands.">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        body { background: #09090b; color: #f0f0f3; font-family: 'Inter', sans-serif; }
+        code, .mono { font-family: 'JetBrains Mono', monospace; }
+        .glow { text-shadow: 0 0 30px rgba(139, 92, 246, 0.4); }
+        .glow-green { text-shadow: 0 0 20px rgba(34, 197, 94, 0.4); }
+        .card { background: rgba(12, 12, 20, 0.9); border: 1px solid rgba(139, 92, 246, 0.15); transition: all 0.3s; }
+        .card:hover { border-color: rgba(139, 92, 246, 0.4); transform: translateY(-2px); }
+        .card-highlight { border-color: rgba(139, 92, 246, 0.5); box-shadow: 0 0 30px rgba(139, 92, 246, 0.1); }
+        .btn-primary { background: linear-gradient(135deg, #8b5cf6, #8b5cf6); transition: all 0.2s; }
+        .btn-primary:hover { background: linear-gradient(135deg, #818cf8, #a78bfa); transform: translateY(-1px); box-shadow: 0 4px 20px rgba(139, 92, 246, 0.3); }
+        .code-block { background: #0d1117; border: 1px solid #21262d; border-radius: 8px; }
+        .code-block .line-num { color: #484f58; user-select: none; }
+        .code-block .keyword { color: #ff7b72; }
+        .code-block .string { color: #a5d6ff; }
+        .code-block .comment { color: #8b949e; }
+        .code-block .func { color: #d2a8ff; }
+        .code-block .var { color: #ffa657; }
+        .live-dot { width: 8px; height: 8px; background: #22c55e; border-radius: 50%; display: inline-block; animation: blink 2s infinite; }
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+        .gradient-text { background: linear-gradient(135deg, #818cf8, #c084fc, #f472b6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .hero-grid { background-image: radial-gradient(rgba(139, 92, 246, 0.1) 1px, transparent 1px); background-size: 32px 32px; }
+        .tab-active { color: #a5b4fc; border-bottom: 2px solid #8b5cf6; }
+        .tab-inactive { color: #6b7280; border-bottom: 2px solid transparent; }
+        .tab-inactive:hover { color: #9ca3af; }
+        .model-tag { font-size: 0.65rem; padding: 2px 6px; border-radius: 4px; font-weight: 600; text-transform: uppercase; }
+    </style>
+</head>
+<body class="min-h-screen">
+    <canvas id="starfield" style="position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-events:none;opacity:0.2;"></canvas>
+    <!-- Nav -->
+    <nav class="px-6 py-4 backdrop-blur-sm sticky top-0 z-50" style="background:rgba(9,9,11,0.88);position:relative;z-index:50">
+        <div class="max-w-6xl mx-auto flex justify-between items-center">
+            <div class="flex items-center gap-3">
+                <div class="w-9 h-9 bg-violet-600 rounded-xl flex items-center justify-center font-bold text-sm shadow-lg shadow-violet-600/20">H</div>
+                <span class="text-xl font-bold">Helheim<span class="text-violet-400">.ai</span></span>
+            </div>
+            <div class="flex items-center gap-6">
+                <a href="#models" class="text-sm text-zinc-400 hover:text-white transition">Models</a>
+                <a href="/docs" class="text-sm text-zinc-400 hover:text-white transition">Docs</a>
+                <a href="#pricing" class="text-sm text-zinc-400 hover:text-white transition">Pricing</a>
+                <a href="/login" class="text-sm text-zinc-400 hover:text-white transition">Inloggen</a>
+                <a href="/login" class="text-sm bg-violet-600 text-white px-4 py-1.5 rounded-lg hover:bg-violet-500 transition font-medium">Gratis Starten</a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero -->
+    <section class="hero-grid relative overflow-hidden" style="position:relative;z-index:1">
+        <div class="max-w-6xl mx-auto px-6 pt-24 pb-20">
+            <div class="flex items-center gap-2 justify-center mb-6">
+                <span class="live-dot"></span>
+                <span class="text-sm text-green-400 font-medium" id="hero-status">Service actief</span>
+                <span class="text-sm text-gray-600 mx-2">|</span>
+                <span class="text-sm text-gray-400">Hosted in Nederland · GDPR compliant</span>
+            </div>
+            <h1 class="text-6xl font-extrabold text-center mb-6 leading-tight">
+                Private AI API<br><span class="gradient-text">OpenAI-Compatible</span>
+            </h1>
+            <p class="text-xl text-gray-400 text-center mb-10 max-w-2xl mx-auto leading-relaxed">
+                Drop-in replacement for OpenAI. 18 models, GPU-accelerated, hosted in the Netherlands. Your data stays private. GDPR compliant.
+            </p>
+            <div class="flex justify-center gap-4 mb-16">
+                <a href="/demo" class="btn-primary px-8 py-3.5 rounded-xl font-semibold text-white inline-flex items-center gap-2">
+                    Probeer Demo <span class="text-white/60">&rarr;</span>
+                </a>
+                <a href="/login" class="px-8 py-3.5 rounded-xl font-semibold border border-violet-500/30 text-violet-300 hover:bg-violet-500/10 inline-block transition">
+                    Get API Key
+                </a>
+                <a href="/docs" class="px-8 py-3.5 rounded-xl font-semibold border border-white/10 text-gray-300 hover:bg-white/5 inline-block transition">
+                    View Docs
+                </a>
+            </div>
+
+            <!-- Code example -->
+            <div class="max-w-2xl mx-auto code-block p-5 text-sm mono">
+                <div class="flex items-center gap-2 mb-4 pb-3 border-b border-white/5">
+                    <button onclick="showTab('python')" id="tab-python" class="tab-active pb-1 text-xs cursor-pointer">Python</button>
+                    <button onclick="showTab('curl')" id="tab-curl" class="tab-inactive pb-1 text-xs cursor-pointer">curl</button>
+                    <button onclick="showTab('js')" id="tab-js" class="tab-inactive pb-1 text-xs cursor-pointer">JavaScript</button>
+                </div>
+                <pre id="code-python"><span class="keyword">from</span> openai <span class="keyword">import</span> OpenAI
+
+client = OpenAI(
+    <span class="var">base_url</span>=<span class="string">"https://api.helheim-ai.dev/v1"</span>,
+    <span class="var">api_key</span>=<span class="string">"YOUR_API_KEY"</span>
+)
+
+response = client.chat.completions.<span class="func">create</span>(
+    <span class="var">model</span>=<span class="string">"qwen"</span>,
+    <span class="var">messages</span>=[{<span class="string">"role"</span>: <span class="string">"user"</span>, <span class="string">"content"</span>: <span class="string">"Hello!"</span>}]
+)
+<span class="func">print</span>(response.choices[0].message.content)</pre>
+                <pre id="code-curl" style="display:none"><span class="comment"># Works with any HTTP client</span>
+curl https://api.helheim-ai.dev/v1/chat/completions \
+  -H <span class="string">"Authorization: Bearer YOUR_API_KEY"</span> \
+  -H <span class="string">"Content-Type: application/json"</span> \
+  -d <span class="string">'{
+    "model": "qwen",
+    "messages": [{"role": "user", "content": "Hello!"}],
+    "max_tokens": 256
+  }'</span></pre>
+                <pre id="code-js" style="display:none"><span class="keyword">import</span> OpenAI <span class="keyword">from</span> <span class="string">"openai"</span>;
+
+<span class="keyword">const</span> client = <span class="keyword">new</span> <span class="func">OpenAI</span>({
+    <span class="var">baseURL</span>: <span class="string">"https://api.helheim-ai.dev/v1"</span>,
+    <span class="var">apiKey</span>: <span class="string">"YOUR_API_KEY"</span>
+});
+
+<span class="keyword">const</span> response = <span class="keyword">await</span> client.chat.completions.<span class="func">create</span>({
+    <span class="var">model</span>: <span class="string">"qwen"</span>,
+    <span class="var">messages</span>: [{<span class="var">role</span>: <span class="string">"user"</span>, <span class="var">content</span>: <span class="string">"Hello!"</span>}]
+});
+console.<span class="func">log</span>(response.choices[0].message.content);</pre>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features -->
+    <section class="max-w-6xl mx-auto px-6 py-20" style="position:relative;z-index:1">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div class="card rounded-2xl p-8">
+                <div class="w-10 h-10 bg-violet-500/10 rounded-lg flex items-center justify-center mb-4 text-xl">&#x1F504;</div>
+                <h3 class="text-lg font-semibold mb-2">Drop-in Replacement</h3>
+                <p class="text-gray-400 text-sm leading-relaxed">Same API as OpenAI. Change one line of code &mdash; your <code class="text-violet-300 text-xs">base_url</code> &mdash; and you're running on private hardware.</p>
+            </div>
+            <div class="card rounded-2xl p-8">
+                <div class="w-10 h-10 bg-green-500/10 rounded-lg flex items-center justify-center mb-4 text-xl">&#x26A1;</div>
+                <h3 class="text-lg font-semibold mb-2">GPU Accelerated</h3>
+                <p class="text-gray-400 text-sm leading-relaxed">Multi-GPU CUDA inference with 28GB VRAM. RTX 3060 + RTX 5060 Ti. Models load from RAM in &lt;1 second.</p>
+            </div>
+            <div class="card rounded-2xl p-8">
+                <div class="w-10 h-10 bg-purple-500/10 rounded-lg flex items-center justify-center mb-4 text-xl">&#x1F512;</div>
+                <h3 class="text-lg font-semibold mb-2">Private &amp; GDPR</h3>
+                <p class="text-gray-400 text-sm leading-relaxed">Hosted in the Netherlands. Your data never leaves our network. No logging, no tracking, no third-party cloud.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Models -->
+    <section id="models" class="max-w-6xl mx-auto px-6 py-20" style="position:relative;z-index:1">
+        <h2 class="text-3xl font-bold text-center mb-3">Model Library</h2>
+        <p class="text-gray-400 text-center mb-4">All models available for inference via the API. GGUF format, GPU-accelerated.</p>
+        <div class="flex justify-center gap-3 mb-10">
+            <button onclick="filterModels('all')" id="filter-all" class="text-xs px-4 py-1.5 rounded-full bg-violet-600/20 text-violet-300 cursor-pointer">All</button>
+            <button onclick="filterModels('general')" id="filter-general" class="text-xs px-4 py-1.5 rounded-full bg-white/5 text-gray-400 cursor-pointer">General</button>
+            <button onclick="filterModels('code')" id="filter-code" class="text-xs px-4 py-1.5 rounded-full bg-white/5 text-gray-400 cursor-pointer">Code</button>
+            <button onclick="filterModels('reasoning')" id="filter-reasoning" class="text-xs px-4 py-1.5 rounded-full bg-white/5 text-gray-400 cursor-pointer">Reasoning</button>
+            <button onclick="filterModels('fast')" id="filter-fast" class="text-xs px-4 py-1.5 rounded-full bg-white/5 text-gray-400 cursor-pointer">Fast</button>
+        </div>
+
+        <!-- Dynamic model list (loaded from /api/v1/models) -->
+        <div id="model-list">
+            <p class="text-gray-500 text-center text-sm">Loading models...</p>
+        </div>
+
+        <!-- Smart Aliases -->
+        <h3 class="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4 mt-10">Smart Aliases</h3>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div class="card rounded-xl p-4 text-center">
+                <code class="text-violet-300 mono text-sm">model="auto"</code>
+                <p class="text-xs text-gray-500 mt-1">Best model for your prompt</p>
+            </div>
+            <div class="card rounded-xl p-4 text-center">
+                <code class="text-green-300 mono text-sm">model="fast"</code>
+                <p class="text-xs text-gray-500 mt-1">Lowest latency (&lt;1 sec)</p>
+            </div>
+            <div class="card rounded-xl p-4 text-center">
+                <code class="text-purple-300 mono text-sm">model="code"</code>
+                <p class="text-xs text-gray-500 mt-1">Best code model</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Docs -->
+    <section id="docs" class="max-w-6xl mx-auto px-6 py-20" style="position:relative;z-index:1">
+        <h2 class="text-3xl font-bold text-center mb-3">Quick Start</h2>
+        <p class="text-gray-400 text-center mb-12">Three steps to your first API call.</p>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <div class="text-center">
+                <div class="w-12 h-12 bg-violet-500/10 rounded-full flex items-center justify-center mx-auto mb-4 text-violet-400 font-bold text-lg">1</div>
+                <h3 class="font-semibold mb-2">Get an API Key</h3>
+                <p class="text-gray-400 text-sm">Sign up via the <a href="/dashboard" class="text-violet-400 underline">dashboard</a> or contact us for an API key.</p>
+            </div>
+            <div class="text-center">
+                <div class="w-12 h-12 bg-violet-500/10 rounded-full flex items-center justify-center mx-auto mb-4 text-violet-400 font-bold text-lg">2</div>
+                <h3 class="font-semibold mb-2">Install the SDK</h3>
+                <p class="text-gray-400 text-sm"><code class="text-xs bg-white/5 px-2 py-1 rounded mono">pip install openai</code><br>Works with the standard OpenAI library.</p>
+            </div>
+            <div class="text-center">
+                <div class="w-12 h-12 bg-violet-500/10 rounded-full flex items-center justify-center mx-auto mb-4 text-violet-400 font-bold text-lg">3</div>
+                <h3 class="font-semibold mb-2">Make a Request</h3>
+                <p class="text-gray-400 text-sm">Set <code class="text-xs bg-white/5 px-2 py-1 rounded mono">base_url</code> to <code class="text-xs bg-white/5 px-2 py-1 rounded mono">api.helheim-ai.dev/v1</code> and you're live.</p>
+            </div>
+        </div>
+
+        <div class="mt-16 card rounded-2xl p-8">
+            <h3 class="font-semibold mb-4">API Endpoints</h3>
+            <div class="space-y-3 text-sm mono">
+                <div class="flex items-center gap-3">
+                    <span class="bg-green-500/20 text-green-300 px-2 py-0.5 rounded text-xs font-bold">POST</span>
+                    <span class="text-gray-300">/v1/chat/completions</span>
+                    <span class="text-gray-600 ml-auto text-xs">Chat completion (OpenAI format)</span>
+                </div>
+                <div class="flex items-center gap-3">
+                    <span class="bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded text-xs font-bold">GET</span>
+                    <span class="text-gray-300">/v1/models</span>
+                    <span class="text-gray-600 ml-auto text-xs">List available models</span>
+                </div>
+                <div class="flex items-center gap-3">
+                    <span class="bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded text-xs font-bold">GET</span>
+                    <span class="text-gray-300">/health</span>
+                    <span class="text-gray-600 ml-auto text-xs">Cluster health check</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Pricing -->
+    <section id="pricing" class="max-w-6xl mx-auto px-6 py-20" style="position:relative;z-index:1">
+        <h2 class="text-3xl font-bold text-center mb-3">Simple Pricing</h2>
+        <p class="text-gray-400 text-center mb-12">No hidden fees. Pay for what you use.</p>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div class="card rounded-2xl p-8">
+                <h3 class="text-lg font-semibold mb-1">Free Tier</h3>
+                <p class="text-gray-500 text-xs mb-4">Try it out</p>
+                <div class="text-4xl font-bold text-white mb-6">&euro;0</div>
+                <ul class="text-sm text-gray-400 space-y-3 mb-8">
+                    <li class="flex items-center gap-2"><span class="text-green-400">&#10003;</span> 100 requests/day</li>
+                    <li class="flex items-center gap-2"><span class="text-green-400">&#10003;</span> All models</li>
+                    <li class="flex items-center gap-2"><span class="text-green-400">&#10003;</span> OpenAI-compatible</li>
+                    <li class="flex items-center gap-2"><span class="text-gray-600">&#10005;</span> <span class="text-gray-600">Priority queue</span></li>
+                </ul>
+                <a href="/dashboard" class="block text-center py-2.5 rounded-lg border border-white/10 text-gray-300 hover:bg-white/5 transition text-sm font-medium">Get Started</a>
+            </div>
+            <div class="card card-highlight rounded-2xl p-8 relative">
+                <div class="absolute -top-3 left-1/2 -translate-x-1/2 bg-violet-600 text-white text-xs font-bold px-3 py-1 rounded-full">Popular</div>
+                <h3 class="text-lg font-semibold mb-1">Developer</h3>
+                <p class="text-gray-500 text-xs mb-4">For indie devs &amp; startups</p>
+                <div class="text-4xl font-bold text-white mb-1">&euro;19<span class="text-lg text-gray-500 font-normal">/mo</span></div>
+                <p class="text-xs text-gray-500 mb-6">~10,000 requests included</p>
+                <ul class="text-sm text-gray-400 space-y-3 mb-8">
+                    <li class="flex items-center gap-2"><span class="text-green-400">&#10003;</span> Unlimited requests</li>
+                    <li class="flex items-center gap-2"><span class="text-green-400">&#10003;</span> All models</li>
+                    <li class="flex items-center gap-2"><span class="text-green-400">&#10003;</span> Priority queue</li>
+                    <li class="flex items-center gap-2"><span class="text-green-400">&#10003;</span> Usage dashboard</li>
+                </ul>
+                <button onclick="checkout('developer')" class="block w-full text-center py-2.5 rounded-lg btn-primary text-white text-sm font-medium cursor-pointer">Subscribe</button>
+            </div>
+            <div class="card rounded-2xl p-8">
+                <h3 class="text-lg font-semibold mb-1">Business</h3>
+                <p class="text-gray-500 text-xs mb-4">For teams &amp; companies</p>
+                <div class="text-4xl font-bold text-white mb-1">&euro;79<span class="text-lg text-gray-500 font-normal">/mo</span></div>
+                <p class="text-xs text-gray-500 mb-6">~50,000 requests included</p>
+                <ul class="text-sm text-gray-400 space-y-3 mb-8">
+                    <li class="flex items-center gap-2"><span class="text-green-400">&#10003;</span> Everything in Developer</li>
+                    <li class="flex items-center gap-2"><span class="text-green-400">&#10003;</span> Dedicated GPU time</li>
+                    <li class="flex items-center gap-2"><span class="text-green-400">&#10003;</span> Custom models</li>
+                    <li class="flex items-center gap-2"><span class="text-green-400">&#10003;</span> Priority support</li>
+                </ul>
+                <button onclick="checkout('business')" class="block w-full text-center py-2.5 rounded-lg border border-white/10 text-gray-300 hover:bg-white/5 transition text-sm font-medium cursor-pointer">Subscribe</button>
+            </div>
+        </div>
+    </section>
+
+    <!-- Comparison -->
+    <section class="max-w-4xl mx-auto px-6 py-16" style="position:relative;z-index:1">
+        <h2 class="text-2xl font-bold text-center mb-8">Why Helheim?</h2>
+        <div class="card rounded-2xl overflow-hidden">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="border-b border-white/5">
+                        <th class="text-left p-4 text-gray-400 font-medium"></th>
+                        <th class="p-4 text-violet-400 font-semibold">Helheim AI</th>
+                        <th class="p-4 text-gray-500 font-medium">OpenAI</th>
+                        <th class="p-4 text-gray-500 font-medium">Groq</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr class="border-b border-white/5">
+                        <td class="p-4 text-gray-300">Privacy / GDPR</td>
+                        <td class="p-4 text-center text-green-400">&#10003; EU hosted</td>
+                        <td class="p-4 text-center text-red-400">&#10005; US</td>
+                        <td class="p-4 text-center text-red-400">&#10005; US</td>
+                    </tr>
+                    <tr class="border-b border-white/5">
+                        <td class="p-4 text-gray-300">Data logging</td>
+                        <td class="p-4 text-center text-green-400">&#10003; None</td>
+                        <td class="p-4 text-center text-yellow-400">~ 30 days</td>
+                        <td class="p-4 text-center text-yellow-400">~ Unknown</td>
+                    </tr>
+                    <tr class="border-b border-white/5">
+                        <td class="p-4 text-gray-300">OpenAI-compatible</td>
+                        <td class="p-4 text-center text-green-400">&#10003;</td>
+                        <td class="p-4 text-center text-green-400">&#10003;</td>
+                        <td class="p-4 text-center text-green-400">&#10003;</td>
+                    </tr>
+                    <tr>
+                        <td class="p-4 text-gray-300">Starting price</td>
+                        <td class="p-4 text-center text-green-400 font-semibold">Free</td>
+                        <td class="p-4 text-center text-gray-400">$20/mo</td>
+                        <td class="p-4 text-center text-gray-400">Free (limited)</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <!-- Widget: embeddable chatbot -->
+    <section id="widget" class="max-w-4xl mx-auto px-6 py-16" style="position:relative;z-index:1">
+        <h2 class="text-2xl font-bold text-center mb-3">Chatbot op je eigen site</h2>
+        <p class="text-gray-400 text-center mb-8">Voeg in één regel code een chat-widget toe. Maak een chatbot aan, kopieer het snippet en plak het in je website.</p>
+        <div class="card rounded-2xl p-8 text-center">
+            <p class="text-sm text-gray-400 mb-4">Na <a href="/login" class="text-violet-400 hover:underline">inloggen</a> ga je naar <a href="/tenants" class="text-violet-400 hover:underline">Chatbots</a>, maak je een bot aan en gebruik het embed-snippet.</p>
+            <a href="/tenants" class="inline-block text-sm bg-violet-600/20 text-violet-300 px-5 py-2.5 rounded-lg hover:bg-violet-600/30 transition font-medium">Naar Chatbots</a>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="border-t border-white/5 px-6 py-10 mt-10" style="position:relative;z-index:1">
+        <div class="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
+            <div class="flex items-center gap-3">
+                <div class="w-7 h-7 bg-gradient-to-br from-violet-500 to-purple-600 rounded-lg flex items-center justify-center font-bold text-xs">H</div>
+                <span class="text-sm text-gray-500">Helheim AI &mdash; Built in Rust. Hosted in the Netherlands.</span>
+            </div>
+            <div class="flex gap-6 text-sm text-gray-600">
+                <a href="/status" class="hover:text-gray-400 transition">Status</a>
+                <a href="/dashboard" class="hover:text-gray-400 transition">Dashboard</a>
+                <a href="mailto:contact@helheim-ai.dev" class="hover:text-gray-400 transition">Contact</a>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        // Status: alleen tonen of service beschikbaar is (geen technische details)
+        fetch('/api/v1/nodes').then(r=>r.json()).then(d=>{
+            var online = (d.nodes||[]).filter(function(n){ return n.online; }).length;
+            var el = document.getElementById('hero-status');
+            if(el) { el.textContent = online > 0 ? 'Service actief' : 'Beperkte beschikbaarheid'; el.className = online > 0 ? 'text-sm text-green-400 font-medium' : 'text-sm text-amber-400 font-medium'; }
+        }).catch(function(){ var el = document.getElementById('hero-status'); if(el) el.textContent = 'Service actief'; });
+
+        // Stripe Checkout
+        function checkout(plan) {
+            fetch('/api/v1/checkout', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({plan: plan})
+            })
+            .then(r => r.json())
+            .then(d => { if(d.url) window.location.href = d.url; })
+            .catch(e => alert('Payment error. Please try again.'));
+        }
+
+        // Dynamic model loading from registry
+        fetch('/api/v1/models').then(r=>r.json()).then(models=>{
+            const container = document.getElementById('model-list');
+            const categories = [...new Set(models.map(m=>m.category))];
+            let html = '';
+            categories.forEach(cat => {
+                const label = cat === 'general' ? 'General Purpose' : cat === 'code' ? 'Code &amp; Programming' : cat.charAt(0).toUpperCase()+cat.slice(1);
+                html += `<h3 class="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4">${label}</h3>`;
+                html += '<div class="grid grid-cols-1 gap-3 mb-8">';
+                models.filter(m=>m.category===cat).forEach(m => {
+                    const alias = m.aliases && m.aliases[0] ? m.aliases[0] : m.id;
+                    const tagHtml = m.tag ? `<span class="model-tag bg-violet-500/20 text-violet-300">${m.tag}</span>` : '';
+                    html += `
+                    <div class="card rounded-xl p-5 flex items-center gap-4 model-row" data-cat="${m.category}">
+                        <div class="flex-1">
+                            <div class="flex items-center gap-2 mb-1">
+                                <span class="font-semibold">${m.name}</span>
+                                ${tagHtml}
+                            </div>
+                            <div class="flex items-center gap-3 text-xs text-gray-500">
+                                <span class="mono">model="${alias}"</span>
+                                <span>${m.params} params</span>
+                                <span>${m.size_gb} GB</span>
+                                <span>${m.quant}</span>
+                            </div>
+                            <p class="text-xs text-gray-600 mt-1">${m.description||''}</p>
+                        </div>
+                        <a href="${m.huggingface}" target="_blank" class="text-xs bg-white/5 text-gray-400 px-3 py-1.5 rounded-lg hover:bg-white/10 transition flex items-center gap-1">&#x2B07; GGUF</a>
+                    </div>`;
+                });
+                html += '</div>';
+            });
+            container.innerHTML = html;
+        });
+
+        // Model filter
+        function filterModels(cat) {
+            document.querySelectorAll('.model-row').forEach(el => {
+                el.style.display = (cat === 'all' || el.dataset.cat.includes(cat)) ? 'flex' : 'none';
+            });
+            ['all','general','code','reasoning','fast'].forEach(c => {
+                const btn = document.getElementById('filter-'+c);
+                if(btn) {
+                    btn.className = c===cat
+                        ? 'text-xs px-4 py-1.5 rounded-full bg-violet-600/20 text-violet-300 cursor-pointer'
+                        : 'text-xs px-4 py-1.5 rounded-full bg-white/5 text-gray-400 cursor-pointer';
+                }
+            });
+        }
+
+        // Tab switching
+        function showTab(lang) {
+            ['python','curl','js'].forEach(l => {
+                document.getElementById('code-'+l).style.display = l===lang ? 'block' : 'none';
+                document.getElementById('tab-'+l).className = l===lang ? 'tab-active pb-1 text-xs cursor-pointer' : 'tab-inactive pb-1 text-xs cursor-pointer';
+            });
+        }
+    </script>
+    <script type="module">
+    import init, { Starfield } from '/static/wasm/helheim_starfield.js';
+    try {
+        await init();
+        document.getElementById('starfield').__wasm = true;
+        var sf = new Starfield('starfield');
+        var last = performance.now();
+        function frame(now) { sf.tick(Math.min((now - last) / 1000, 0.05)); last = now; requestAnimationFrame(frame); }
+        requestAnimationFrame(frame);
+        window.addEventListener('resize', function() { sf.resize(); });
+    } catch(e) { console.warn('[CORTEX] WASM failed:', e); }
+    </script>
+    <script>
+    (function(){
+        var c = document.getElementById('starfield');
+        if (!c || c.__wasm) return;
+        var ctx = c.getContext('2d');
+        var W, H, stars = [], time = 0, seed = 42;
+        function rng() { seed = (seed * 1664525 + 1013904223) >>> 0; return ((seed >> 16) & 0xFFFF) / 65535; }
+        function resize() { W = window.innerWidth; H = window.innerHeight; c.width = W; c.height = H; }
+        function init() { resize(); stars = []; for (var i = 0; i < 200; i++) { var z = rng(); stars.push({ x: rng()*W, y: rng()*H, z: z, sz: 0.3+z*1.5, br: 0.15+z*0.85, ts: 0.3+rng()*3, to: rng()*6.28, cr: 0.7+rng()*0.3, cg: 0.7+rng()*0.3, cb: 0.9+rng()*0.1 }); } }
+        function tick(dt) { time += dt; ctx.fillStyle = '#09090b'; ctx.fillRect(0, 0, W, H); for (var i = 0; i < stars.length; i++) { var s = stars[i]; var tw = (Math.sin(time * s.ts + s.to) * 0.6 + Math.sin(time * s.ts * 0.7 + s.to * 1.3) * 0.4 + 1) * 0.5; var br = s.br * (0.3 + tw * 0.7); ctx.fillStyle = 'rgba('+Math.floor(s.cr*br*255)+','+Math.floor(s.cg*br*255)+','+Math.floor(s.cb*br*255)+','+br+')'; ctx.beginPath(); ctx.arc(s.x, s.y, s.sz, 0, 6.28); ctx.fill(); } }
+        init(); var last = performance.now();
+        function frame(now) { tick(Math.min((now-last)/1000, 0.05)); last=now; requestAnimationFrame(frame); }
+        requestAnimationFrame(frame); window.addEventListener('resize', function() { resize(); });
+    })();
+    </script>
+</body>
+</html>

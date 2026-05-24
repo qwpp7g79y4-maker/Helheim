@@ -1,0 +1,16 @@
+# Build artifacts
+target/
+*.tmp
+*.bak
+
+# Logs & history
+history.txt
+scan_log.txt
+helheim-logs/
+
+# Secrets (never commit)
+.env
+*.env
+*.pem
+*.key
+id_rsa

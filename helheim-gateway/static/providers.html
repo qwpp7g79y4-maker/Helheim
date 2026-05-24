@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Helheim — External Providers</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { background: #09090b; color: #f0f0f3; font-family: 'Inter', sans-serif; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        .glow { text-shadow: 0 0 20px rgba(139,92,246,0.4); }
+        .card { background: rgba(12,12,20,0.9); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; }
+        .input-field { background: rgba(6,6,11,0.8); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 10px 14px; color: #f0f0f3; width: 100%; font-size: 14px; outline: none; transition: border-color 0.2s; }
+        .input-field:focus { border-color: rgba(139,92,246,0.5); }
+        .input-field::placeholder { color: #4a5568; }
+        .btn { padding: 10px 20px; border-radius: 8px; font-weight: 600; font-size: 14px; cursor: pointer; transition: all 0.15s; border: none; }
+        .btn-primary { background: #8b5cf6; color: white; }
+        .btn-primary:hover { background: #5558e6; }
+        .btn-danger { background: rgba(239,68,68,0.15); color: #fca5a5; border: 1px solid rgba(239,68,68,0.2); }
+        .btn-danger:hover { background: rgba(239,68,68,0.25); }
+        .btn-test { background: rgba(34,197,94,0.15); color: #86efac; border: 1px solid rgba(34,197,94,0.2); }
+        .btn-test:hover { background: rgba(34,197,94,0.25); }
+        .btn-sm { padding: 6px 12px; font-size: 12px; }
+        .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+        .status-active { background: #22c55e; box-shadow: 0 0 8px rgba(34,197,94,0.4); }
+        .status-inactive { background: #6b7280; }
+        .provider-row { border-bottom: 1px solid rgba(255,255,255,0.04); transition: background 0.15s; }
+        .provider-row:hover { background: rgba(255,255,255,0.02); }
+        .toast { position: fixed; bottom: 24px; right: 24px; padding: 12px 20px; border-radius: 8px; font-size: 14px; z-index: 100; animation: slideIn 0.3s ease-out; }
+        .toast-success { background: rgba(34,197,94,0.2); border: 1px solid rgba(34,197,94,0.3); color: #86efac; }
+        .toast-error { background: rgba(239,68,68,0.2); border: 1px solid rgba(239,68,68,0.3); color: #fca5a5; }
+        @keyframes slideIn { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        .preset-btn { padding: 6px 14px; border-radius: 6px; font-size: 12px; border: 1px solid rgba(255,255,255,0.1); cursor: pointer; transition: all 0.15s; background: transparent; color: #94a3b8; }
+        .preset-btn:hover { border-color: rgba(139,92,246,0.4); color: #f0f0f3; }
+    </style>
+</head>
+<body class="min-h-screen">
+    <canvas id="starfield" style="position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-events:none;opacity:0.5;"></canvas>
+    <span id="helheim-role" style="display:none">{{ROLE}}</span>
+    <nav class="px-6 py-4" style="background:rgba(9,9,11,0.88);backdrop-filter:blur(12px);position:relative;z-index:50">
+        <div class="max-w-6xl mx-auto flex justify-between items-center">
+            <a href="/" class="flex items-center gap-3">
+                <div class="w-8 h-8 bg-violet-600 rounded-xl shadow-lg shadow-violet-600/20 flex items-center justify-center font-bold text-sm">H</div>
+                <span class="text-xl font-bold glow">Helheim</span>
+            </a>
+            <div class="flex items-center gap-3 relative">
+                <span class="text-xs bg-{{ROLE_COLOR}}-600/20 text-{{ROLE_COLOR}}-400 px-2 py-1 rounded">{{ROLE}}</span>
+                <div class="relative">
+                    <button type="button" id="nav-menu-btn" class="text-sm font-medium text-zinc-300 hover:text-white px-3 py-2 rounded-lg border border-white/10 hover:border-white/20 transition-colors flex items-center gap-1">Menu <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg></button>
+                    <div id="nav-dropdown" class="hidden absolute right-0 mt-1 py-1 w-48 rounded-lg border border-white/10 bg-[#0f0f14] shadow-xl z-50">
+                        <a href="/dashboard" class="block px-4 py-2 text-sm text-zinc-300 hover:bg-white/5">Dashboard</a>
+                        <a href="/chat" class="block px-4 py-2 text-sm text-zinc-300 hover:bg-white/5">Chat</a>
+                        <a href="/tenants" class="block px-4 py-2 text-sm text-zinc-300 hover:bg-white/5">Chatbots</a>
+                        <a href="/settings" class="block px-4 py-2 text-sm text-zinc-300 hover:bg-white/5">Instellingen</a>
+                        <a href="/feedback" class="block px-4 py-2 text-sm text-amber-400/90 hover:bg-white/5">Feedback</a>
+                        <div id="nav-admin-items" class="border-t border-white/5 mt-1 pt-1">
+                            <a href="/usage" class="block px-4 py-2 text-sm text-zinc-400 hover:bg-white/5">Usage</a>
+                            <a href="/analytics" class="block px-4 py-2 text-sm text-zinc-400 hover:bg-white/5">Analytics</a>
+                            <a href="/providers" class="block px-4 py-2 text-sm text-white hover:bg-white/5">Providers</a>
+                            <a href="/debug" class="block px-4 py-2 text-sm text-zinc-400 hover:bg-white/5">Debug</a>
+                        </div>
+                        <div class="border-t border-white/5 mt-1 pt-1"><a href="/logout" class="block px-4 py-2 text-sm text-red-400/90 hover:bg-white/5">Uitloggen</a></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+    <script>(function(){var r=document.getElementById('helheim-role').textContent.trim();if(r!=='ADMIN')document.getElementById('nav-admin-items').style.display='none';document.getElementById('nav-menu-btn').onclick=function(){document.getElementById('nav-dropdown').classList.toggle('hidden');};document.addEventListener('click',function(e){if(!document.getElementById('nav-dropdown').contains(e.target)&&e.target.id!=='nav-menu-btn')document.getElementById('nav-dropdown').classList.add('hidden');});})();</script>
+
+    <div class="max-w-5xl mx-auto px-6 py-6" style="position:relative;z-index:1">
+        <div class="flex justify-between items-center mb-6">
+            <div>
+                <h2 class="text-xl font-bold text-white">API Providers</h2>
+                <p class="text-sm text-gray-500 mt-1">Verbind externe AI APIs. Gebruik <span class="mono text-violet-400">provider/model</span> als model naam (bijv. <span class="mono text-violet-400">groq/llama-3.3-70b-versatile</span>)</p>
+            </div>
+        </div>
+
+        <!-- Provider List -->
+        <div class="card mb-6" id="provider-list">
+            <div class="p-4 border-b border-white/5">
+                <div class="grid grid-cols-12 text-xs text-gray-500 font-semibold uppercase tracking-wider">
+                    <div class="col-span-1">Status</div>
+                    <div class="col-span-2">Provider</div>
+                    <div class="col-span-3">Base URL</div>
+                    <div class="col-span-2">Default Model</div>
+                    <div class="col-span-2">API Key</div>
+                    <div class="col-span-2 text-right">Acties</div>
+                </div>
+            </div>
+            <div id="providers-body">
+                <div class="p-8 text-center text-gray-600">Laden...</div>
+            </div>
+        </div>
+
+        <!-- Add/Edit Provider Form -->
+        <div class="card p-6" id="provider-form">
+            <h3 class="text-lg font-bold text-white mb-4" id="form-title">Provider Toevoegen</h3>
+
+            <!-- Presets -->
+            <div class="flex gap-2 mb-4">
+                <span class="text-xs text-gray-500 self-center mr-2">Snel toevoegen:</span>
+                <button class="preset-btn" onclick="fillPreset('groq','Groq','https://api.groq.com/openai/v1','llama-3.3-70b-versatile')">Groq</button>
+                <button class="preset-btn" onclick="fillPreset('openai','OpenAI','https://api.openai.com/v1','gpt-4o-mini')">OpenAI</button>
+                <button class="preset-btn" onclick="fillPreset('google','Google','https://generativelanguage.googleapis.com/v1beta/openai','gemini-2.0-flash')">Google</button>
+                <button class="preset-btn" onclick="fillPreset('grok','xAI Grok','https://api.x.ai/v1','grok-2-latest')">Grok</button>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4 mb-4">
+                <div>
+                    <label class="text-xs text-gray-400 mb-1 block">Provider ID</label>
+                    <input type="text" id="f-id" class="input-field mono" placeholder="groq">
+                </div>
+                <div>
+                    <label class="text-xs text-gray-400 mb-1 block">Naam</label>
+                    <input type="text" id="f-name" class="input-field" placeholder="Groq">
+                </div>
+            </div>
+            <div class="mb-4">
+                <label class="text-xs text-gray-400 mb-1 block">Base URL</label>
+                <input type="text" id="f-url" class="input-field mono" placeholder="https://api.groq.com/openai/v1">
+            </div>
+            <div class="grid grid-cols-2 gap-4 mb-4">
+                <div>
+                    <label class="text-xs text-gray-400 mb-1 block">API Key</label>
+                    <input type="password" id="f-key" class="input-field mono" placeholder="sk-... of gsk-...">
+                </div>
+                <div>
+                    <label class="text-xs text-gray-400 mb-1 block">Default Model</label>
+                    <input type="text" id="f-model" class="input-field mono" placeholder="llama-3.3-70b-versatile">
+                </div>
+            </div>
+            <div class="flex gap-3">
+                <button class="btn btn-primary" onclick="saveProvider()">Opslaan</button>
+                <button class="btn btn-test" onclick="testProvider()">Test Verbinding</button>
+                <button class="btn btn-sm" style="background:transparent;color:#6b7280;border:1px solid rgba(255,255,255,0.1)" onclick="clearForm()">Reset</button>
+            </div>
+            <div id="test-result" class="mt-4 hidden"></div>
+        </div>
+    </div>
+
+    <script>
+    // Sync localStorage key to cookie for server-side auth
+    (function() {
+        var k = localStorage.getItem('helheim_api_key');
+        if (k && document.cookie.indexOf('helheim_session=') === -1) {
+            document.cookie = 'helheim_session=' + encodeURIComponent(k) + '; path=/; max-age=2592000; samesite=lax';
+        }
+    })();
+    const API_KEY = localStorage.getItem('helheim_api_key') || '';
+
+    function headers() {
+        return { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + API_KEY };
+    }
+
+    async function loadProviders() {
+        try {
+            const resp = await fetch('/api/v1/providers', { headers: headers() });
+            const data = await resp.json();
+            renderProviders(data.providers || []);
+        } catch(e) {
+            document.getElementById('providers-body').innerHTML = '<div class="p-8 text-center text-red-400">Fout bij laden: ' + e.message + '</div>';
+        }
+    }
+
+    function renderProviders(providers) {
+        const body = document.getElementById('providers-body');
+        if (providers.length === 0) {
+            body.innerHTML = '<div class="p-8 text-center text-gray-600">Geen providers geconfigureerd. Voeg er een toe hieronder.</div>';
+            return;
+        }
+        body.innerHTML = providers.map(p => `
+            <div class="provider-row p-4">
+                <div class="grid grid-cols-12 items-center">
+                    <div class="col-span-1">
+                        <span class="status-dot ${p.has_key ? 'status-active' : 'status-inactive'}"></span>
+                    </div>
+                    <div class="col-span-2">
+                        <div class="font-semibold text-white">${p.name}</div>
+                        <div class="text-xs text-gray-500 mono">${p.id}</div>
+                    </div>
+                    <div class="col-span-3 mono text-xs text-gray-400 truncate">${p.base_url}</div>
+                    <div class="col-span-2 mono text-xs text-violet-400">${p.default_model || '—'}</div>
+                    <div class="col-span-2 mono text-xs ${p.has_key ? 'text-green-400' : 'text-gray-600'}">${p.has_key ? p.masked_key : 'Geen key'}</div>
+                    <div class="col-span-2 text-right flex gap-2 justify-end">
+                        <button class="btn btn-sm btn-test" onclick="quickTest('${p.id}','${p.default_model || ''}')">Test</button>
+                        <button class="btn btn-sm btn-danger" onclick="deleteProvider('${p.id}')">Verwijder</button>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    function fillPreset(id, name, url, model) {
+        document.getElementById('f-id').value = id;
+        document.getElementById('f-name').value = name;
+        document.getElementById('f-url').value = url;
+        document.getElementById('f-model').value = model;
+        document.getElementById('f-key').focus();
+    }
+
+    async function saveProvider() {
+        const id = document.getElementById('f-id').value.trim();
+        const name = document.getElementById('f-name').value.trim();
+        const api_key = document.getElementById('f-key').value.trim();
+        const base_url = document.getElementById('f-url').value.trim();
+        const default_model = document.getElementById('f-model').value.trim() || null;
+
+        if (!id || !name || !base_url) {
+            toast('Vul ID, Naam en Base URL in', 'error');
+            return;
+        }
+
+        try {
+            const resp = await fetch('/api/v1/providers', {
+                method: 'POST',
+                headers: headers(),
+                body: JSON.stringify({ id, name, api_key, base_url, default_model })
+            });
+            const data = await resp.json();
+            if (data.status === 'saved') {
+                toast(`${name} opgeslagen!`, 'success');
+                clearForm();
+                loadProviders();
+            } else {
+                toast('Fout: ' + JSON.stringify(data), 'error');
+            }
+        } catch(e) {
+            toast('Fout: ' + e.message, 'error');
+        }
+    }
+
+    async function deleteProvider(id) {
+        if (!confirm(`Provider "${id}" verwijderen?`)) return;
+        try {
+            const resp = await fetch('/api/v1/providers/' + id, { method: 'DELETE', headers: headers() });
+            const data = await resp.json();
+            if (data.status === 'deleted') {
+                toast(`${id} verwijderd`, 'success');
+                loadProviders();
+            } else {
+                toast('Niet gevonden', 'error');
+            }
+        } catch(e) {
+            toast('Fout: ' + e.message, 'error');
+        }
+    }
+
+    async function testProvider() {
+        const id = document.getElementById('f-id').value.trim();
+        const model = document.getElementById('f-model').value.trim();
+        if (!id || !model) {
+            toast('Vul eerst ID en Default Model in', 'error');
+            return;
+        }
+        await quickTest(id, model);
+    }
+
+    async function quickTest(providerId, model) {
+        const resultDiv = document.getElementById('test-result');
+        resultDiv.className = 'mt-4 card p-4';
+        resultDiv.innerHTML = '<span class="text-yellow-400">Testen...</span>';
+
+        try {
+            const start = Date.now();
+            const resp = await fetch('/v1/chat/completions', {
+                method: 'POST',
+                headers: headers(),
+                body: JSON.stringify({
+                    model: providerId + '/' + model,
+                    messages: [{ role: 'user', content: 'Say hello in one sentence.' }],
+                    max_tokens: 50
+                })
+            });
+            const elapsed = Date.now() - start;
+            const data = await resp.json();
+
+            if (data.error) {
+                resultDiv.innerHTML = `<span class="text-red-400">Fout:</span> <span class="mono text-xs text-red-300">${data.error.message}</span>`;
+            } else {
+                const content = data.choices?.[0]?.message?.content || '(geen antwoord)';
+                const tokens = data.usage?.total_tokens || 0;
+                resultDiv.innerHTML = `
+                    <div class="flex justify-between items-center mb-2">
+                        <span class="text-green-400 font-semibold">Verbinding OK</span>
+                        <span class="mono text-xs text-gray-500">${elapsed}ms · ${tokens} tokens</span>
+                    </div>
+                    <div class="mono text-sm text-gray-300">${content}</div>
+                `;
+            }
+        } catch(e) {
+            resultDiv.innerHTML = `<span class="text-red-400">Verbinding mislukt:</span> <span class="mono text-xs text-red-300">${e.message}</span>`;
+        }
+    }
+
+    function clearForm() {
+        ['f-id','f-name','f-url','f-key','f-model'].forEach(id => document.getElementById(id).value = '');
+        document.getElementById('test-result').className = 'mt-4 hidden';
+        document.getElementById('form-title').textContent = 'Provider Toevoegen';
+    }
+
+    function toast(msg, type) {
+        const el = document.createElement('div');
+        el.className = 'toast toast-' + type;
+        el.textContent = msg;
+        document.body.appendChild(el);
+        setTimeout(() => el.remove(), 3000);
+    }
+
+    loadProviders();
+    </script>
+    <script type="module">
+    import init, { Starfield } from '/static/wasm/helheim_starfield.js';
+    try {
+        await init();
+        document.getElementById('starfield').__wasm = true;
+        var sf = new Starfield('starfield');
+        var last = performance.now();
+        function frame(now) { sf.tick(Math.min((now - last) / 1000, 0.05)); last = now; requestAnimationFrame(frame); }
+        requestAnimationFrame(frame);
+        window.addEventListener('resize', function() { sf.resize(); });
+    } catch(e) { console.warn('[CORTEX] WASM failed:', e); }
+    </script>
+    <script>
+    (function(){
+        var c = document.getElementById('starfield');
+        if (!c || c.__wasm) return;
+        var ctx = c.getContext('2d');
+        var W, H, stars = [], time = 0, seed = 42;
+        function rng() { seed = (seed * 1664525 + 1013904223) >>> 0; return ((seed >> 16) & 0xFFFF) / 65535; }
+        function resize() { W = window.innerWidth; H = window.innerHeight; c.width = W; c.height = H; }
+        function init() { resize(); stars = []; for (var i = 0; i < 200; i++) { var z = rng(); stars.push({ x: rng()*W, y: rng()*H, z: z, sz: 0.3+z*1.5, br: 0.15+z*0.85, ts: 0.3+rng()*3, to: rng()*6.28, cr: 0.7+rng()*0.3, cg: 0.7+rng()*0.3, cb: 0.9+rng()*0.1 }); } }
+        function tick(dt) { time += dt; ctx.fillStyle = '#09090b'; ctx.fillRect(0, 0, W, H); for (var i = 0; i < stars.length; i++) { var s = stars[i]; var tw = (Math.sin(time * s.ts + s.to) * 0.6 + Math.sin(time * s.ts * 0.7 + s.to * 1.3) * 0.4 + 1) * 0.5; var br = s.br * (0.3 + tw * 0.7); ctx.fillStyle = 'rgba('+Math.floor(s.cr*br*255)+','+Math.floor(s.cg*br*255)+','+Math.floor(s.cb*br*255)+','+br+')'; ctx.beginPath(); ctx.arc(s.x, s.y, s.sz, 0, 6.28); ctx.fill(); } }
+        init(); var last = performance.now();
+        function frame(now) { tick(Math.min((now-last)/1000, 0.05)); last=now; requestAnimationFrame(frame); }
+        requestAnimationFrame(frame); window.addEventListener('resize', function() { resize(); });
+    })();
+    </script>
+<script>(function(){if('{{ROLE}}'==='ADMIN'){var e=document.getElementById('admin-links');if(e)e.style.display='flex';}})();</script>
+</body>
+</html>

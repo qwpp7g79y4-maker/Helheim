@@ -1,0 +1,70 @@
+functie print_header met versie {
+    print "=================================================";
+    print " 👁️  HELHEIM SWARM CONTROL ROOM ";
+    print " Versie:";
+    print versie;
+    print "=================================================";
+    print "1. Toon het netwerk (Lokale Status)";
+    print "2. HIVE Compute (Verdeel werk over CPU & GPU)";
+    print "3. Netwerk Failsafe Check (Try/Catch)";
+    print "4. Afsluiten";
+    print "=================================================";
+}
+
+functie voer_optie_een_uit met leeg {
+    print "[LOKAAL]: Systeem controleren...";
+    # We sturen een onschuldig commando naar the native engine (bijv. gpu ops of netwerk ping)
+    # Normaal runnen we hier 'netwerk status' of iets vergelijkbaars, we printen nu logica.
+    print "-> Master Node: ONLINE";
+    print "-> Slave Node (192.168.69.161): STANDBY";
+    print "-> Pepijn Node: STANDBY";
+}
+
+functie voer_optie_twee_uit met leeg {
+    zet hoeveelheid = vraag "[HIVE] Hoeveel matrix berekeningen wil je distribueren? (bijv. 50000):";
+    print "Berekeningen worden voorbereid voor distributie...";
+    
+    # We demonstreren de Array/Lijst feature!
+    zet netwerk_nodes = ["127.0.0.1", "192.168.69.161", "213.132.219.149"];
+    print "Doelwitten binnen de HIVE:";
+    voor elke node in netwerk_nodes {
+        print node;
+    }
+
+    print "WAARSCHUWING: Zodra we native commando's koppelen, vuurt the engine dit af via: hive work [X]";
+    print "Simulatie afgerond!";
+}
+
+functie voer_optie_drie_uit met leeg {
+    print "[FAILSAFE] Testen van abstracte error handling...";
+    probeer {
+        print "Stap 1: Netwerkverbinding openen naar onbekend IP...";
+        gooi "FATAAL: Timeout op node 999.999.999.999";
+        print "Stap 2: Dit mag nooit geprint worden!";
+    } vang {
+        print "✅ [VANG-NET ACTIEF]: Error succesvol ingeslikt door Helheim V3. Swarm blijft draaien.";
+    }
+}
+
+# --- Hoofdprogramma ---
+roep_aan print_header "3.0.0";
+
+zet keuze = vraag "\nVoer uw keuze in (1-4): ";
+
+als keuze == "1" dan {
+    roep_aan voer_optie_een_uit "x";
+} anders {
+    als keuze == "2" dan {
+        roep_aan voer_optie_twee_uit "x";
+    } anders {
+        als keuze == "3" dan {
+            roep_aan voer_optie_drie_uit "x";
+        } anders {
+            als keuze == "4" dan {
+                print "Helheim Control Room wordt afgesloten. Tot ziens, Architect.";
+            } anders {
+                print "Ongeldige keuze. Voer het script opnieuw uit.";
+            }
+        }
+    }
+}

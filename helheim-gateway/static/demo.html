@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Helheim AI — Demo Chatbot</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root { --primary: #8b5cf6; --surface: #0f0f1a; --border: #1e1e2e; }
+        body { background: #09090b; color: #f0f0f3; font-family: 'Inter', sans-serif; }
+        .glow { text-shadow: 0 0 30px rgba(139,92,246,0.4); }
+        .chat-area { max-height: 500px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #333 transparent; }
+        .chat-area::-webkit-scrollbar { width: 4px; }
+        .chat-area::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+        .msg-user { background: rgba(139,92,246,0.15); border: 1px solid rgba(139,92,246,0.2); }
+        .msg-bot { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); }
+        .template-card { background: rgba(15,15,26,0.8); border: 1px solid var(--border); cursor: pointer; transition: all 0.2s; }
+        .template-card:hover { border-color: rgba(139,92,246,0.4); transform: translateY(-1px); }
+        .template-card.active { border-color: rgba(139,92,246,0.6); box-shadow: 0 0 20px rgba(139,92,246,0.1); }
+        .typing span { animation: blink 1.4s infinite; background: #888; width: 6px; height: 6px; border-radius: 50%; display: inline-block; margin: 0 2px; }
+        .typing span:nth-child(2) { animation-delay: 0.2s; }
+        .typing span:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes blink { 0%,100%{opacity:0.2} 50%{opacity:1} }
+        .fade-in { animation: fadeIn 0.3s ease-out; }
+        @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+    </style>
+</head>
+<body class="min-h-screen">
+    <!-- Nav -->
+    <nav class="border-b border-white/5 px-6 py-4 backdrop-blur-sm sticky top-0 z-50 bg-[#09090b]/80">
+        <div class="max-w-6xl mx-auto flex justify-between items-center">
+            <a href="/" class="flex items-center gap-3">
+                <div class="w-9 h-9 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center font-bold text-sm shadow-lg shadow-indigo-500/20">H</div>
+                <span class="text-xl font-bold">Helheim<span class="text-indigo-400">.ai</span></span>
+            </a>
+            <div class="flex items-center gap-4">
+                <a href="/" class="text-sm text-gray-400 hover:text-gray-200">Home</a>
+                <a href="/login" class="text-sm bg-violet-600/20 text-indigo-400 px-4 py-1.5 rounded-lg hover:bg-violet-600/30 transition">Gratis starten</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="max-w-6xl mx-auto px-6 py-10">
+        <!-- Header -->
+        <div class="text-center mb-10">
+            <h1 class="text-3xl font-bold mb-3 glow">Probeer een AI Chatbot</h1>
+            <p class="text-gray-400 max-w-xl mx-auto">Kies een bot-type en stel een vraag. Dit is exact hoe je bot eruitziet op je website. Geen account nodig.</p>
+        </div>
+
+        <!-- Template selector -->
+        <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mb-8" id="templates">
+        </div>
+
+        <!-- Chat interface -->
+        <div class="max-w-3xl mx-auto">
+            <div class="rounded-2xl overflow-hidden border border-[#1e1e2e]" style="background:rgba(10,10,18,0.95)">
+                <!-- Chat header -->
+                <div class="px-5 py-3 border-b border-[#1e1e2e] flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <div id="bot-icon" class="w-8 h-8 bg-indigo-500/20 rounded-full flex items-center justify-center text-lg">💬</div>
+                        <div>
+                            <div id="bot-name" class="font-semibold text-sm">Klantenservice Bot</div>
+                            <div class="text-xs text-green-400 flex items-center gap-1">
+                                <span class="w-1.5 h-1.5 bg-green-400 rounded-full inline-block"></span> Online
+                            </div>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span id="tools-badge" class="text-xs text-gray-500"></span>
+                        <button onclick="resetChat()" class="text-xs text-gray-500 hover:text-gray-300 px-2 py-1 rounded hover:bg-white/5">Nieuw gesprek</button>
+                    </div>
+                </div>
+
+                <!-- Messages -->
+                <div class="chat-area p-5 space-y-3" id="messages">
+                    <div class="msg-bot rounded-xl px-4 py-3 max-w-[85%] text-sm fade-in" id="welcome-msg">
+                        Hallo! Hoe kan ik u helpen?
+                    </div>
+                </div>
+
+                <!-- Input -->
+                <div class="px-4 py-3 border-t border-[#1e1e2e]">
+                    <div class="flex gap-2">
+                        <input id="input" type="text" placeholder="Stel een vraag..." class="flex-1 bg-white/5 border border-[#1e1e2e] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500/50 placeholder-gray-600" onkeydown="if(event.key==='Enter')sendMsg()">
+                        <button onclick="sendMsg()" id="send-btn" class="bg-violet-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl text-sm font-medium transition">Stuur</button>
+                    </div>
+                    <div class="text-center mt-2">
+                        <span class="text-[10px] text-gray-600">Powered by Helheim AI — <a href="/login" class="text-indigo-500 hover:text-indigo-400">Maak je eigen bot</a></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Example questions -->
+            <div class="mt-4 flex flex-wrap gap-2 justify-center" id="suggestions">
+            </div>
+        </div>
+    </div>
+
+<script>
+var DEMO_TENANT = '{{DEMO_TENANT_ID}}';
+var chatHistory = [];
+var sending = false;
+
+var TEMPLATES = [
+    { id: 'klantenservice', icon: '💬', name: 'Klantenservice', welcome: 'Hallo! Hoe kan ik u helpen?', suggestions: ['Wat zijn jullie openingstijden?', 'Wat kost een afspraak?', 'Waar zijn jullie gevestigd?'] },
+    { id: 'finance', icon: '📈', name: 'Finance', welcome: 'Hallo! Ik kan live koersen opzoeken. Waar ben je in geïnteresseerd?', suggestions: ['Wat is de koers van AAPL?', 'Hoe staat Bitcoin?', 'Wisselkoers EUR/USD'] },
+    { id: 'weer', icon: '🌤️', name: 'Weer', welcome: 'Hallo! Voor welke plaats wil je het weer weten?', suggestions: ['Weer in Amsterdam', 'Weer in Parijs', 'Moet ik een paraplu mee?'] },
+    { id: 'nieuws', icon: '📰', name: 'Nieuws', welcome: 'Hallo! Over welk onderwerp wil je het laatste nieuws?', suggestions: ['Nieuws over AI', 'Wat is er gaande in Nederland?', 'Tech nieuws'] },
+    { id: 'rekenhulp', icon: '🧮', name: 'Rekenhulp', welcome: 'Hallo! Waarmee kan ik je helpen? Berekeningen, conversies, of wiskunde?', suggestions: ['Wat is 15% van 249?', '100 km in miles', '25 celsius naar fahrenheit'] },
+    { id: 'onderzoek', icon: '🔍', name: 'Research', welcome: 'Hallo! Waar kan ik informatie over opzoeken?', suggestions: ['Wat is machine learning?', 'Zoek informatie over zonne-energie', 'Leg blockchain uit'] },
+    { id: 'alles', icon: '🚀', name: 'Alles-in-één', welcome: 'Hallo! Ik kan van alles: weer, koersen, rekenen, zoeken, en meer!', suggestions: ['Weer in Rotterdam', 'Koers van Tesla', 'Wat is 42 * 17?', 'Zoek info over Rust'] },
+];
+
+var activeTemplate = TEMPLATES[0];
+
+function renderTemplates() {
+    var html = TEMPLATES.map(function(t) {
+        var cls = t.id === activeTemplate.id ? 'active' : '';
+        return '<div class="template-card rounded-xl p-3 text-center ' + cls + '" onclick="selectTemplate(\'' + t.id + '\')">' +
+            '<div class="text-2xl mb-1">' + t.icon + '</div>' +
+            '<div class="text-xs font-medium">' + t.name + '</div>' +
+        '</div>';
+    }).join('');
+    document.getElementById('templates').innerHTML = html;
+}
+
+function selectTemplate(id) {
+    activeTemplate = TEMPLATES.find(function(t) { return t.id === id; }) || TEMPLATES[0];
+    renderTemplates();
+    resetChat();
+}
+
+function resetChat() {
+    chatHistory = [];
+    var msgs = document.getElementById('messages');
+    msgs.innerHTML = '<div class="msg-bot rounded-xl px-4 py-3 max-w-[85%] text-sm fade-in">' + esc(activeTemplate.welcome) + '</div>';
+    document.getElementById('bot-icon').textContent = activeTemplate.icon;
+    document.getElementById('bot-name').textContent = activeTemplate.name + ' Bot';
+    renderSuggestions();
+}
+
+function renderSuggestions() {
+    var html = (activeTemplate.suggestions || []).map(function(s) {
+        return '<button onclick="askSuggestion(this)" class="text-xs bg-white/5 border border-[#1e1e2e] text-gray-400 px-3 py-1.5 rounded-full hover:border-indigo-500/30 hover:text-gray-300 transition">' + esc(s) + '</button>';
+    }).join('');
+    document.getElementById('suggestions').innerHTML = html;
+}
+
+function askSuggestion(el) {
+    document.getElementById('input').value = el.textContent;
+    sendMsg();
+}
+
+function addMsg(role, text) {
+    var msgs = document.getElementById('messages');
+    var cls = role === 'user' ? 'msg-user ml-auto' : 'msg-bot';
+    var div = document.createElement('div');
+    div.className = cls + ' rounded-xl px-4 py-3 max-w-[85%] text-sm fade-in';
+    div.textContent = text;
+    msgs.appendChild(div);
+    msgs.scrollTop = msgs.scrollHeight;
+}
+
+function addTyping() {
+    var msgs = document.getElementById('messages');
+    var div = document.createElement('div');
+    div.id = 'typing';
+    div.className = 'msg-bot rounded-xl px-4 py-3 max-w-[85%] text-sm fade-in';
+    div.innerHTML = '<div class="typing"><span></span><span></span><span></span></div>';
+    msgs.appendChild(div);
+    msgs.scrollTop = msgs.scrollHeight;
+}
+
+function removeTyping() {
+    var el = document.getElementById('typing');
+    if (el) el.remove();
+}
+
+function sendMsg() {
+    if (sending) return;
+    var input = document.getElementById('input');
+    var text = input.value.trim();
+    if (!text) return;
+    input.value = '';
+
+    // Hide suggestions after first message
+    document.getElementById('suggestions').innerHTML = '';
+
+    addMsg('user', text);
+    chatHistory.push({ role: 'user', content: text });
+
+    sending = true;
+    document.getElementById('send-btn').disabled = true;
+    addTyping();
+
+    // Use the demo tenant's template type to route to the right bot config
+    var body = {
+        messages: chatHistory,
+        demo_template: activeTemplate.id
+    };
+
+    fetch('/api/v1/demo/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        removeTyping();
+        sending = false;
+        document.getElementById('send-btn').disabled = false;
+        var reply = data.response || data.error || 'Geen antwoord ontvangen';
+        addMsg('bot', reply);
+        chatHistory.push({ role: 'assistant', content: reply });
+
+        if (data.tools_used && data.tools_used.length > 0) {
+            document.getElementById('tools-badge').textContent = '🔧 ' + data.tools_used.join(', ');
+        } else {
+            document.getElementById('tools-badge').textContent = '';
+        }
+    })
+    .catch(function(e) {
+        removeTyping();
+        sending = false;
+        document.getElementById('send-btn').disabled = false;
+        addMsg('bot', 'Er ging iets mis. Probeer het opnieuw.');
+    });
+}
+
+function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+renderTemplates();
+resetChat();
+</script>
+</body>
+</html>

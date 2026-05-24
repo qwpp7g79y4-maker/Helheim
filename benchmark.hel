@@ -1,0 +1,18 @@
+print "=== HELHEIM GPU BENCHMARK ===";
+print "Taal: Helheim DSL | Hardware: RTX 5060 Ti";
+print "-----------------------------";
+
+print "Test 1: 512x512";
+matmul 512;
+
+print "Test 2: 1024x1024";
+matmul 1024;
+
+print "Test 3: 2048x2048";
+matmul 2048;
+
+print "Test 4: 4096x4096";
+matmul 4096;
+
+print "-----------------------------";
+print "Benchmark klaar.";

@@ -1,0 +1,15 @@
+[Unit]
+Description=Helheim Body (The Engine)
+After=network.target
+
+[Service]
+Type=simple
+User=bitboi_slave
+# Default standard port is 9001
+ExecStart=/usr/local/bin/helheim service --port 9001
+Restart=always
+RestartSec=5
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,167 @@
+/* === Helheim Chat — Core Styles === */
+:root {
+    --bg-primary: #0a0a0f;
+    --bg-card: rgba(15, 15, 25, 0.8);
+    --bg-input: rgba(15, 15, 25, 0.8);
+    --border-subtle: rgba(99, 102, 241, 0.2);
+    --border-focus: rgba(99, 102, 241, 0.5);
+    --accent: #6366f1;
+    --accent-light: #818cf8;
+    --text-primary: #e2e8f0;
+    --text-secondary: #94a3b8;
+    --text-muted: #64748b;
+}
+
+body { background: var(--bg-primary); color: var(--text-primary); }
+.glow { text-shadow: 0 0 20px rgba(99, 102, 241, 0.5); }
+
+/* === Buttons === */
+.btn-primary {
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    transition: all 0.2s;
+}
+.btn-primary:hover { background: linear-gradient(135deg, #818cf8, #a78bfa); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-ghost {
+    background: transparent;
+    border: 1px solid rgba(99, 102, 241, 0.2);
+    color: var(--text-secondary);
+    transition: all 0.2s;
+}
+.btn-ghost:hover { border-color: rgba(99, 102, 241, 0.4); color: var(--text-primary); }
+
+.btn-danger { background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); color: #f87171; }
+.btn-danger:hover { background: rgba(239, 68, 68, 0.25); }
+
+/* === Inputs === */
+select, input, textarea {
+    background: var(--bg-input);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-primary);
+    transition: border-color 0.2s;
+}
+select:focus, input:focus, textarea:focus {
+    border-color: var(--border-focus);
+    outline: none;
+}
+
+/* === Messages === */
+.msg-user { background: rgba(99, 102, 241, 0.12); border: 1px solid rgba(99, 102, 241, 0.2); }
+.msg-assistant { background: rgba(30, 30, 50, 0.5); border: 1px solid rgba(55, 55, 80, 0.3); }
+
+/* === Scrollbar === */
+#chat-messages { scroll-behavior: smooth; }
+#chat-messages::-webkit-scrollbar { width: 6px; }
+#chat-messages::-webkit-scrollbar-track { background: transparent; }
+#chat-messages::-webkit-scrollbar-thumb { background: rgba(99, 102, 241, 0.3); border-radius: 3px; }
+
+/* === Typing indicator === */
+.typing-indicator span {
+    display: inline-block;
+    width: 6px; height: 6px;
+    background: var(--accent);
+    border-radius: 50%;
+    margin: 0 2px;
+    animation: bounce 1.4s infinite ease-in-out;
+}
+.typing-indicator span:nth-child(1) { animation-delay: 0s; }
+.typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+.typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes bounce {
+    0%, 80%, 100% { transform: scale(0); }
+    40% { transform: scale(1); }
+}
+
+/* === Markdown content === */
+.markdown-content p { margin-bottom: 0.5em; }
+.markdown-content ul, .markdown-content ol { margin-left: 1.5em; margin-bottom: 0.5em; }
+.markdown-content li { margin-bottom: 0.25em; }
+.markdown-content strong { color: #a5b4fc; }
+.markdown-content h1, .markdown-content h2, .markdown-content h3 {
+    font-weight: 700; margin-top: 0.75em; margin-bottom: 0.25em; color: #c7d2fe;
+}
+.markdown-content blockquote {
+    border-left: 3px solid rgba(99, 102, 241, 0.4);
+    padding-left: 1em; margin: 0.5em 0; color: var(--text-secondary);
+}
+
+/* === Code blocks === */
+.markdown-content code {
+    background: rgba(0,0,0,0.3);
+    padding: 0.15em 0.4em;
+    border-radius: 4px;
+    font-size: 0.85em;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+.markdown-content pre {
+    background: rgba(0,0,0,0.4);
+    border: 1px solid rgba(99, 102, 241, 0.15);
+    border-radius: 8px;
+    overflow-x: auto;
+    margin: 0.5em 0;
+    position: relative;
+}
+.markdown-content pre code {
+    background: none;
+    padding: 0.75em 1em;
+    display: block;
+}
+
+/* === Copy button on code blocks === */
+.code-block-wrapper { position: relative; }
+.copy-btn {
+    position: absolute;
+    top: 6px; right: 6px;
+    background: rgba(99, 102, 241, 0.2);
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    color: var(--text-secondary);
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+.code-block-wrapper:hover .copy-btn { opacity: 1; }
+.copy-btn:hover { background: rgba(99, 102, 241, 0.4); color: var(--text-primary); }
+.copy-btn.copied { background: rgba(34, 197, 94, 0.3); border-color: rgba(34, 197, 94, 0.5); color: #4ade80; }
+
+/* === Code language label === */
+.code-lang {
+    position: absolute;
+    top: 6px; left: 10px;
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* === Settings panel === */
+.settings-panel {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+    transition: all 0.3s;
+}
+
+/* === Message actions (regen, copy) === */
+.msg-actions {
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+.msg-wrapper:hover .msg-actions { opacity: 1; }
+
+/* === Tooltip === */
+.tooltip { position: relative; }
+.tooltip::after {
+    content: attr(data-tip);
+    position: absolute; bottom: 100%; left: 50%;
+    transform: translateX(-50%);
+    background: #1e1e2e; color: #e2e8f0;
+    padding: 4px 8px; border-radius: 4px;
+    font-size: 11px; white-space: nowrap;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.2s;
+}
+.tooltip:hover::after { opacity: 1; }

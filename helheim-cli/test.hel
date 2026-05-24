@@ -1,0 +1,2 @@
+zet INITMSG = "Helheim Native Compiler is online en operationeel!"
+schrijf "INITMSG - Succesvolle compilatie test." naar "test_output.txt"

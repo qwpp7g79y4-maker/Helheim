@@ -1,0 +1,18 @@
+[Unit]
+Description=Helheim Brain (The Intelligence)
+After=network.target helheim-body.service
+
+[Service]
+Type=simple
+User=bitboi_slave
+# Uses CPU (No GPU Detected)
+# Directory needed for .gguf model loading
+WorkingDirectory=/home/bitboi_slave/Helheim_Brain
+ExecStart=/usr/local/bin/helheim-brain
+Restart=always
+RestartSec=10
+# Environment=CUDA_DEVICE_ORDER=PCI_BUS_ID (Disabled for CPU)
+Environment="RAYON_NUM_THREADS=16"
+
+[Install]
+WantedBy=multi-user.target

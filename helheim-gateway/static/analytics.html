@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Helheim — Analytics</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { background: #09090b; color: #f0f0f3; font-family: 'Inter', sans-serif; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        .glow { text-shadow: 0 0 20px rgba(34,197,94,0.4); }
+        .card { background: rgba(12,12,20,0.9); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; }
+        .counter-card { background: rgba(12,12,20,0.9); border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; padding: 16px; text-align: center; }
+        .counter-val { font-size: 28px; font-weight: 700; }
+        .user-row { border-bottom: 1px solid rgba(255,255,255,0.04); transition: background 0.15s; }
+        .user-row:hover { background: rgba(255,255,255,0.03); }
+        .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+        .status-online { background: #22c55e; box-shadow: 0 0 8px rgba(34,197,94,0.5); animation: pulse 2s infinite; }
+        .status-recent { background: #eab308; box-shadow: 0 0 6px rgba(234,179,8,0.3); }
+        .status-offline { background: #6b7280; }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+        .bar { height: 20px; border-radius: 4px; min-width: 2px; transition: width 0.5s ease; }
+        .live-dot { width: 8px; height: 8px; background: #22c55e; border-radius: 50%; display: inline-block; animation: pulse 2s infinite; }
+    </style>
+</head>
+<body class="min-h-screen">
+    <canvas id="starfield" style="position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-events:none;opacity:0.5;"></canvas>
+    <span id="helheim-role" style="display:none">{{ROLE}}</span>
+    <nav class="px-6 py-4" style="background:rgba(9,9,11,0.88);backdrop-filter:blur(12px);position:relative;z-index:50">
+        <div class="max-w-7xl mx-auto flex justify-between items-center">
+            <a href="/" class="flex items-center gap-3">
+                <div class="w-8 h-8 bg-violet-600 rounded-xl shadow-lg shadow-violet-600/20 flex items-center justify-center font-bold text-sm">H</div>
+                <span class="text-xl font-bold glow">Helheim</span>
+            </a>
+            <div class="flex items-center gap-3 relative">
+                <span class="text-xs bg-{{ROLE_COLOR}}-600/20 text-{{ROLE_COLOR}}-400 px-2 py-1 rounded">{{ROLE}}</span>
+                <span class="live-dot"></span>
+                <span class="text-xs text-green-400" id="poll-status">LIVE</span>
+                <div class="relative">
+                    <button type="button" id="nav-menu-btn" class="text-sm font-medium text-zinc-300 hover:text-white px-3 py-2 rounded-lg border border-white/10 hover:border-white/20 transition-colors flex items-center gap-1">Menu <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg></button>
+                    <div id="nav-dropdown" class="hidden absolute right-0 mt-1 py-1 w-48 rounded-lg border border-white/10 bg-[#0f0f14] shadow-xl z-50">
+                        <a href="/dashboard" class="block px-4 py-2 text-sm text-zinc-300 hover:bg-white/5">Dashboard</a>
+                        <a href="/chat" class="block px-4 py-2 text-sm text-zinc-300 hover:bg-white/5">Chat</a>
+                        <a href="/tenants" class="block px-4 py-2 text-sm text-zinc-300 hover:bg-white/5">Chatbots</a>
+                        <a href="/settings" class="block px-4 py-2 text-sm text-zinc-300 hover:bg-white/5">Instellingen</a>
+                        <a href="/feedback" class="block px-4 py-2 text-sm text-amber-400/90 hover:bg-white/5">Feedback</a>
+                        <div id="nav-admin-items" class="border-t border-white/5 mt-1 pt-1">
+                            <a href="/usage" class="block px-4 py-2 text-sm text-zinc-400 hover:bg-white/5">Usage</a>
+                            <a href="/analytics" class="block px-4 py-2 text-sm text-white hover:bg-white/5">Analytics</a>
+                            <a href="/providers" class="block px-4 py-2 text-sm text-zinc-400 hover:bg-white/5">Providers</a>
+                            <a href="/debug" class="block px-4 py-2 text-sm text-zinc-400 hover:bg-white/5">Debug</a>
+                        </div>
+                        <div class="border-t border-white/5 mt-1 pt-1"><a href="/logout" class="block px-4 py-2 text-sm text-red-400/90 hover:bg-white/5">Uitloggen</a></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+    <script>(function(){var r=document.getElementById('helheim-role').textContent.trim();if(r!=='ADMIN')document.getElementById('nav-admin-items').style.display='none';document.getElementById('nav-menu-btn').onclick=function(){document.getElementById('nav-dropdown').classList.toggle('hidden');};document.addEventListener('click',function(e){if(!document.getElementById('nav-dropdown').contains(e.target)&&e.target.id!=='nav-menu-btn')document.getElementById('nav-dropdown').classList.add('hidden');});})();</script>
+
+    <div class="max-w-7xl mx-auto px-6 py-6" style="position:relative;z-index:1">
+        <!-- Live Counters -->
+        <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 mb-6">
+            <div class="counter-card">
+                <div class="counter-val text-green-400" id="c-online">0</div>
+                <div class="text-xs text-gray-500 mt-1">Online Nu</div>
+            </div>
+            <div class="counter-card">
+                <div class="counter-val text-yellow-400" id="c-recent">0</div>
+                <div class="text-xs text-gray-500 mt-1">Laatste Uur</div>
+            </div>
+            <div class="counter-card">
+                <div class="counter-val text-violet-400" id="c-requests">0</div>
+                <div class="text-xs text-gray-500 mt-1">Requests (24u)</div>
+            </div>
+            <div class="counter-card">
+                <div class="counter-val text-purple-400" id="c-tokens">0</div>
+                <div class="text-xs text-gray-500 mt-1">Tokens (24u)</div>
+            </div>
+            <div class="counter-card">
+                <div class="counter-val text-cyan-400" id="c-latency">0</div>
+                <div class="text-xs text-gray-500 mt-1">Gem. Latency</div>
+            </div>
+            <div class="counter-card">
+                <div class="counter-val text-red-400" id="c-errors">0</div>
+                <div class="text-xs text-gray-500 mt-1">Errors (24u)</div>
+            </div>
+        </div>
+
+        <!-- Active Sessions -->
+        <div class="card mb-6">
+            <div class="p-4 border-b border-white/5 flex justify-between items-center">
+                <h2 class="text-sm font-bold text-white">Actieve Sessies</h2>
+                <span class="text-xs text-gray-500" id="session-count">0 sessies</span>
+            </div>
+            <div id="sessions-body">
+                <div class="p-6 text-center text-gray-600 text-sm">Laden...</div>
+            </div>
+        </div>
+
+        <!-- User Activity (24h) -->
+        <div class="card mb-6">
+            <div class="p-4 border-b border-white/5">
+                <h2 class="text-sm font-bold text-white">Gebruikers Activiteit (24 uur)</h2>
+            </div>
+            <div class="p-4">
+                <div class="grid grid-cols-12 text-xs text-gray-500 font-semibold uppercase tracking-wider mb-3 px-2">
+                    <div class="col-span-3">Gebruiker</div>
+                    <div class="col-span-2">Requests</div>
+                    <div class="col-span-2">Tokens</div>
+                    <div class="col-span-2">Gem. Latency</div>
+                    <div class="col-span-1">Errors</div>
+                    <div class="col-span-2 text-right">Laatste Activiteit</div>
+                </div>
+                <div id="users-body">
+                    <div class="p-4 text-center text-gray-600 text-sm">Laden...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Model Usage -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+            <div class="card">
+                <div class="p-4 border-b border-white/5">
+                    <h2 class="text-sm font-bold text-white">Gebruik per Model</h2>
+                </div>
+                <div class="p-4" id="model-bars">
+                    <div class="text-center text-gray-600 text-sm">Laden...</div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="p-4 border-b border-white/5">
+                    <h2 class="text-sm font-bold text-white">Gebruik per Bron</h2>
+                </div>
+                <div class="p-4" id="source-bars">
+                    <div class="text-center text-gray-600 text-sm">Laden...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+<script>
+var API_KEY = '{{API_KEY}}';
+var now = Math.floor(Date.now() / 1000);
+
+function api(path) {
+    return fetch(path, { headers: { 'Authorization': 'Bearer ' + API_KEY } }).then(function(r) { return r.json(); });
+}
+
+function timeAgo(ts) {
+    var diff = now - ts;
+    if (diff < 60) return diff + 's geleden';
+    if (diff < 3600) return Math.floor(diff / 60) + 'm geleden';
+    if (diff < 86400) return Math.floor(diff / 3600) + 'u geleden';
+    return Math.floor(diff / 86400) + 'd geleden';
+}
+
+function fmtNum(n) {
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+    return n;
+}
+
+function sessionStatus(lastSeen) {
+    var diff = now - lastSeen;
+    if (diff < 300) return { cls: 'status-online', label: 'Online' };
+    if (diff < 3600) return { cls: 'status-recent', label: 'Recent' };
+    return { cls: 'status-offline', label: 'Offline' };
+}
+
+function renderSessions(sessions) {
+    var el = document.getElementById('sessions-body');
+    document.getElementById('session-count').textContent = sessions.length + ' sessies';
+    if (!sessions.length) {
+        el.innerHTML = '<div class="p-6 text-center text-gray-600 text-sm">Niemand online</div>';
+        return;
+    }
+    el.innerHTML = sessions.map(function(s) {
+        var st = sessionStatus(s.last_seen);
+        var duration = s.last_seen - s.first_seen;
+        var durStr = duration < 60 ? duration + 's' : Math.floor(duration / 60) + 'm';
+        return '<div class="user-row px-4 py-3">' +
+            '<div class="flex items-center justify-between">' +
+                '<div class="flex items-center gap-3">' +
+                    '<span class="status-dot ' + st.cls + '"></span>' +
+                    '<div>' +
+                        '<div class="text-sm font-semibold text-white">' + (s.email || s.api_key.substring(0, 12) + '...') + '</div>' +
+                        '<div class="text-xs text-gray-500">' + st.label + ' · ' + timeAgo(s.last_seen) + ' · sessie: ' + durStr + '</div>' +
+                    '</div>' +
+                '</div>' +
+                '<div class="flex items-center gap-6 text-xs">' +
+                    '<div class="text-center"><div class="text-violet-400 font-bold">' + s.request_count + '</div><div class="text-gray-600">requests</div></div>' +
+                    '<div class="text-center"><div class="text-purple-400 font-bold">' + fmtNum(s.tokens_used) + '</div><div class="text-gray-600">tokens</div></div>' +
+                    '<div class="text-center"><div class="text-cyan-400 font-bold">' + (s.last_model || '-') + '</div><div class="text-gray-600">model</div></div>' +
+                '</div>' +
+            '</div>' +
+        '</div>';
+    }).join('');
+}
+
+function renderUsers(users) {
+    var el = document.getElementById('users-body');
+    if (!users.length) {
+        el.innerHTML = '<div class="p-4 text-center text-gray-600 text-sm">Geen activiteit in de laatste 24 uur</div>';
+        return;
+    }
+    var maxReq = Math.max.apply(null, users.map(function(u) { return u.requests; }));
+    el.innerHTML = users.map(function(u) {
+        var pct = maxReq > 0 ? (u.requests / maxReq * 100) : 0;
+        return '<div class="user-row px-2 py-2">' +
+            '<div class="grid grid-cols-12 items-center">' +
+                '<div class="col-span-3 text-sm text-white truncate">' + u.email + '</div>' +
+                '<div class="col-span-2">' +
+                    '<div class="flex items-center gap-2">' +
+                        '<div class="bar bg-violet-500/30" style="width:' + pct + '%"></div>' +
+                        '<span class="mono text-xs text-violet-400">' + u.requests + '</span>' +
+                    '</div>' +
+                '</div>' +
+                '<div class="col-span-2 mono text-xs text-purple-400">' + fmtNum(u.tokens) + '</div>' +
+                '<div class="col-span-2 mono text-xs text-cyan-400">' + Math.round(u.avg_latency_ms) + 'ms</div>' +
+                '<div class="col-span-1 mono text-xs ' + (u.errors > 0 ? 'text-red-400' : 'text-gray-600') + '">' + u.errors + '</div>' +
+                '<div class="col-span-2 text-right text-xs text-gray-500">' + timeAgo(u.last_request) + '</div>' +
+            '</div>' +
+        '</div>';
+    }).join('');
+}
+
+function renderBars(containerId, items, labelKey, valueKey, color) {
+    var el = document.getElementById(containerId);
+    if (!items || !items.length) {
+        el.innerHTML = '<div class="text-center text-gray-600 text-sm">Geen data</div>';
+        return;
+    }
+    var maxVal = Math.max.apply(null, items.map(function(i) { return i[valueKey]; }));
+    el.innerHTML = items.map(function(i) {
+        var pct = maxVal > 0 ? (i[valueKey] / maxVal * 100) : 0;
+        return '<div class="flex items-center gap-3 mb-2">' +
+            '<div class="w-28 text-xs text-gray-400 truncate mono">' + (i[labelKey] || 'unknown') + '</div>' +
+            '<div class="flex-1"><div class="bar ' + color + '" style="width:' + pct + '%"></div></div>' +
+            '<div class="w-16 text-right mono text-xs text-gray-400">' + fmtNum(i[valueKey]) + '</div>' +
+        '</div>';
+    }).join('');
+}
+
+function poll() {
+    now = Math.floor(Date.now() / 1000);
+    api('/api/v1/analytics').then(function(data) {
+        // Counters
+        document.getElementById('c-online').textContent = data.live.active_now;
+        document.getElementById('c-recent').textContent = data.live.recent_sessions;
+        document.getElementById('c-requests').textContent = fmtNum(data.usage.total_requests);
+        document.getElementById('c-tokens').textContent = fmtNum(data.usage.total_tokens);
+        document.getElementById('c-latency').textContent = Math.round(data.usage.avg_latency_ms) + 'ms';
+        document.getElementById('c-errors').textContent = data.usage.total_errors;
+
+        // Sessions
+        renderSessions(data.live.active_sessions);
+
+        // Users
+        renderUsers(data.users);
+
+        // Model bars
+        renderBars('model-bars', data.usage.by_model, 'model', 'count', 'bg-violet-500/40');
+
+        // Source bars
+        renderBars('source-bars', data.usage.by_source, 'source', 'count', 'bg-green-500/40');
+    }).catch(function(e) {
+        console.error('Analytics poll error:', e);
+    });
+}
+
+poll();
+setInterval(poll, 5000);
+</script>
+    <script type="module">
+    import init, { Starfield } from '/static/wasm/helheim_starfield.js';
+    try {
+        await init();
+        document.getElementById('starfield').__wasm = true;
+        var sf = new Starfield('starfield');
+        var last = performance.now();
+        function frame(now) {
+            sf.tick(Math.min((now - last) / 1000, 0.05));
+            last = now;
+            requestAnimationFrame(frame);
+        }
+        requestAnimationFrame(frame);
+        window.addEventListener('resize', function() { sf.resize(); });
+    } catch(e) {
+        console.warn('[CORTEX] WASM failed:', e);
+    }
+    </script>
+    <script>
+    (function(){
+        var c = document.getElementById('starfield');
+        if (!c || c.__wasm) return;
+        var ctx = c.getContext('2d');
+        var W, H, stars = [], time = 0, seed = 42;
+        function rng() { seed = (seed * 1664525 + 1013904223) >>> 0; return ((seed >> 16) & 0xFFFF) / 65535; }
+        function resize() { W = window.innerWidth; H = window.innerHeight; c.width = W; c.height = H; }
+        function init() {
+            resize(); stars = [];
+            for (var i = 0; i < 200; i++) {
+                var z = rng();
+                stars.push({ x: rng()*W, y: rng()*H, z: z, sz: 0.3+z*1.5, br: 0.15+z*0.85, ts: 0.3+rng()*3, to: rng()*6.28, cr: 0.7+rng()*0.3, cg: 0.7+rng()*0.3, cb: 0.9+rng()*0.1 });
+            }
+        }
+        function tick(dt) {
+            time += dt;
+            ctx.fillStyle = '#09090b'; ctx.fillRect(0, 0, W, H);
+            for (var i = 0; i < stars.length; i++) {
+                var s = stars[i];
+                var tw = (Math.sin(time * s.ts + s.to) * 0.6 + Math.sin(time * s.ts * 0.7 + s.to * 1.3) * 0.4 + 1) * 0.5;
+                var br = s.br * (0.3 + tw * 0.7);
+                ctx.fillStyle = 'rgba('+Math.floor(s.cr*br*255)+','+Math.floor(s.cg*br*255)+','+Math.floor(s.cb*br*255)+','+br+')';
+                ctx.beginPath(); ctx.arc(s.x, s.y, s.sz, 0, 6.28); ctx.fill();
+            }
+        }
+        init();
+        var last = performance.now();
+        function frame(now) { tick(Math.min((now-last)/1000, 0.05)); last=now; requestAnimationFrame(frame); }
+        requestAnimationFrame(frame);
+        window.addEventListener('resize', function() { resize(); });
+    })();
+    </script>
+<script>(function(){if('{{ROLE}}'==='ADMIN'){var e=document.getElementById('admin-links');if(e)e.style.display='flex';}})();</script>
+</body>
+</html>

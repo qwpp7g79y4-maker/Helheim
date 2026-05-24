@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Helheim — Feedback</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { background: #09090b; color: #f0f0f3; font-family: 'Inter', sans-serif; }
+        .glow { text-shadow: 0 0 20px rgba(239,68,68,0.4); }
+        .card { background: rgba(12,12,20,0.9); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; }
+        textarea { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; color: #f0f0f3; resize: vertical; }
+        textarea:focus { outline: none; border-color: rgba(139,92,246,0.5); }
+        select { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; color: #f0f0f3; }
+        select:focus { outline: none; border-color: rgba(139,92,246,0.5); }
+        .cat-btn { padding: 6px 14px; border-radius: 8px; font-size: 13px; border: 1px solid rgba(255,255,255,0.1); cursor: pointer; transition: all 0.15s; }
+        .cat-btn:hover { border-color: rgba(139,92,246,0.4); }
+        .cat-btn.active { background: rgba(139,92,246,0.2); border-color: rgba(139,92,246,0.5); color: #a5b4fc; }
+    </style>
+</head>
+<body class="min-h-screen">
+    <canvas id="starfield" style="position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-events:none;opacity:0.5;"></canvas>
+    <script>
+    (function() {
+        var k = localStorage.getItem('helheim_api_key');
+        if (k && document.cookie.indexOf('helheim_session=') === -1) {
+            document.cookie = 'helheim_session=' + encodeURIComponent(k) + '; path=/; max-age=2592000; samesite=lax';
+        }
+    })();
+    </script>
+
+    <span id="helheim-role" style="display:none">{{ROLE}}</span>
+    <nav class="px-6 py-4" style="background:rgba(9,9,11,0.88);backdrop-filter:blur(12px);position:relative;z-index:50">
+        <div class="max-w-6xl mx-auto flex justify-between items-center">
+            <a href="/" class="flex items-center gap-3">
+                <div class="w-8 h-8 bg-violet-600 rounded-xl shadow-lg shadow-violet-600/20 flex items-center justify-center font-bold text-sm">H</div>
+                <span class="text-xl font-bold glow">Helheim</span>
+            </a>
+            <div class="flex items-center gap-3 relative">
+                <span class="text-xs bg-{{ROLE_COLOR}}-600/20 text-{{ROLE_COLOR}}-400 px-2 py-1 rounded">{{ROLE}}</span>
+                <div class="relative">
+                    <button type="button" id="nav-menu-btn" class="text-sm font-medium text-zinc-300 hover:text-white px-3 py-2 rounded-lg border border-white/10 hover:border-white/20 transition-colors flex items-center gap-1">Menu <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg></button>
+                    <div id="nav-dropdown" class="hidden absolute right-0 mt-1 py-1 w-48 rounded-lg border border-white/10 bg-[#0f0f14] shadow-xl z-50">
+                        <a href="/dashboard" class="block px-4 py-2 text-sm text-zinc-300 hover:bg-white/5">Dashboard</a>
+                        <a href="/chat" class="block px-4 py-2 text-sm text-zinc-300 hover:bg-white/5">Chat</a>
+                        <a href="/tenants" class="block px-4 py-2 text-sm text-zinc-300 hover:bg-white/5">Chatbots</a>
+                        <a href="/settings" class="block px-4 py-2 text-sm text-zinc-300 hover:bg-white/5">Instellingen</a>
+                        <a href="/feedback" class="block px-4 py-2 text-sm text-amber-400/90 hover:bg-white/5">Feedback</a>
+                        <div id="nav-admin-items" class="border-t border-white/5 mt-1 pt-1">
+                            <a href="/usage" class="block px-4 py-2 text-sm text-zinc-400 hover:bg-white/5">Usage</a>
+                            <a href="/analytics" class="block px-4 py-2 text-sm text-zinc-400 hover:bg-white/5">Analytics</a>
+                            <a href="/providers" class="block px-4 py-2 text-sm text-zinc-400 hover:bg-white/5">Providers</a>
+                            <a href="/debug" class="block px-4 py-2 text-sm text-zinc-400 hover:bg-white/5">Debug</a>
+                        </div>
+                        <div class="border-t border-white/5 mt-1 pt-1"><a href="/logout" class="block px-4 py-2 text-sm text-red-400/90 hover:bg-white/5">Uitloggen</a></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+    <script>(function(){var r=document.getElementById('helheim-role').textContent.trim();if(r!=='ADMIN')document.getElementById('nav-admin-items').style.display='none';document.getElementById('nav-menu-btn').onclick=function(){document.getElementById('nav-dropdown').classList.toggle('hidden');};document.addEventListener('click',function(e){if(!document.getElementById('nav-dropdown').contains(e.target)&&e.target.id!=='nav-menu-btn')document.getElementById('nav-dropdown').classList.add('hidden');});})();</script>
+
+    <div class="max-w-2xl mx-auto px-6 py-8" style="position:relative;z-index:1">
+        <div class="card p-8" id="form-card">
+            <h1 class="text-xl font-bold text-white mb-2">Feedback & Bug Reports</h1>
+            <p class="text-sm text-gray-500 mb-6">Help ons Helheim te verbeteren! Vertel ons wat je denkt, wat er beter kan, of meld een bug. Alle feedback is welkom.</p>
+
+            <!-- Category -->
+            <div class="mb-4">
+                <label class="text-xs text-gray-400 mb-2 block">Categorie</label>
+                <div class="flex gap-2 flex-wrap">
+                    <button class="cat-btn active" onclick="setCat('bug', this)">Bug / Fout</button>
+                    <button class="cat-btn" onclick="setCat('feature', this)">Feature Request</button>
+                    <button class="cat-btn" onclick="setCat('ux', this)">UX / Design</button>
+                    <button class="cat-btn" onclick="setCat('performance', this)">Performance</button>
+                    <button class="cat-btn" onclick="setCat('general', this)">Overig</button>
+                </div>
+            </div>
+
+            <!-- Message -->
+            <div class="mb-4">
+                <label class="text-xs text-gray-400 mb-2 block">Bericht <span class="text-red-400">*</span></label>
+                <textarea id="fb-message" rows="5" class="w-full p-3 text-sm" placeholder="Beschrijf je feedback, bug of suggestie zo duidelijk mogelijk..."></textarea>
+            </div>
+
+            <!-- Page context -->
+            <div class="mb-6">
+                <label class="text-xs text-gray-400 mb-2 block">Op welke pagina? (optioneel)</label>
+                <select id="fb-page" class="w-full p-2 text-sm">
+                    <option value="">— Selecteer —</option>
+                    <option value="dashboard">Dashboard</option>
+                    <option value="chat">Chat</option>
+                    <option value="login">Login / Register</option>
+                    <option value="providers">Providers</option>
+                    <option value="settings">Settings</option>
+                    <option value="analytics">Analytics</option>
+                    <option value="debug">Admin Panel</option>
+                    <option value="demo">Demo</option>
+                    <option value="api">API</option>
+                    <option value="mobile">Mobiel</option>
+                    <option value="other">Anders</option>
+                </select>
+            </div>
+
+            <!-- Submit -->
+            <button onclick="submitFeedback()" id="submit-btn" class="w-full bg-violet-600 hover:bg-indigo-500 text-white font-semibold py-3 rounded-lg transition cursor-pointer">
+                Verstuur Feedback
+            </button>
+
+            <div id="fb-msg" class="mt-4 text-sm hidden"></div>
+        </div>
+
+        <!-- Success state -->
+        <div class="card p-8 text-center hidden" id="success-card">
+            <div class="text-4xl mb-4">&#10003;</div>
+            <h2 class="text-xl font-bold text-white mb-2">Bedankt voor je feedback!</h2>
+            <p class="text-sm text-gray-500 mb-6">We bekijken je bericht zo snel mogelijk.</p>
+            <div class="flex gap-3 justify-center">
+                <button onclick="resetForm()" class="text-sm text-zinc-400 hover:text-white border border-indigo-700/30 px-4 py-2 rounded-lg cursor-pointer">Nog meer feedback</button>
+                <a href="/dashboard" class="text-sm text-gray-400 hover:text-gray-300 border border-gray-700/30 px-4 py-2 rounded-lg">Terug naar Dashboard</a>
+            </div>
+        </div>
+    </div>
+
+<script>
+var selectedCat = 'bug';
+var API_KEY = localStorage.getItem('helheim_api_key') || '';
+
+function setCat(cat, btn) {
+    selectedCat = cat;
+    document.querySelectorAll('.cat-btn').forEach(function(b) { b.classList.remove('active'); });
+    btn.classList.add('active');
+}
+
+function submitFeedback() {
+    var message = document.getElementById('fb-message').value.trim();
+    if (!message) {
+        showMsg('Vul een bericht in.', 'red');
+        return;
+    }
+
+    var page = document.getElementById('fb-page').value || null;
+    var btn = document.getElementById('submit-btn');
+    btn.textContent = 'Versturen...';
+    btn.disabled = true;
+
+    var headers = { 'Content-Type': 'application/json' };
+    if (API_KEY) headers['Authorization'] = 'Bearer ' + API_KEY;
+
+    fetch('/api/v1/feedback', {
+        method: 'POST',
+        headers: headers,
+        body: JSON.stringify({
+            category: selectedCat,
+            message: message,
+            page: page
+        })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.status === 'submitted') {
+            document.getElementById('form-card').classList.add('hidden');
+            document.getElementById('success-card').classList.remove('hidden');
+        } else {
+            showMsg('Fout: ' + (d.error || 'onbekend'), 'red');
+            btn.textContent = 'Verstuur Feedback';
+            btn.disabled = false;
+        }
+    }).catch(function(e) {
+        showMsg('Netwerkfout: ' + e, 'red');
+        btn.textContent = 'Verstuur Feedback';
+        btn.disabled = false;
+    });
+}
+
+function resetForm() {
+    document.getElementById('fb-message').value = '';
+    document.getElementById('fb-page').value = '';
+    document.getElementById('form-card').classList.remove('hidden');
+    document.getElementById('success-card').classList.add('hidden');
+    document.getElementById('submit-btn').textContent = 'Verstuur Feedback';
+    document.getElementById('submit-btn').disabled = false;
+}
+
+function showMsg(text, color) {
+    var el = document.getElementById('fb-msg');
+    el.textContent = text;
+    el.className = 'mt-4 text-sm text-' + color + '-400';
+    el.classList.remove('hidden');
+    setTimeout(function() { el.classList.add('hidden'); }, 4000);
+}
+</script>
+    <script type="module">
+    import init, { Starfield } from '/static/wasm/helheim_starfield.js';
+    try {
+        await init();
+        document.getElementById('starfield').__wasm = true;
+        var sf = new Starfield('starfield');
+        var last = performance.now();
+        function frame(now) { sf.tick(Math.min((now - last) / 1000, 0.05)); last = now; requestAnimationFrame(frame); }
+        requestAnimationFrame(frame);
+        window.addEventListener('resize', function() { sf.resize(); });
+    } catch(e) { console.warn('[CORTEX] WASM failed:', e); }
+    </script>
+    <script>
+    (function(){
+        var c = document.getElementById('starfield');
+        if (!c || c.__wasm) return;
+        var ctx = c.getContext('2d');
+        var W, H, stars = [], time = 0, seed = 42;
+        function rng() { seed = (seed * 1664525 + 1013904223) >>> 0; return ((seed >> 16) & 0xFFFF) / 65535; }
+        function resize() { W = window.innerWidth; H = window.innerHeight; c.width = W; c.height = H; }
+        function init() { resize(); stars = []; for (var i = 0; i < 200; i++) { var z = rng(); stars.push({ x: rng()*W, y: rng()*H, z: z, sz: 0.3+z*1.5, br: 0.15+z*0.85, ts: 0.3+rng()*3, to: rng()*6.28, cr: 0.7+rng()*0.3, cg: 0.7+rng()*0.3, cb: 0.9+rng()*0.1 }); } }
+        function tick(dt) { time += dt; ctx.fillStyle = '#09090b'; ctx.fillRect(0, 0, W, H); for (var i = 0; i < stars.length; i++) { var s = stars[i]; var tw = (Math.sin(time * s.ts + s.to) * 0.6 + Math.sin(time * s.ts * 0.7 + s.to * 1.3) * 0.4 + 1) * 0.5; var br = s.br * (0.3 + tw * 0.7); ctx.fillStyle = 'rgba('+Math.floor(s.cr*br*255)+','+Math.floor(s.cg*br*255)+','+Math.floor(s.cb*br*255)+','+br+')'; ctx.beginPath(); ctx.arc(s.x, s.y, s.sz, 0, 6.28); ctx.fill(); } }
+        init(); var last = performance.now();
+        function frame(now) { tick(Math.min((now-last)/1000, 0.05)); last=now; requestAnimationFrame(frame); }
+        requestAnimationFrame(frame); window.addEventListener('resize', function() { resize(); });
+    })();
+    </script>
+<script>(function(){if('{{ROLE}}'==='ADMIN'){var e=document.getElementById('admin-links');if(e)e.style.display='flex';}})();</script>
+</body>
+</html>

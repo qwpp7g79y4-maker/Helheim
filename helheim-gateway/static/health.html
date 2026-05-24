@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Helheim — System Health</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+        body { background: #09090b; color: #f0f0f3; }
+        .glow { text-shadow: 0 0 24px rgba(139, 92, 246, 0.35); }
+        .card { background: rgba(16, 16, 20, 0.85); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: 12px; }
+        .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+        .dot-ok { background: #22c55e; box-shadow: 0 0 8px #22c55e; }
+        .dot-error { background: #ef4444; box-shadow: 0 0 8px #ef4444; }
+        .dot-warning { background: #f59e0b; box-shadow: 0 0 8px #f59e0b; }
+        .dot-enabled { background: #8b5cf6; box-shadow: 0 0 8px #8b5cf6; }
+        .dot-disabled { background: #374151; }
+        .check-row { padding: 10px 16px; border-bottom: 1px solid rgba(255,255,255,0.04); display: flex; align-items: center; gap: 12px; }
+        .check-row:last-child { border-bottom: none; }
+        .mono { font-family: 'JetBrains Mono', 'Fira Code', monospace; }
+        .pulse { animation: pulse 2s infinite; }
+        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+    </style>
+</head>
+<body class="min-h-screen">
+    <canvas id="starfield" style="position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-events:none;opacity:0.5;"></canvas>
+    <span id="helheim-role" style="display:none">{{ROLE}}</span>
+    <nav class="px-6 py-4" style="background:rgba(9,9,11,0.88);backdrop-filter:blur(12px);position:relative;z-index:50">
+        <div class="max-w-6xl mx-auto flex justify-between items-center">
+            <a href="/" class="flex items-center gap-3">
+                <div class="w-8 h-8 bg-violet-600 rounded-xl shadow-lg shadow-violet-600/20 flex items-center justify-center font-bold text-sm">H</div>
+                <span class="text-xl font-bold glow">Helheim</span>
+            </a>
+            <div class="flex items-center gap-3 relative">
+                <span class="text-xs bg-{{ROLE_COLOR}}-600/20 text-{{ROLE_COLOR}}-400 px-2 py-1 rounded">{{ROLE}}</span>
+                <div class="relative">
+                    <button type="button" id="nav-menu-btn" class="text-sm font-medium text-zinc-300 hover:text-white px-3 py-2 rounded-lg border border-white/10 hover:border-white/20 transition-colors flex items-center gap-1">Menu <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg></button>
+                    <div id="nav-dropdown" class="hidden absolute right-0 mt-1 py-1 w-48 rounded-lg border border-white/10 bg-[#0f0f14] shadow-xl z-50">
+                        <a href="/dashboard" class="block px-4 py-2 text-sm text-zinc-300 hover:bg-white/5">Dashboard</a>
+                        <a href="/chat" class="block px-4 py-2 text-sm text-zinc-300 hover:bg-white/5">Chat</a>
+                        <a href="/tenants" class="block px-4 py-2 text-sm text-zinc-300 hover:bg-white/5">Chatbots</a>
+                        <a href="/settings" class="block px-4 py-2 text-sm text-zinc-300 hover:bg-white/5">Instellingen</a>
+                        <a href="/feedback" class="block px-4 py-2 text-sm text-amber-400/90 hover:bg-white/5">Feedback</a>
+                        <div id="nav-admin-items" class="border-t border-white/5 mt-1 pt-1">
+                            <a href="/usage" class="block px-4 py-2 text-sm text-zinc-400 hover:bg-white/5">Usage</a>
+                            <a href="/analytics" class="block px-4 py-2 text-sm text-zinc-400 hover:bg-white/5">Analytics</a>
+                            <a href="/providers" class="block px-4 py-2 text-sm text-zinc-400 hover:bg-white/5">Providers</a>
+                            <a href="/debug" class="block px-4 py-2 text-sm text-zinc-400 hover:bg-white/5">Debug</a>
+                            <a href="/health-dashboard" class="block px-4 py-2 text-sm text-white hover:bg-white/5">Health</a>
+                        </div>
+                        <div class="border-t border-white/5 mt-1 pt-1"><a href="/logout" class="block px-4 py-2 text-sm text-red-400/90 hover:bg-white/5">Uitloggen</a></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+    <script>(function(){var r=document.getElementById('helheim-role').textContent.trim();if(r!=='ADMIN')document.getElementById('nav-admin-items').style.display='none';document.getElementById('nav-menu-btn').onclick=function(){document.getElementById('nav-dropdown').classList.toggle('hidden');};document.addEventListener('click',function(e){if(!document.getElementById('nav-dropdown').contains(e.target)&&e.target.id!=='nav-menu-btn')document.getElementById('nav-dropdown').classList.add('hidden');});})();</script>
+
+    <div class="max-w-5xl mx-auto px-6 py-8" style="position:relative;z-index:1">
+        <!-- Header -->
+        <div class="flex items-center justify-between mb-8">
+            <div>
+                <h1 class="text-2xl font-bold glow">System Health</h1>
+                <p class="text-sm text-gray-500 mt-1">Real-time status van alle subsystemen</p>
+            </div>
+            <div id="overall-badge" class="px-4 py-2 rounded-lg text-sm font-bold"></div>
+        </div>
+
+        <!-- Summary Cards -->
+        <div class="grid grid-cols-4 gap-4 mb-8">
+            <div class="card p-4 text-center">
+                <div class="text-2xl font-bold text-green-400" id="s-ok">-</div>
+                <div class="text-xs text-gray-500">OK</div>
+            </div>
+            <div class="card p-4 text-center">
+                <div class="text-2xl font-bold text-yellow-400" id="s-warn">-</div>
+                <div class="text-xs text-gray-500">Warnings</div>
+            </div>
+            <div class="card p-4 text-center">
+                <div class="text-2xl font-bold text-red-400" id="s-err">-</div>
+                <div class="text-xs text-gray-500">Errors</div>
+            </div>
+            <div class="card p-4 text-center">
+                <div class="text-2xl font-bold text-gray-400" id="s-total">-</div>
+                <div class="text-xs text-gray-500">Total Checks</div>
+            </div>
+        </div>
+
+        <!-- Core Systems -->
+        <div class="card mb-6">
+            <div class="p-4 border-b border-white/5">
+                <h2 class="text-sm font-bold text-white">Core Systems</h2>
+            </div>
+            <div id="core-checks">
+                <div class="check-row text-gray-500 text-sm pulse">Laden...</div>
+            </div>
+        </div>
+
+        <!-- Providers -->
+        <div class="card mb-6">
+            <div class="p-4 border-b border-white/5">
+                <h2 class="text-sm font-bold text-white">Providers</h2>
+            </div>
+            <div id="provider-checks">
+                <div class="check-row text-gray-500 text-sm pulse">Laden...</div>
+            </div>
+        </div>
+
+        <!-- Feature Flags -->
+        <div class="card mb-6">
+            <div class="p-4 border-b border-white/5">
+                <h2 class="text-sm font-bold text-white">Feature Flags</h2>
+            </div>
+            <div id="feature-checks">
+                <div class="check-row text-gray-500 text-sm pulse">Laden...</div>
+            </div>
+        </div>
+
+        <!-- Pages -->
+        <div class="card mb-6">
+            <div class="p-4 border-b border-white/5">
+                <h2 class="text-sm font-bold text-white">Pages &amp; Routes</h2>
+            </div>
+            <div id="page-checks">
+                <div class="check-row text-gray-500 text-sm pulse">Laden...</div>
+            </div>
+        </div>
+
+        <!-- UI Components -->
+        <div class="card mb-6">
+            <div class="p-4 border-b border-white/5">
+                <h2 class="text-sm font-bold text-white">UI Components</h2>
+            </div>
+            <div id="ui-checks">
+                <div class="check-row text-gray-500 text-sm pulse">Laden...</div>
+            </div>
+        </div>
+
+        <!-- Last check -->
+        <div class="text-center text-xs text-gray-600 mt-4">
+            Laatste check: <span id="timestamp">-</span>
+            <button onclick="runCheck()" class="ml-4 text-violet-400 hover:text-violet-300 underline">Opnieuw checken</button>
+        </div>
+    </div>
+
+    <script>
+    var API_KEY = '{{API_KEY}}';
+
+    function api(path) {
+        return fetch(path, { headers: { 'Authorization': 'Bearer ' + API_KEY } }).then(function(r) {
+            if (!r.ok) throw new Error(r.status);
+            return r.json();
+        });
+    }
+
+    function dotClass(status) {
+        if (status === 'ok') return 'dot dot-ok';
+        if (status === 'error') return 'dot dot-error';
+        if (status === 'warning') return 'dot dot-warning';
+        if (status === 'enabled') return 'dot dot-enabled';
+        if (status === 'disabled') return 'dot dot-disabled';
+        return 'dot dot-warning';
+    }
+
+    function statusLabel(status) {
+        if (status === 'ok') return '<span class="text-green-400 text-xs font-semibold">OK</span>';
+        if (status === 'error') return '<span class="text-red-400 text-xs font-semibold">ERROR</span>';
+        if (status === 'warning') return '<span class="text-yellow-400 text-xs font-semibold">WARNING</span>';
+        if (status === 'enabled') return '<span class="text-violet-400 text-xs font-semibold">ENABLED</span>';
+        if (status === 'disabled') return '<span class="text-gray-500 text-xs font-semibold">DISABLED</span>';
+        return '<span class="text-gray-400 text-xs">' + status + '</span>';
+    }
+
+    function renderChecks(checks, category, containerId) {
+        var filtered = checks.filter(function(c) { return c.category === category; });
+        var el = document.getElementById(containerId);
+        if (!filtered.length) {
+            el.innerHTML = '<div class="check-row text-gray-600 text-sm">Geen checks</div>';
+            return;
+        }
+        el.innerHTML = filtered.map(function(c) {
+            return '<div class="check-row">' +
+                '<span class="' + dotClass(c.status) + '"></span>' +
+                '<span class="text-sm text-white flex-1">' + c.name + '</span>' +
+                statusLabel(c.status) +
+                '<span class="text-xs text-gray-500 mono ml-4" style="min-width:200px;text-align:right">' + c.detail + '</span>' +
+            '</div>';
+        }).join('');
+    }
+
+    function runCheck() {
+        api('/api/v1/admin/healthcheck').then(function(data) {
+            var s = data.summary;
+            document.getElementById('s-ok').textContent = s.ok;
+            document.getElementById('s-warn').textContent = s.warnings;
+            document.getElementById('s-err').textContent = s.errors;
+            document.getElementById('s-total').textContent = s.total;
+
+            var badge = document.getElementById('overall-badge');
+            if (s.overall === 'healthy') {
+                badge.textContent = 'HEALTHY';
+                badge.className = 'px-4 py-2 rounded-lg text-sm font-bold bg-green-600/20 text-green-400';
+            } else if (s.overall === 'partial') {
+                badge.textContent = 'PARTIAL';
+                badge.className = 'px-4 py-2 rounded-lg text-sm font-bold bg-yellow-600/20 text-yellow-400';
+            } else {
+                badge.textContent = 'DEGRADED';
+                badge.className = 'px-4 py-2 rounded-lg text-sm font-bold bg-red-600/20 text-red-400';
+            }
+
+            var checks = data.checks;
+            renderChecks(checks, 'core', 'core-checks');
+            renderChecks(checks, 'provider', 'provider-checks');
+            renderChecks(checks, 'feature', 'feature-checks');
+            renderChecks(checks, 'page', 'page-checks');
+            renderChecks(checks, 'ui', 'ui-checks');
+
+            var ts = new Date(data.timestamp * 1000);
+            document.getElementById('timestamp').textContent = ts.toLocaleString('nl-NL');
+        }).catch(function(e) {
+            document.getElementById('overall-badge').textContent = 'UNREACHABLE';
+            document.getElementById('overall-badge').className = 'px-4 py-2 rounded-lg text-sm font-bold bg-red-600/20 text-red-400';
+        });
+    }
+
+    runCheck();
+    setInterval(runCheck, 30000);
+    </script>
+
+    <script type="module">
+    import init, { Starfield } from '/static/wasm/helheim_starfield.js';
+    try {
+        await init();
+        document.getElementById('starfield').__wasm = true;
+        var sf = new Starfield('starfield');
+        var last = performance.now();
+        function frame(now) { sf.tick(Math.min((now - last) / 1000, 0.05)); last = now; requestAnimationFrame(frame); }
+        requestAnimationFrame(frame);
+        window.addEventListener('resize', function() { sf.resize(); });
+    } catch(e) { console.warn('[CORTEX] WASM failed:', e); }
+    </script>
+    <script>
+    (function(){
+        var c = document.getElementById('starfield');
+        if (!c || c.__wasm) return;
+        var ctx = c.getContext('2d');
+        var W, H, stars = [], time = 0, seed = 42;
+        function rng() { seed = (seed * 1664525 + 1013904223) >>> 0; return ((seed >> 16) & 0xFFFF) / 65535; }
+        function resize() { W = window.innerWidth; H = window.innerHeight; c.width = W; c.height = H; }
+        function init() { resize(); stars = []; for (var i = 0; i < 200; i++) { var z = rng(); stars.push({ x: rng()*W, y: rng()*H, z: z, sz: 0.3+z*1.5, br: 0.15+z*0.85, ts: 0.3+rng()*3, to: rng()*6.28, cr: 0.7+rng()*0.3, cg: 0.7+rng()*0.3, cb: 0.9+rng()*0.1 }); } }
+        function tick(dt) { time += dt; ctx.fillStyle = '#09090b'; ctx.fillRect(0, 0, W, H); for (var i = 0; i < stars.length; i++) { var s = stars[i]; var tw = (Math.sin(time * s.ts + s.to) * 0.6 + Math.sin(time * s.ts * 0.7 + s.to * 1.3) * 0.4 + 1) * 0.5; var br = s.br * (0.3 + tw * 0.7); ctx.fillStyle = 'rgba('+Math.floor(s.cr*br*255)+','+Math.floor(s.cg*br*255)+','+Math.floor(s.cb*br*255)+','+br+')'; ctx.beginPath(); ctx.arc(s.x, s.y, s.sz, 0, 6.28); ctx.fill(); } }
+        init(); var last = performance.now();
+        function frame(now) { tick(Math.min((now-last)/1000, 0.05)); last=now; requestAnimationFrame(frame); }
+        requestAnimationFrame(frame); window.addEventListener('resize', function() { resize(); });
+    })();
+    </script>
+<script>(function(){if('{{ROLE}}'==='ADMIN'){var e=document.getElementById('admin-links');if(e)e.style.display='flex';}})();</script>
+</body>
+</html>
