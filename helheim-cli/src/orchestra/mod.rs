@@ -83,9 +83,14 @@ impl Orchestrator {
             && !trimmed.starts_with("functie ") {
                 
             let memory = self.var_store.lock().unwrap();
-            // Simple replacement: checks if any word matches a variable key
+            // String Interpolation: Only replace $KEY or exact token matches to prevent substring corruption
             for (key, value) in memory.iter() {
-                resolved_input = resolved_input.replace(key, value);
+                let var_sigil = format!("${}", key);
+                resolved_input = resolved_input.replace(&var_sigil, value);
+                
+                // Also support exact token matching (e.g., `print KEY`)
+                // using a simple heuristic: if the token is isolated.
+                // It's safer to rely entirely on $VAR interpolation for strings.
             }
         }
         let trimmed = resolved_input.trim();
@@ -972,6 +977,7 @@ impl Orchestrator {
                     "-" => l - r,
                     "*" => l * r,
                     "/" => if r != 0 { l / r } else { 0 },
+                    "%" => if r != 0 { l % r } else { 0 },
                     _ => return expr.to_string(), // Unknown op
                 };
                 return res.to_string();

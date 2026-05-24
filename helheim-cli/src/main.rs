@@ -63,36 +63,74 @@ async fn main() -> Result<()> {
             println!("{}", "   Type 'help' or 'exit' to begin.        ".cyan());
             println!("{}", "==========================================".cyan());
 
+            let mut repl_buffer = String::new();
+            let mut brace_depth = 0i32;
+
             loop {
-                let prompt = format!("{}", "helheim> ".green());
+                let prompt = if brace_depth > 0 {
+                    format!("{}", "... ".yellow())
+                } else {
+                    format!("{}", "helheim> ".green())
+                };
+
                 let readline = rl.readline(&prompt);
                 match readline {
                     Ok(line) => {
                         let input = line.trim();
                         if input.is_empty() { continue; }
-                        let _ = rl.add_history_entry(input);
+                        
+                        brace_depth += input.chars().filter(|&c| c == '{').count() as i32;
+                        brace_depth -= input.chars().filter(|&c| c == '}').count() as i32;
+                        
+                        if !repl_buffer.is_empty() {
+                            repl_buffer.push(' ');
+                        }
+                        repl_buffer.push_str(input);
+                        
+                        if brace_depth > 0 {
+                            continue;
+                        }
+
+                        let final_input = repl_buffer.clone();
+                        repl_buffer.clear();
+                        brace_depth = 0; // Prevent negative depth breaking the prompt
+                        
+                        let _ = rl.add_history_entry(&final_input);
 
                         // Meta-commands
-                        if input.eq_ignore_ascii_case("exit") || input.eq_ignore_ascii_case("quit") {
+                        if final_input.eq_ignore_ascii_case("exit") || final_input.eq_ignore_ascii_case("quit") {
                             break;
                         }
-                        if input.eq_ignore_ascii_case("clear") {
+                        if final_input.eq_ignore_ascii_case("clear") {
                             print!("\x1B[2J\x1B[1;1H");
                             continue;
                         }
-                        if input.eq_ignore_ascii_case("help") {
+                        if final_input.eq_ignore_ascii_case("help") {
                             print_help();
                             continue;
                         }
 
-                        // Orchestrator Execution
-                        if let Err(e) = orchestrator.process_command(input).await {
-                             println!("{} {}", "[ERROR]".red().bold(), e);
+                        // We pass the string to the orchestrator. For proper AST in REPL, we could wrap it in script:
+                        // but let's stick to process_command for now as it supports intent parsing.
+                        // However, if the command contains braces, it's likely a native Helheim code block (als/functie)
+                        let is_block = final_input.contains('{') && final_input.contains('}');
+                        if is_block {
+                             let script_cmd = format!("script: {}", final_input);
+                             if let Err(e) = orchestrator.process_command(&script_cmd).await {
+                                  println!("{} {}", "[ERROR]".red().bold(), e);
+                             }
+                        } else {
+                             // Orchestrator Execution (Legacy / Single line / Intents)
+                             if let Err(e) = orchestrator.process_command(&final_input).await {
+                                  println!("{} {}", "[ERROR]".red().bold(), e);
+                             }
                         }
                     }
                     Err(ReadlineError::Interrupted) => {
                         println!("{}", "^C".yellow());
-                        break;
+                        repl_buffer.clear();
+                        brace_depth = 0;
+                        continue; // Don't break, just clear buffer on Ctrl+C
                     }
                     Err(ReadlineError::Eof) => {
                         println!("{}", "EOF".yellow());
@@ -108,33 +146,10 @@ async fn main() -> Result<()> {
         }
 
         Commands::Script { path } => {
-            println!("[SCRIPT]: Executing '{}'...", path);
+            println!("[SCRIPT]: Executing '{}' via Native AST Engine...", path);
             let content = tokio::fs::read_to_string(path).await?;
-            let mut buffer = String::new();
-            let mut brace_depth = 0i32;
-            for line in content.lines() {
-                let trimmed = line.trim();
-                if trimmed.is_empty() || trimmed.starts_with("//") {
-                    continue;
-                }
-                brace_depth += trimmed.chars().filter(|&c| c == '{').count() as i32;
-                brace_depth -= trimmed.chars().filter(|&c| c == '}').count() as i32;
-                if !buffer.is_empty() {
-                    buffer.push(' ');
-                }
-                buffer.push_str(trimmed);
-                if brace_depth <= 0 {
-                    let cmd = buffer.trim_end_matches(';').trim().to_string();
-                    if !cmd.is_empty() {
-                        orchestrator.process_command(&cmd).await?;
-                    }
-                    buffer.clear();
-                    brace_depth = 0;
-                }
-            }
-            if !buffer.trim().is_empty() {
-                orchestrator.process_command(buffer.trim()).await?;
-            }
+            let script_cmd = format!("script: {}", content);
+            orchestrator.process_command(&script_cmd).await?;
         }
 
         Commands::Run { input } => {
