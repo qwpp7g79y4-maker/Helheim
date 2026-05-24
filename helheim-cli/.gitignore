@@ -1,1 +1,6 @@
 /target
+*.key
+*.pem
+*.backup
+*.log
+history.txt

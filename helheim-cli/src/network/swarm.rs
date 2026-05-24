@@ -3,10 +3,12 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use anyhow::Result;
 use colored::*;
 
+use dashmap::DashMap;
+
 pub struct SwarmEngine;
 
 lazy_static::lazy_static! {
-    static ref CONNECTIONS: tokio::sync::Mutex<std::collections::HashMap<String, tokio::net::TcpStream>> = tokio::sync::Mutex::new(std::collections::HashMap::new());
+    static ref CONNECTIONS: DashMap<String, tokio::net::TcpStream> = DashMap::new();
 }
 
 impl SwarmEngine {
@@ -81,11 +83,9 @@ impl SwarmEngine {
         // 1. [HSP] Encrypt Payload (Chaos-XOR)
         let protected = crate::shield::HelheimShield::encrypt_packet(command);
         
-        let mut conns = CONNECTIONS.lock().await;
-        
         // Setup Persistent Socket
-        let mut stream = match conns.remove(&addr) {
-            Some(s) => s, // Grab from pool
+        let mut stream = match CONNECTIONS.remove(&addr) {
+            Some((_, s)) => s, // Grab from pool
             None => {
                 println!("{}", format!("[SWARM]: 🆕 Nieuwe Persistente TCP Verbinding naar {}...", addr).cyan());
                 TcpStream::connect(&addr).await.map_err(|e| anyhow::anyhow!("Connection Failed: {}", e))?
@@ -109,7 +109,7 @@ impl SwarmEngine {
         let raw_response = String::from_utf8_lossy(&buf[..n]);
         
         // Save back to Pool
-        conns.insert(addr, stream);
+        CONNECTIONS.insert(addr, stream);
         
         // [HSP] Decrypt Response
         let decrypted_response = crate::shield::HelheimShield::decrypt_packet(&raw_response)?;

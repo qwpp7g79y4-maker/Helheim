@@ -1,7 +1,6 @@
 use crate::orchestra::synthesis::CodeTaal;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use std::iter::Peekable;
-use std::str::Chars;
 
 /// De Helheim Parser: Zet 'Helheim' (Naturel) om in Abstracte Logica (AST).
 pub struct HelParser;
@@ -181,7 +180,7 @@ impl HelParser {
                 // Dit is complexer met tokens.
                 // We reconstrueren de zin en gebruiken de bestaande regex/split logic in CodeTaal::Send?
                 // Nee, parser moet het doen.
-                let mut payload = iter.next().unwrap_or_default();
+                let payload = iter.next().unwrap_or_default();
                 // Als payload tussen quotes staat, is het 1 token.
 
                 let mut targets = Vec::new();

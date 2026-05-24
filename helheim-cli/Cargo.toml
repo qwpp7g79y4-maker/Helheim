@@ -42,3 +42,4 @@ colored = "3.1.1"
 ring = "0.17"
 reqwest = { version = "0.11", features = ["json"] }
 regex = "1.10"
+dashmap = "6.2.1"

@@ -201,7 +201,7 @@ impl KernelSynthesisEngine {
     }
 
     /// Genereert geoptimaliseerde PTX code voor Matrix Mul (Tiled Shared Memory)
-    fn generate_matmul_ptx(m: usize, n: usize, k: usize) -> String {
+    fn generate_matmul_ptx(_m: usize, _n: usize, _k: usize) -> String {
         // TILED MATRIX MULTIPLICATION (The "Holy Grail" of CUDA Optimization)
         // Uses Shared Memory to reduce Global Memory traffic.
         // Block Size: 32x32 = 1024 threads
