@@ -1,0 +1,35 @@
+print "================================";
+print "   NATIVE HELHEIM SNN ENGINE";
+print "================================";
+
+zet CortexGeheugen = (0, 0);
+print "Initialisatie Geheugen: " $CortexGeheugen;
+
+functie VerwerkSpike met Waarde {
+    print "Ontvangen Spike Signaal: " $Waarde;
+    roep_aan voeg_toe CortexGeheugen $Waarde;
+    
+    zet HuidigeLengte = lengte(CortexGeheugen);
+    
+    als HuidigeLengte > 5 dan {
+        print "Geheugen vol! Verwijder oudste spike...";
+        roep_aan verwijder CortexGeheugen 0;
+    } anders {
+        print "Geheugen heeft nog ruimte.";
+    }
+}
+
+print "--- Start Loop ---";
+zet Cycles = 4;
+zet NieuweSpike = 1;
+
+zolang Cycles > 0 {
+    roep_aan VerwerkSpike $NieuweSpike;
+    print "Cortex Status: " $CortexGeheugen;
+    
+    zet NieuweSpike = NieuweSpike + 1;
+    zet Cycles = Cycles - 1;
+}
+
+print "--- SNN Simulatie Voltooid ---";
+print "Eindstatus Cortex: " $CortexGeheugen;

@@ -1,0 +1,8 @@
+zet MijnLijst = (10, 20, 30, 40);
+print "MijnLijst is: " $MijnLijst;
+
+zet EersteItem = MijnLijst[0];
+print "Het eerste item is: " $EersteItem;
+
+zet DerdeItem = MijnLijst[2];
+print "Het derde item is: " $DerdeItem;

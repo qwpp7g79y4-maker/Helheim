@@ -1,5 +1,0 @@
-zet X = 10;
-zet Y = 3;
-zet Z = X % Y;
-print "Modulo resultaat is $Z";
-print "Variabelen werken in string: $X en $Y en $Z";

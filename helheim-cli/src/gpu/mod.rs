@@ -1,9 +1,54 @@
 use anyhow::Result;
-use cudarc::driver::{CudaContext, LaunchConfig, PushKernelArg};
+use cudarc::driver::{CudaContext, LaunchConfig, PushKernelArg, CudaSlice};
 use cudarc::nvrtc::compile_ptx;
 use rand::Rng;
 use std::time::Instant;
 use colored::*;
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+lazy_static::lazy_static! {
+    pub static ref TENSOR_STORE: Mutex<HashMap<usize, CudaSlice<f32>>> = Mutex::new(HashMap::new());
+    pub static ref NEXT_TENSOR_ID: Mutex<usize> = Mutex::new(1);
+}
+
+pub fn gpu_alloc_tensor_random(m: usize, n: usize) -> Result<usize> {
+    let dev = CudaContext::new(0)?;
+    let stream = dev.default_stream();
+    let elements = m * n;
+    
+    let mut rng = rand::rng();
+    let host_data: Vec<f32> = (0..elements).map(|_| rng.random()).collect();
+    
+    let mut dev_data = stream.alloc_zeros::<f32>(elements)?;
+    stream.memcpy_htod(&host_data, &mut dev_data)?;
+    stream.synchronize()?;
+
+    let mut id_counter = NEXT_TENSOR_ID.lock().unwrap();
+    let id = *id_counter;
+    *id_counter += 1;
+
+    let mut store = TENSOR_STORE.lock().unwrap();
+    store.insert(id, dev_data);
+
+    Ok(id)
+}
+
+pub fn gpu_alloc_tensor_empty(m: usize, n: usize) -> Result<usize> {
+    let dev = CudaContext::new(0)?;
+    let stream = dev.default_stream();
+    let elements = m * n;
+    let dev_data = stream.alloc_zeros::<f32>(elements)?;
+
+    let mut id_counter = NEXT_TENSOR_ID.lock().unwrap();
+    let id = *id_counter;
+    *id_counter += 1;
+
+    let mut store = TENSOR_STORE.lock().unwrap();
+    store.insert(id, dev_data);
+
+    Ok(id)
+}
 
 pub const PTX_SRC: &str = r#"
 #define TILE_WIDTH 32
@@ -222,72 +267,197 @@ pub fn gpu_work_real(size: usize, device_id: usize) -> Result<()> {
     Ok(())
 }
 
-pub fn gpu_execute_raw_ptx(ptx_src: &str) -> Result<f64> {
+pub fn gpu_execute_raw_ptx_ids(ptx_src: &str, id_a: usize, id_b: usize, id_c: usize, m: usize, n: usize, k: usize) -> Result<f64> {
     let dev = CudaContext::new(0)?;
     let stream = dev.default_stream();
 
-    // In a real scenario, this might be a generic kernel, but for this benchmark we assume a matmul-compatible signature
-    // DIRECT C++ KERNEL COMPILATION (NVRTC)
-    // We treat the incoming "ptx_src" as C++ source code (from synthesis.rs) and compile it on-the-fly.
-    // This ensures compatibility with the specific GPU architecture (e.g. sm_86 vs sm_75).
+    let opts = cudarc::nvrtc::CompileOptions {
+        options: vec![
+            "--use_fast_math".to_string(),
+            "-arch=compute_86".to_string(),
+            "-std=c++11".to_string(),
+            "-I/usr/local/cuda/include".to_string(),
+        ],
+        ..Default::default()
+    };
     let ptx_res =
-        compile_ptx(ptx_src).map_err(|e| anyhow::anyhow!("NVRTC Compilation Failed: {:?}", e))?;
+        cudarc::nvrtc::compile_ptx_with_opts(ptx_src, opts).map_err(|e| anyhow::anyhow!("NVRTC Compilation Failed: {:?}", e))?;
 
-    // Load the compiled PTX module
     let module = dev.load_module(ptx_res)?;
-    // synthesis.rs generates: .visible .entry matmul_kernel
     let f = module.load_function("matmul_kernel")?;
+    
+    // FP16 Helper (if needed)
+    let helper_src = r#"
+        #include <cuda_fp16.h>
+        extern "C" __global__ void f32_to_f16(const float* in, half* out, int size) {
+            int idx = blockIdx.x * blockDim.x + threadIdx.x;
+            if (idx < size) { out[idx] = __float2half(in[idx]); }
+        }
+    "#;
+    let helper_ptx = cudarc::nvrtc::compile_ptx_with_opts(helper_src, cudarc::nvrtc::CompileOptions {
+        options: vec![
+            "-arch=compute_86".to_string(), 
+            "-std=c++11".to_string(),
+            "-I/usr/local/cuda/include".to_string()
+        ],
+        ..Default::default()
+    }).unwrap();
+    let helper_module = dev.load_module(helper_ptx)?;
+    let f_cvt = helper_module.load_function("f32_to_f16")?;
 
-    let size = 512;
-    let m = size;
-    let n = size;
-    let k = size;
-    let mut rng = rand::rng();
-    let a_host: Vec<f32> = (0..m * k).map(|_| rng.random()).collect();
-    let b_host: Vec<f32> = (0..k * n).map(|_| rng.random()).collect();
-    let c_host: Vec<f32> = vec![0.0; m * n];
+    let mut store = TENSOR_STORE.lock().unwrap();
+    let mut dev_c = store.remove(&id_c).ok_or_else(|| anyhow::anyhow!("C not found"))?;
+    let dev_a = store.get(&id_a).ok_or_else(|| anyhow::anyhow!("A not found"))?;
+    let dev_b = store.get(&id_b).ok_or_else(|| anyhow::anyhow!("B not found"))?;
 
-    let mut a_dev = stream.alloc_zeros::<f32>(a_host.len())?;
-    stream.memcpy_htod(&a_host, &mut a_dev)?;
-    let mut b_dev = stream.alloc_zeros::<f32>(b_host.len())?;
-    stream.memcpy_htod(&b_host, &mut b_dev)?;
-    let mut c_dev = stream.alloc_zeros::<f32>(c_host.len())?;
+    // Convert A and B to fp16
+    let mut a_half = stream.alloc_zeros::<u16>(m * k)?;
+    let mut b_half = stream.alloc_zeros::<u16>(k * n)?;
 
+    let threads = 256;
+    let res_cvt = unsafe {
+        let size_a = (m * k) as i32;
+        let mut bld_cvt1 = stream.launch_builder(&f_cvt);
+        let r1 = bld_cvt1.arg(dev_a).arg(&mut a_half).arg(&size_a).launch(LaunchConfig {
+            grid_dim: (((m * k) as u32 + threads - 1) / threads, 1, 1),
+            block_dim: (threads, 1, 1),
+            shared_mem_bytes: 0,
+        });
+        
+        let size_b = (k * n) as i32;
+        let mut bld_cvt2 = stream.launch_builder(&f_cvt);
+        let r2 = bld_cvt2.arg(dev_b).arg(&mut b_half).arg(&size_b).launch(LaunchConfig {
+            grid_dim: (((k * n) as u32 + threads - 1) / threads, 1, 1),
+            block_dim: (threads, 1, 1),
+            shared_mem_bytes: 0,
+        });
+        r1.and(r2)
+    };
+    
+    if res_cvt.is_err() {
+        res_cvt.map_err(|e| anyhow::anyhow!("f32_to_f16 kernel failed: {}", e))?;
+    }
+    stream.synchronize()?;
+
+    let mut durations = Vec::new();
+    let runs = 2; // Reduced benchmark runs to 2 since it's a real operation now
+    
+    // Configuration for apex wmma kernel
     let cfg = LaunchConfig {
-        grid_dim: (16, 16, 1),
-        block_dim: (32, 32, 1),
+        grid_dim: ((n as u32 + 127) / 128, (m as u32 + 127) / 128, 1),
+        block_dim: (32, 4, 2), // 256 threads aligned
         shared_mem_bytes: 0,
     };
 
-    let alpha = 1.0f32;
-    let beta = 0.0f32;
-    const RUNS: usize = 3;
-    let mut durations = Vec::with_capacity(RUNS);
-
-    for i in 0..RUNS {
-        let start = Instant::now();
-        unsafe {
-            let mut builder = stream.launch_builder(&f);
-            builder
-                .arg(&m)
-                .arg(&n)
-                .arg(&k)
-                .arg(&alpha)
-                .arg(&a_dev)
-                .arg(&b_dev)
-                .arg(&beta)
-                .arg(&mut c_dev);
-            builder.launch(cfg)?;
+    for run in 0..runs {
+        let start_compute = std::time::Instant::now();
+        let m_i32 = m as i32;
+        let n_i32 = n as i32;
+        let k_i32 = k as i32;
+        let alpha = 1.0f32;
+        let beta = 0.0f32;
+        let res_matmul = unsafe {
+            let mut bld = stream.launch_builder(&f);
+            bld.arg(&m_i32)
+               .arg(&n_i32)
+               .arg(&k_i32)
+               .arg(&alpha)
+               .arg(&a_half)
+               .arg(&b_half)
+               .arg(&beta)
+               .arg(&mut dev_c);
+            bld.launch(cfg)
+        };
+        if res_matmul.is_err() {
+            res_matmul.map_err(|e| anyhow::anyhow!("matmul_kernel failed: {}", e))?;
         }
         stream.synchronize()?;
-        if i > 0 {
-            durations.push(start.elapsed());
-        }
+        if run > 0 { durations.push(start_compute.elapsed()); }
     }
 
     let avg_secs = durations.iter().map(|d| d.as_secs_f64()).sum::<f64>() / durations.len() as f64;
     let gflops = (2.0 * m as f64 * n as f64 * k as f64) / (avg_secs * 1e9);
 
+    // Put dev_c back
+    store.insert(id_c, dev_c);
+
+    Ok(gflops)
+}
+
+pub fn gpu_execute_tensor_add(ptx_src: &str, id_a: usize, id_b: usize, id_c: usize, m: usize, n: usize) -> Result<f64> {
+    let dev = CudaContext::new(0)?;
+    let stream = dev.default_stream();
+    let opts = cudarc::nvrtc::CompileOptions {
+        options: vec!["-arch=compute_86".to_string(), "-std=c++11".to_string()],
+        ..Default::default()
+    };
+    let ptx_res = cudarc::nvrtc::compile_ptx_with_opts(ptx_src, opts).unwrap();
+    let module = dev.load_module(ptx_res)?;
+    let f = module.load_function("tensor_add_kernel")?;
+
+    let elements = m * n;
+
+    let mut store = TENSOR_STORE.lock().unwrap();
+    let mut dev_c = store.remove(&id_c).ok_or_else(|| anyhow::anyhow!("C not found"))?;
+    let dev_a = store.get(&id_a).ok_or_else(|| anyhow::anyhow!("A not found"))?;
+    let dev_b = store.get(&id_b).ok_or_else(|| anyhow::anyhow!("B not found"))?;
+
+    let threads = 256;
+    let blocks = (elements as u32 + threads - 1) / threads;
+    let cfg = LaunchConfig { grid_dim: (blocks, 1, 1), block_dim: (threads, 1, 1), shared_mem_bytes: 0 };
+
+    let start = std::time::Instant::now();
+    unsafe {
+        let mut bld = stream.launch_builder(&f);
+        let m_i32 = m as i32;
+        let n_i32 = n as i32;
+        bld.arg(dev_a).arg(dev_b).arg(&mut dev_c).arg(&m_i32).arg(&n_i32);
+        bld.launch(cfg)?;
+    }
+    stream.synchronize()?;
+    
+    let elapsed = start.elapsed().as_secs_f64();
+    let gflops = (elements as f64) / (elapsed * 1e9);
+
+    store.insert(id_c, dev_c);
+    Ok(gflops)
+}
+
+pub fn gpu_execute_tensor_relu(ptx_src: &str, id_a: usize, id_b: usize, m: usize, n: usize) -> Result<f64> {
+    let dev = CudaContext::new(0)?;
+    let stream = dev.default_stream();
+    let opts = cudarc::nvrtc::CompileOptions {
+        options: vec!["-arch=compute_86".to_string(), "-std=c++11".to_string()],
+        ..Default::default()
+    };
+    let ptx_res = cudarc::nvrtc::compile_ptx_with_opts(ptx_src, opts).unwrap();
+    let module = dev.load_module(ptx_res)?;
+    let f = module.load_function("tensor_relu_kernel")?;
+
+    let elements = m * n;
+
+    let mut store = TENSOR_STORE.lock().unwrap();
+    let mut dev_b = store.remove(&id_b).ok_or_else(|| anyhow::anyhow!("B not found"))?;
+    let dev_a = store.get(&id_a).ok_or_else(|| anyhow::anyhow!("A not found"))?;
+
+    let threads = 256;
+    let blocks = (elements as u32 + threads - 1) / threads;
+    let cfg = LaunchConfig { grid_dim: (blocks, 1, 1), block_dim: (threads, 1, 1), shared_mem_bytes: 0 };
+
+    let start = std::time::Instant::now();
+    unsafe {
+        let mut bld = stream.launch_builder(&f);
+        let m_i32 = m as i32;
+        let n_i32 = n as i32;
+        bld.arg(dev_a).arg(&mut dev_b).arg(&m_i32).arg(&n_i32);
+        bld.launch(cfg)?;
+    }
+    stream.synchronize()?;
+    
+    let elapsed = start.elapsed().as_secs_f64();
+    let gflops = (elements as f64) / (elapsed * 1e9);
+
+    store.insert(id_b, dev_b);
     Ok(gflops)
 }
 

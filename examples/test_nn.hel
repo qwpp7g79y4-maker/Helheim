@@ -1,0 +1,9 @@
+zet W = tensor(4096, 4096);
+zet B = tensor(4096, 4096);
+zet Input = tensor(4096, 4096);
+
+print "Start Neural Network Forward Pass...";
+zet Output = Input * W;
+zet Output = Output + B;
+zet Output = relu(Output);
+print "Forward Pass voltooid!";

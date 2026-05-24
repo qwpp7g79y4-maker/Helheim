@@ -16,6 +16,10 @@ lazy_static! {
 pub enum CodeTaal {
     /// Matrix Vermenigvuldiging (De basis van alle intelligentie)
     MatMul { m: usize, n: usize, k: usize },
+    /// Tensor Optelling (Element-wise Addition)
+    TensorAdd { m: usize, n: usize },
+    /// Tensor Activering (ReLU)
+    TensorRelu { m: usize, n: usize },
     /// Vector Operaties (Snelheid)
     VectorAdd { len: usize },
     /// Chaos & Entropie (Voor stress-tests en defensie)
@@ -108,6 +112,8 @@ impl KernelSynthesisEngine {
         println!("[CACHE MISS]: Nieuwe logica gedetecteerd. Starten van synthese...");
         let ptx = match seed {
             CodeTaal::MatMul { m, n, k } => Self::generate_matmul_ptx(m, n, k),
+            CodeTaal::TensorAdd { m, n } => Self::generate_tensor_add_ptx(m, n),
+            CodeTaal::TensorRelu { m, n } => Self::generate_tensor_relu_ptx(m, n),
             CodeTaal::VectorAdd { len } => Self::generate_vector_add_ptx(len),
             CodeTaal::Chaos {
                 intensity,
@@ -200,63 +206,163 @@ impl KernelSynthesisEngine {
         Ok(ptx)
     }
 
-    /// Genereert geoptimaliseerde PTX code voor Matrix Mul (Tiled Shared Memory)
+    /// Genereert geoptimaliseerde PTX code voor Matrix Mul (Project Godslayer - WMMA Tensor Cores)
     fn generate_matmul_ptx(_m: usize, _n: usize, _k: usize) -> String {
-        // TILED MATRIX MULTIPLICATION (The "Holy Grail" of CUDA Optimization)
-        // Uses Shared Memory to reduce Global Memory traffic.
-        // Block Size: 32x32 = 1024 threads
-        // Shared Mem: 2 * 32*32 * 4 bytes = 8KB (fits easily in L1)
-
+        // WMMA (Warp Matrix Multiply and Accumulate)
+        // Uses Hardware Tensor Cores via TF32 precision (allows standard floats as input but uses 19-bit math cores).
+        // Warp Size: 32 threads. Block Size: 128 (4 warps).
         format!(
             r#"
-#define TILE_WIDTH 32
+#include <mma.h>
+#include <cuda_fp16.h>
+using namespace nvcuda;
 
-extern "C" __global__ void matmul_kernel(int m, int n, int k, float alpha, const float* A, const float* B, float beta, float* C) {{
-    // Shared Memory for Tiles
-    __shared__ float ds_A[TILE_WIDTH][TILE_WIDTH];
-    __shared__ float ds_B[TILE_WIDTH][TILE_WIDTH];
+// Inline PTX for Async Copy
+__device__ __forceinline__ void cp_async_16B(void* smem, const void* gmem) {{
+    unsigned int smem_int = __cvta_generic_to_shared(smem);
+    asm volatile("cp.async.cg.shared.global [%0], [%1], 16;\n" :: "r"(smem_int), "l"((const char*)gmem));
+}}
+__device__ __forceinline__ void cp_async_commit() {{ asm volatile("cp.async.commit_group;\n"); }}
+__device__ __forceinline__ void cp_async_wait() {{ asm volatile("cp.async.wait_group 0;\n"); }}
 
-    // Shortcuts for Thread/Block IDs
-    int bx = blockIdx.x;  int by = blockIdx.y;
-    int tx = threadIdx.x; int ty = threadIdx.y;
+// FP16 WMMA Kernel for Maximum Throughput (Project Apex-WMMA)
+extern "C" __global__ void matmul_kernel(int M, int N, int K, float alpha, const half* A, const half* B, float beta, float* C) {{
+    // Block dimension: 256 threads (8 warps).
+    // Each block processes a 128x128 tile of C.
+    
+    // Double buffered shared memory! (2x 128x32)
+    __shared__ half s_A[2][128][32]; // K step is 32
+    __shared__ half s_B[2][32][128];
 
-    // Identify Row and Col of the element to work on
-    int Row = by * TILE_WIDTH + ty;
-    int Col = bx * TILE_WIDTH + tx;
+    int bx = blockIdx.x;
+    int by = blockIdx.y;
+    int tx = threadIdx.x;
+    
+    int warpId = tx / 32;
+    int laneId = tx % 32;
 
-    float acc = 0.0f;
+    int warpRow = (warpId / 2) * 64;
+    int warpCol = (warpId % 2) * 64;
 
-    // Loop over all tiles
-    int numTiles = (k + TILE_WIDTH - 1) / TILE_WIDTH;
+    int globalRow = by * 128 + warpRow;
+    int globalCol = bx * 128 + warpCol;
 
-    for (int p = 0; p < numTiles; ++p) {{
-        // Load A tile into Shared Memory using __ldg (Read-Only Cache)
-        if (Row < m && (p * TILE_WIDTH + tx) < k)
-             ds_A[ty][tx] = __ldg(&A[Row * k + (p * TILE_WIDTH + tx)]);
-        else
-             ds_A[ty][tx] = 0.0f;
-
-        // Load B tile into Shared Memory using __ldg
-        if (Col < n && (p * TILE_WIDTH + ty) < k)
-             ds_B[ty][tx] = __ldg(&B[(p * TILE_WIDTH + ty) * n + Col]);
-        else
-             ds_B[ty][tx] = 0.0f;
-
-        __syncthreads();
-
-        // Compute partial dot product for this tile
-        #pragma unroll
-        for (int i = 0; i < TILE_WIDTH; ++i) {{
-            acc += ds_A[ty][i] * ds_B[i][tx];
+    // 16 accumulators (each 16x16) for the 64x64 tile per warp
+    wmma::fragment<wmma::accumulator, 16, 16, 16, float> c_frag[4][4];
+    for (int i = 0; i < 4; i++) {{
+        for (int j = 0; j < 4; j++) {{
+            wmma::fill_fragment(c_frag[i][j], 0.0f);
         }}
-
-        __syncthreads();
     }}
 
-    // Write result to Global Memory
-    if (Row < m && Col < n) {{
-        int idx = Row * n + Col;
-        C[idx] = alpha * acc + beta * C[idx];
+    // PRE-LOAD the FIRST tile using cp.async
+    // 256 threads loading 128x32 elements = 4096 elements.
+    // Each thread loads 16 elements = 2x 16-byte chunks (8 elements each).
+    for (int i = 0; i < 2; i++) {{
+        int a_idx = i * 256 + tx;
+        int a_r = a_idx / 4; // 128 rows, 4 chunks of 8 elements = 32 elements.
+        int a_c = (a_idx % 4) * 8;
+        if ((by * 128 + a_r) < M && a_c < K)
+            cp_async_16B(&s_A[0][a_r][a_c], &A[(by * 128 + a_r) * K + a_c]);
+
+        int b_idx = i * 256 + tx;
+        int b_r = b_idx / 16; // 32 rows, 16 chunks of 8 elements = 128 elements.
+        int b_c = (b_idx % 16) * 8;
+        if (b_r < K && (bx * 128 + b_c) < N)
+            cp_async_16B(&s_B[0][b_r][b_c], &B[b_r * N + bx * 128 + b_c]);
+    }}
+    cp_async_commit();
+    cp_async_wait();
+    __syncthreads();
+
+    int load_idx = 1;
+    int compute_idx = 0;
+
+    // Iterate over K in chunks of 32
+    for (int k_step = 0; k_step < K; k_step += 32) {{
+        // ASYNC LOAD NEXT TILE
+        if (k_step + 32 < K) {{
+            for (int i = 0; i < 2; i++) {{
+                int a_idx = i * 256 + tx;
+                int a_r = a_idx / 4;
+                int a_c = (a_idx % 4) * 8;
+                if ((by * 128 + a_r) < M && (k_step + 32 + a_c) < K)
+                    cp_async_16B(&s_A[load_idx][a_r][a_c], &A[(by * 128 + a_r) * K + k_step + 32 + a_c]);
+
+                int b_idx = i * 256 + tx;
+                int b_r = b_idx / 16;
+                int b_c = (b_idx % 16) * 8;
+                if ((k_step + 32 + b_r) < K && (bx * 128 + b_c) < N)
+                    cp_async_16B(&s_B[load_idx][b_r][b_c], &B[(k_step + 32 + b_r) * N + bx * 128 + b_c]);
+            }}
+            cp_async_commit();
+        }}
+
+        // COMPUTE CURRENT TILE WITH FP16 TENSOR CORES
+        for (int k_frag = 0; k_frag < 32; k_frag += 16) {{
+            wmma::fragment<wmma::matrix_a, 16, 16, 16, half, wmma::row_major> a_frag[4];
+            wmma::fragment<wmma::matrix_b, 16, 16, 16, half, wmma::row_major> b_frag[4];
+
+            #pragma unroll
+            for(int i=0; i<4; i++) wmma::load_matrix_sync(a_frag[i], &s_A[compute_idx][warpRow + i*16][k_frag], 32);
+            #pragma unroll
+            for(int j=0; j<4; j++) wmma::load_matrix_sync(b_frag[j], &s_B[compute_idx][k_frag][warpCol + j*16], 128);
+
+            #pragma unroll
+            for (int i = 0; i < 4; i++) {{
+                #pragma unroll
+                for (int j = 0; j < 4; j++) {{
+                    wmma::mma_sync(c_frag[i][j], a_frag[i], b_frag[j], c_frag[i][j]);
+                }}
+            }}
+        }}
+
+        if (k_step + 32 < K) {{
+            cp_async_wait();
+            __syncthreads();
+            load_idx ^= 1;
+            compute_idx ^= 1;
+        }}
+    }}
+
+    // STORE RESULTS
+    for (int i = 0; i < 4; i++) {{
+        for (int j = 0; j < 4; j++) {{
+            int r = globalRow + i * 16;
+            int c = globalCol + j * 16;
+            if (r < M && c < N) {{
+                wmma::store_matrix_sync(C + r * N + c, c_frag[i][j], N, wmma::mem_row_major);
+            }}
+        }}
+    }}
+}}
+"#
+        )
+    }
+
+    fn generate_tensor_add_ptx(_m: usize, _n: usize) -> String {
+        format!(
+            r#"
+extern "C" __global__ void tensor_add_kernel(const float* A, const float* B, float* C, int M, int N) {{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int total_elements = M * N;
+    if (idx < total_elements) {{
+        C[idx] = A[idx] + B[idx];
+    }}
+}}
+"#
+        )
+    }
+
+    fn generate_tensor_relu_ptx(_m: usize, _n: usize) -> String {
+        format!(
+            r#"
+extern "C" __global__ void tensor_relu_kernel(const float* A, float* B, int M, int N) {{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int total_elements = M * N;
+    if (idx < total_elements) {{
+        float val = A[idx];
+        B[idx] = val > 0.0f ? val : 0.0f;
     }}
 }}
 "#

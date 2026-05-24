@@ -18,7 +18,7 @@ pub mod persistence;
 
 pub struct Orchestrator {
     discovery: Arc<DiscoveryService>,
-    var_store: std::sync::Mutex<std::collections::HashMap<String, String>>,
+    var_store: std::sync::Mutex<Vec<std::collections::HashMap<String, String>>>,
     func_store: std::sync::Mutex<std::collections::HashMap<String, String>>,
     ast_funcs: std::sync::Mutex<std::collections::HashMap<String, (Vec<String>, Box<crate::orchestra::synthesis::CodeTaal>)>>,
 }
@@ -41,9 +41,43 @@ impl Orchestrator {
 
         Self { 
             discovery,
-            var_store: std::sync::Mutex::new(globals),
+            var_store: std::sync::Mutex::new(vec![globals]),
             func_store: std::sync::Mutex::new(funcs),
             ast_funcs: std::sync::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    // --- SCOPE MANAGEMENT ---
+    fn push_scope(&self) {
+        let mut store = self.var_store.lock().unwrap();
+        store.push(std::collections::HashMap::new());
+        println!("[SCOPE]: Gepusht naar level {}", store.len());
+    }
+
+    fn pop_scope(&self) {
+        let mut store = self.var_store.lock().unwrap();
+        if store.len() > 1 {
+            store.pop();
+            println!("[SCOPE]: Gepopt naar level {}", store.len());
+        } else {
+            println!("[SCOPE]: Kan globaal scope niet poppen.");
+        }
+    }
+
+    fn get_var(&self, key: &str) -> Option<String> {
+        let store = self.var_store.lock().unwrap();
+        for scope in store.iter().rev() {
+            if let Some(val) = scope.get(key) {
+                return Some(val.clone());
+            }
+        }
+        None
+    }
+
+    fn set_var(&self, key: String, value: String) {
+        let mut store = self.var_store.lock().unwrap();
+        if let Some(scope) = store.last_mut() {
+            scope.insert(key, value);
         }
     }
 
@@ -82,15 +116,12 @@ impl Orchestrator {
             && !trimmed.starts_with("als ")
             && !trimmed.starts_with("functie ") {
                 
-            let memory = self.var_store.lock().unwrap();
-            // String Interpolation: Only replace $KEY or exact token matches to prevent substring corruption
-            for (key, value) in memory.iter() {
-                let var_sigil = format!("${}", key);
-                resolved_input = resolved_input.replace(&var_sigil, value);
-                
-                // Also support exact token matching (e.g., `print KEY`)
-                // using a simple heuristic: if the token is isolated.
-                // It's safer to rely entirely on $VAR interpolation for strings.
+            let store = self.var_store.lock().unwrap();
+            for scope in store.iter().rev() {
+                for (key, value) in scope.iter() {
+                    let var_sigil = format!("${}", key);
+                    resolved_input = resolved_input.replace(&var_sigil, value);
+                }
             }
         }
         let trimmed = resolved_input.trim();
@@ -106,8 +137,7 @@ impl Orchestrator {
                 let value = value_part.trim().trim_matches('"').to_string(); // Strip quotes
                 
                 println!("[MEMORY]: Opslaan variabele '{}' = '{}'...", name, value);
-                let mut memory = self.var_store.lock().unwrap();
-                memory.insert(name, value);
+                self.set_var(name, value);
                 return Ok(());
             } else {
                  println!("[ERROR]: Syntax fout. Gebruik: zet [naam] = [waarde]");
@@ -213,7 +243,8 @@ impl Orchestrator {
             let (globals, funcs) = {
                 let g = self.var_store.lock().unwrap();
                 let f = self.func_store.lock().unwrap();
-                (g.clone(), f.clone())
+                let global_scope = if !g.is_empty() { g[0].clone() } else { std::collections::HashMap::new() };
+                (global_scope, f.clone())
             };
             
             match persistence::MemoryState::save(&globals, &funcs).await {
@@ -229,9 +260,9 @@ impl Orchestrator {
                 Ok(state) => {
                     let mut g = self.var_store.lock().unwrap();
                     let mut f = self.func_store.lock().unwrap();
-                    *g = state.globals;
+                    *g = vec![state.globals];
                     *f = state.functions;
-                    println!("✅ Geheugen hersteld ({} vars, {} funcs)", g.len(), f.len());
+                    println!("✅ Geheugen hersteld ({} vars, {} funcs)", g[0].len(), f.len());
                 },
                 Err(e) => println!("❌ Laden mislukt: {}", e),
             }
@@ -652,31 +683,12 @@ impl Orchestrator {
             return tokio::fs::try_exists(path).await.unwrap_or(false);
         }
         
-        // 2. Equality Check: [a] == [b]
-        if condition.contains(" == ") {
-            let parts: Vec<&str> = condition.split(" == ").collect();
-            if parts.len() == 2 {
-                let mut left = parts[0].trim().to_string();
-                let mut right = parts[1].trim().to_string();
-                
-                // Dynamic Variable Resolution (Late Binding)
-                {
-                    let memory = self.var_store.lock().unwrap();
-                    if let Some(val) = memory.get(&left) { left = val.clone(); }
-                    if let Some(val) = memory.get(&right) { right = val.clone(); }
-                }
+        // 2. Powerful AST Evaluator via evalexpr
+        let result = self.evaluate_expression(condition);
+        if result == "waar" { return true; }
+        if result == "onwaar" { return false; }
 
-                let left_clean = left.trim_matches('"');
-                let right_clean = right.trim_matches('"');
-                return left_clean == right_clean;
-            }
-        }
-        
-        // 3. True/False literals
-        if condition == "waar" { return true; }
-        if condition == "onwaar" { return false; }
-
-        println!("[LOGIC]: Onbekende conditie: '{}'", condition);
+        println!("[LOGIC]: Onbekende of ongeldige conditie: '{}' (Geëvalueerd tot '{}')", condition, result);
         false
     }
 
@@ -717,7 +729,10 @@ impl Orchestrator {
                         
                         // 2. Execute on Hardware
                         println!("[GPU]: Launching Kernel on Nvidia RTX 5060 Ti...");
-                        match crate::gpu::gpu_execute_raw_ptx(&ptx) {
+                        let id_a = crate::gpu::gpu_alloc_tensor_random(m, k).unwrap();
+                        let id_b = crate::gpu::gpu_alloc_tensor_random(k, n).unwrap();
+                        let id_c = crate::gpu::gpu_alloc_tensor_empty(m, n).unwrap();
+                        match crate::gpu::gpu_execute_raw_ptx_ids(&ptx, id_a, id_b, id_c, m, n, k) {
                             Ok(gflops) => println!("[GPU]: ✅ Execution Complete. Performance: {:.2} GFLOPS", gflops),
                             Err(e) => println!("[ERROR]: GPU Runtime Fail: {}", e),
                         }
@@ -767,12 +782,10 @@ impl Orchestrator {
                             evaluated_value = self.evaluate_expression(&value);
                         }
                         println!("[MEM]: {} = {}", name, evaluated_value);
-                        let mut mem = self.var_store.lock().unwrap();
-                        mem.insert(name, evaluated_value);
+                        self.set_var(name, evaluated_value);
                     },
                     CodeTaal::VarGet { name } => {
-                       let mem = self.var_store.lock().unwrap();
-                       if let Some(val) = mem.get(&name) {
+                       if let Some(val) = self.get_var(&name) {
                            println!("[VAL]: {} = {}", name, val);
                        } else {
                            println!("[ERR]: Variabele '{}' niet gevonden.", name);
@@ -808,10 +821,7 @@ impl Orchestrator {
                             for v in arr {
                                 let item_str = if let Some(s) = v.as_str() { s.to_string() } else { v.to_string() };
                                 // Inject localized variables directly into memory
-                                {
-                                    let mut mem = self.var_store.lock().unwrap();
-                                    mem.insert(iterator.clone(), item_str);
-                                }
+                                self.set_var(iterator.clone(), item_str);
                                 if let Some(ret) = self.execute_ast(clone_statements.clone()).await? {
                                     return Ok(Some(ret));
                                 }
@@ -856,11 +866,13 @@ impl Orchestrator {
                          // 1. String Interpolation (Basic: check for $vars)
                          let mut final_payload = clean_payload.to_string();
                          if final_payload.contains('$') {
-                             let mem = self.var_store.lock().unwrap();
-                             for (k, v) in mem.iter() {
-                                 let key = format!("${}", k);
-                                 if final_payload.contains(&key) {
-                                     final_payload = final_payload.replace(&key, v);
+                             let store = self.var_store.lock().unwrap();
+                             for scope in store.iter().rev() {
+                                 for (k, v) in scope.iter() {
+                                     let key = format!("${}", k);
+                                     if final_payload.contains(&key) {
+                                         final_payload = final_payload.replace(&key, v);
+                                     }
                                  }
                              }
                          }
@@ -897,14 +909,81 @@ impl Orchestrator {
     }
 
     async fn execute_function_call(&self, name: &str, args: Vec<String>) -> Result<String> {
+        // --- NATIVE STD LIB (Phase 8) ---
+        if name == "voeg_toe" && args.len() == 2 {
+            let list_name = &args[0]; // Expecting the raw variable name
+            let item = self.resolve_value(&args[1]);
+            let list_val = self.resolve_value(list_name);
+            
+            if let Ok(mut arr) = serde_json::from_str::<Vec<serde_json::Value>>(&list_val) {
+                if let Ok(num) = item.parse::<f64>() {
+                    if num.fract() == 0.0 {
+                        arr.push(serde_json::json!(num as i64));
+                    } else {
+                        arr.push(serde_json::json!(num));
+                    }
+                } else {
+                    arr.push(serde_json::json!(item));
+                }
+                let new_list = serde_json::to_string(&arr).unwrap();
+                
+                // Modify in place where it lives!
+                let mut store = self.var_store.lock().unwrap();
+                let mut found = false;
+                for scope in store.iter_mut().rev() {
+                    if scope.contains_key(list_name) {
+                        scope.insert(list_name.clone(), new_list.clone());
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    if let Some(top) = store.last_mut() {
+                        top.insert(list_name.clone(), new_list.clone());
+                    }
+                }
+                return Ok(new_list);
+            }
+        }
+
+        if name == "verwijder" && args.len() == 2 {
+            let list_name = &args[0];
+            let index_val = self.resolve_value(&args[1]);
+            let list_val = self.resolve_value(list_name);
+            
+            if let Ok(mut arr) = serde_json::from_str::<Vec<serde_json::Value>>(&list_val) {
+                if let Ok(idx) = index_val.parse::<usize>() {
+                    if idx < arr.len() {
+                        arr.remove(idx);
+                        let new_list = serde_json::to_string(&arr).unwrap();
+                        
+                        let mut store = self.var_store.lock().unwrap();
+                        let mut found = false;
+                        for scope in store.iter_mut().rev() {
+                            if scope.contains_key(list_name) {
+                                scope.insert(list_name.clone(), new_list.clone());
+                                found = true;
+                                break;
+                            }
+                        }
+                        if !found {
+                            if let Some(top) = store.last_mut() {
+                                top.insert(list_name.clone(), new_list.clone());
+                            }
+                        }
+                        
+                        return Ok(new_list);
+                    }
+                }
+            }
+        }
+
         let func_tuple = {
             let store = self.ast_funcs.lock().unwrap();
             store.get(name).cloned()
         };
         
         if let Some((params, body)) = func_tuple {
-            let mut backup = std::collections::HashMap::new();
-            
             let mut resolved_args = Vec::new();
             for i in 0..params.len() {
                 if i < args.len() {
@@ -914,13 +993,10 @@ impl Orchestrator {
                 }
             }
 
-            {
-                let mut mem = self.var_store.lock().unwrap();
-                for (i, param) in params.iter().enumerate() {
-                    if let Some(old) = mem.insert(param.clone(), resolved_args[i].clone()) {
-                        backup.insert(param.clone(), old);
-                    }
-                }
+            self.push_scope();
+            
+            for (i, param) in params.iter().enumerate() {
+                self.set_var(param.clone(), resolved_args[i].clone());
             }
             
             let mut result = "".to_string();
@@ -930,17 +1006,7 @@ impl Orchestrator {
                 }
             }
             
-            // Restore scope
-            {
-                let mut mem = self.var_store.lock().unwrap();
-                for param in params.iter() {
-                    if let Some(old) = backup.get(param) {
-                        mem.insert(param.clone(), old.clone());
-                    } else {
-                        mem.remove(param);
-                    }
-                }
-            }
+            self.pop_scope();
             
             Ok(result)
         } else {
@@ -959,36 +1025,193 @@ impl Orchestrator {
     }
 
     fn evaluate_expression(&self, expr: &str) -> String {
-        // Very basic parser for "x - 1" or "x + 1"
-        // Support only 1 operation for now: A op B
-        let parts: Vec<&str> = expr.split_whitespace().collect();
-        if parts.len() == 3 {
-            let left_str = parts[0];
-            let op = parts[1];
-            let right_str = parts[2];
-
-            // Resolve left
-            let left_val = self.resolve_value(left_str);
-            let right_val = self.resolve_value(right_str);
-
-            if let (Ok(l), Ok(r)) = (left_val.parse::<i64>(), right_val.parse::<i64>()) {
-                let res = match op {
-                    "+" => l + r,
-                    "-" => l - r,
-                    "*" => l * r,
-                    "/" => if r != 0 { l / r } else { 0 },
-                    "%" => if r != 0 { l % r } else { 0 },
-                    _ => return expr.to_string(), // Unknown op
-                };
-                return res.to_string();
+        let expr_clean = expr.trim();
+        
+        // Native STD LIB: lengte(Lijst)
+        if expr_clean.starts_with("lengte(") && expr_clean.ends_with(")") {
+            let inner = expr_clean[7..expr_clean.len()-1].trim();
+            let inner_val = self.resolve_value(inner);
+            if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(&inner_val) {
+                return arr.len().to_string();
+            } else {
+                return inner_val.len().to_string();
             }
         }
+        
+        // Tensor Allocation Intercept (Phase 6)
+        if expr_clean.starts_with("tensor(") && expr_clean.ends_with(")") && !expr_clean.contains("id=") {
+            let dim: Vec<&str> = expr_clean[7..expr_clean.len()-1].split(',').collect();
+            if dim.len() == 2 {
+                let m = dim[0].trim().parse::<usize>().unwrap_or(0);
+                let n = dim[1].trim().parse::<usize>().unwrap_or(0);
+                if m > 0 && n > 0 {
+                    println!("[AST]: Nieuwe Tensor allocatie ({}x{})...", m, n);
+                    match crate::gpu::gpu_alloc_tensor_random(m, n) {
+                        Ok(id) => return format!("tensor({}, {}, id={})", m, n, id),
+                        Err(e) => return format!("ERROR: VRAM Allocatie gefaald: {}", e),
+                    }
+                }
+            }
+        }
+
+        // Tensor ReLU Intercept (Project Apex)
+        if expr_clean.starts_with("relu(") && expr_clean.ends_with(")") {
+            let inner = expr_clean[5..expr_clean.len()-1].trim();
+            let inner_val = self.resolve_value(inner);
+            if inner_val.starts_with("tensor(") && inner_val.contains("id=") {
+                let parts: Vec<&str> = inner_val[7..inner_val.len()-1].split(',').collect();
+                if parts.len() == 3 {
+                    let m = parts[0].trim().parse::<usize>().unwrap_or(0);
+                    let n = parts[1].trim().parse::<usize>().unwrap_or(0);
+                    let id_a = parts[2].trim().replace("id=", "").parse::<usize>().unwrap_or(0);
+                    if m > 0 && n > 0 {
+                        println!("[AST]: Tensor Activering (ReLU) gedetecteerd op {}x{}...", m, n);
+                        let out_id = crate::gpu::gpu_alloc_tensor_empty(m, n).unwrap();
+                        let ptx = crate::orchestra::synthesis::KernelSynthesisEngine::synthesize(crate::orchestra::synthesis::CodeTaal::TensorRelu { m, n }).unwrap();
+                        match crate::gpu::gpu_execute_tensor_relu(&ptx, id_a, out_id, m, n) {
+                            Ok(gflops) => println!("[GPU]: ✅ Tensor ReLU voltooid. Performance: {:.2} GFLOPS", gflops),
+                            Err(e) => println!("[ERROR]: GPU Tensor ReLU Fail: {}", e),
+                        }
+                        return format!("tensor({}, {}, id={})", m, n, out_id);
+                    }
+                }
+            }
+        }
+
+        // --- TENSOR INTERCEPTS (Project Apex) ---
+        // If the expression looks like a simple arithmetic operation, check if it's tensor math
+        let parts: Vec<&str> = expr_clean.split_whitespace().collect();
+        let mut left_val = String::new();
+        let mut right_val = String::new();
+        let mut op = "";
+        if parts.len() == 3 {
+            op = parts[1];
+            left_val = self.resolve_value(parts[0]);
+            right_val = self.resolve_value(parts[2]);
+        }
+        
+        // Tensor Multiplication Intercept (Project Apex-WMMA)
+        if left_val.starts_with("tensor(") && right_val.starts_with("tensor(") && op == "*" {
+            let l_dim: Vec<&str> = left_val[7..left_val.len()-1].split(',').collect();
+            let r_dim: Vec<&str> = right_val[7..right_val.len()-1].split(',').collect();
+            if l_dim.len() == 3 && r_dim.len() == 3 {
+                let m = l_dim[0].trim().parse::<usize>().unwrap_or(0);
+                let k1 = l_dim[1].trim().parse::<usize>().unwrap_or(0);
+                let id_a = l_dim[2].trim().replace("id=", "").parse::<usize>().unwrap_or(0);
+
+                let k2 = r_dim[0].trim().parse::<usize>().unwrap_or(0);
+                let n = r_dim[1].trim().parse::<usize>().unwrap_or(0);
+                let id_b = r_dim[2].trim().replace("id=", "").parse::<usize>().unwrap_or(0);
+                
+                if k1 == k2 && k1 > 0 {
+                    println!("[AST]: Tensor vermenigvuldiging gedetecteerd. Matrix {}x{} * {}x{}...", m, k1, k2, n);
+                    let out_id = crate::gpu::gpu_alloc_tensor_empty(m, n).unwrap();
+                    let ptx = crate::orchestra::synthesis::KernelSynthesisEngine::synthesize(crate::orchestra::synthesis::CodeTaal::MatMul { m, n, k: k1 }).unwrap();
+                    println!("[GPU]: Activeren van WMMA Tensor Cores (Project Apex)...");
+                    match crate::gpu::gpu_execute_raw_ptx_ids(&ptx, id_a, id_b, out_id, m, n, k1) {
+                        Ok(gflops) => println!("[GPU]: ✅ Tensor Executie voltooid. Performance: {:.2} GFLOPS", gflops),
+                        Err(e) => println!("[ERROR]: GPU Tensor Runtime Fail: {}", e),
+                    }
+                    return format!("tensor({}, {}, id={})", m, n, out_id);
+                } else {
+                    println!("[ERROR]: Tensor dimensies komen niet overeen ({}x{} * {}x{})", m, k1, k2, n);
+                }
+            }
+        }
+
+        // Tensor Addition Intercept (Project Apex-WMMA)
+        if left_val.starts_with("tensor(") && right_val.starts_with("tensor(") && op == "+" {
+            let l_dim: Vec<&str> = left_val[7..left_val.len()-1].split(',').collect();
+            let r_dim: Vec<&str> = right_val[7..right_val.len()-1].split(',').collect();
+            if l_dim.len() == 3 && r_dim.len() == 3 {
+                let m1 = l_dim[0].trim().parse::<usize>().unwrap_or(0);
+                let n1 = l_dim[1].trim().parse::<usize>().unwrap_or(0);
+                let id_a = l_dim[2].trim().replace("id=", "").parse::<usize>().unwrap_or(0);
+
+                let m2 = r_dim[0].trim().parse::<usize>().unwrap_or(0);
+                let n2 = r_dim[1].trim().parse::<usize>().unwrap_or(0);
+                let id_b = r_dim[2].trim().replace("id=", "").parse::<usize>().unwrap_or(0);
+                
+                if m1 == m2 && n1 == n2 && m1 > 0 {
+                    println!("[AST]: Tensor Optelling gedetecteerd. Matrix {}x{} + {}x{}...", m1, n1, m2, n2);
+                    let out_id = crate::gpu::gpu_alloc_tensor_empty(m1, n1).unwrap();
+                    let ptx = crate::orchestra::synthesis::KernelSynthesisEngine::synthesize(crate::orchestra::synthesis::CodeTaal::TensorAdd { m: m1, n: n1 }).unwrap();
+                    match crate::gpu::gpu_execute_tensor_add(&ptx, id_a, id_b, out_id, m1, n1) {
+                        Ok(gflops) => println!("[GPU]: ✅ Tensor Optelling voltooid. Performance: {:.2} GFLOPS", gflops),
+                        Err(e) => println!("[ERROR]: GPU Tensor Add Fail: {}", e),
+                    }
+                    return format!("tensor({}, {}, id={})", m1, n1, out_id);
+                }
+            }
+        }
+
+        // --- PHASE 7: ROBUST EXPRESSION EVALUATOR (evalexpr) ---
+        // If it's not a tensor operation, try to evaluate it as a complex math/logic expression
+        if !expr_clean.starts_with("tensor(") && !expr_clean.contains("tensor(") {
+            use evalexpr::ContextWithMutableVariables;
+            let mut context: evalexpr::HashMapContext = evalexpr::HashMapContext::new();
+            {
+                let store = self.var_store.lock().unwrap();
+                for scope in store.iter().rev() {
+                    for (k, v) in scope.iter() {
+                        if let Ok(num) = v.parse::<f64>() {
+                            let _ = context.set_value(k.clone(), evalexpr::Value::Float(num));
+                        } else {
+                            // Only set string if it doesn't conflict (evalexpr treats barewords as identifiers, so string values are fine)
+                            let _ = context.set_value(k.clone(), v.clone().into());
+                        }
+                    }
+                }
+            }
+            
+            let eval_str = expr_clean
+                .replace(" en ", " && ")
+                .replace(" of ", " || ")
+                .replace("niet ", "!");
+            
+            match evalexpr::eval_with_context(&eval_str, &context) {
+                Ok(result) => {
+                    match result {
+                        evalexpr::Value::Int(i) => return format!("{}", i),
+                        evalexpr::Value::Float(f) => return format!("{}", f),
+                        evalexpr::Value::Boolean(b) => return (if b { "waar" } else { "onwaar" }).to_string(),
+                        evalexpr::Value::String(s) => return s.clone(),
+                        evalexpr::Value::Tuple(t) => {
+                            // Serialize Tuple to a JSON array string for Helheim's internal representation
+                            let mut json_arr = "[".to_string();
+                            for (i, v) in t.iter().enumerate() {
+                                if i > 0 { json_arr.push_str(", "); }
+                                match v {
+                                    evalexpr::Value::Int(ni) => json_arr.push_str(&ni.to_string()),
+                                    evalexpr::Value::Float(nf) => json_arr.push_str(&nf.to_string()),
+                                    evalexpr::Value::String(ns) => json_arr.push_str(&format!("\"{}\"", ns)),
+                                    _ => json_arr.push_str("\"complex_type\""),
+                                }
+                            }
+                            json_arr.push_str("]");
+                            return json_arr;
+                        },
+                        _ => {}
+                    }
+                },
+                Err(e) => {
+                    println!("[DEBUG]: evalexpr gaf fout op '{}': {}", expr_clean, e);
+                }
+            }
+        }
+
         // Fallback: return as is (maybe it's just a value or string)
         self.resolve_value(expr)
     }
 
     fn resolve_value(&self, token: &str) -> String {
         let mut key = token;
+        
+        // Strip sigil if present (e.g. $Waarde -> Waarde)
+        if key.starts_with('$') {
+            key = &key[1..];
+        }
+        
         let mut index_str: Option<&str> = None;
         
         if let Some(start) = token.find('[') {
@@ -998,13 +1221,12 @@ impl Orchestrator {
             }
         }
 
-        let mem = self.var_store.lock().unwrap();
-        if let Some(val) = mem.get(key) {
+        if let Some(val) = self.get_var(key) {
             if let Some(idx_s) = index_str {
                 let clean_idx = idx_s.trim_matches('"');
                 if let Ok(idx) = clean_idx.parse::<usize>() {
                     // Array Indexing
-                    if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(val) {
+                    if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(&val) {
                         if idx < arr.len() {
                             if let Some(s) = arr[idx].as_str() { return s.to_string(); }
                             return arr[idx].to_string();
@@ -1012,7 +1234,7 @@ impl Orchestrator {
                     }
                 }
                 // Dictionary Label Lookup
-                if let Ok(map) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(val) {
+                if let Ok(map) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&val) {
                     if let Some(res) = map.get(clean_idx) {
                         if let Some(s) = res.as_str() { return s.to_string(); }
                         return res.to_string();
