@@ -291,54 +291,97 @@ pub fn gpu_execute_raw_ptx(ptx_src: &str) -> Result<f64> {
     Ok(gflops)
 }
 
+fn cpu_matmul_tiled(size: usize) -> f64 {
+    use rayon::prelude::*;
+    const TILE: usize = 64;
+
+    let mut rng = rand::rng();
+    let a: Vec<f32> = (0..size * size).map(|_| rng.random()).collect();
+    let b: Vec<f32> = (0..size * size).map(|_| rng.random()).collect();
+    let mut c = vec![0.0f32; size * size];
+
+    let start = Instant::now();
+
+    c.par_chunks_mut(size).enumerate().for_each(|(i, c_row)| {
+        for kk in (0..size).step_by(TILE) {
+            for jj in (0..size).step_by(TILE) {
+                let k_end = (kk + TILE).min(size);
+                let j_end = (jj + TILE).min(size);
+                for k in kk..k_end {
+                    let a_ik = a[i * size + k];
+                    for j in jj..j_end {
+                        c_row[j] += a_ik * b[k * size + j];
+                    }
+                }
+            }
+        }
+    });
+
+    let elapsed = start.elapsed();
+    (2.0 * size as f64 * size as f64 * size as f64) / (elapsed.as_secs_f64() * 1e9)
+}
+
 pub fn inferno_work_real(size: usize, _device_id: usize) -> Result<()> {
-    println!("{}", "[INFERNO PROTOCOL]: ASYMMETRIC LOCAL LOAD BALANCING (DUAL-GPU)".red().bold());
-    
-    // Check available GPUs via Native OS Layer
+    println!("{}", "[INFERNO PROTOCOL]: ASYMMETRIC LOCAL LOAD BALANCING (GPU + CPU)".red().bold());
+
     let gpu_count = match std::process::Command::new("nvidia-smi").arg("-L").output() {
         Ok(out) => String::from_utf8_lossy(&out.stdout).lines().count(),
         Err(_) => 0,
     };
-    
-    if gpu_count == 0 {
-        println!("{}", "[FALLBACK]: Geen GPU's gevonden voor Inferno. Terugvallen op CPU.".yellow());
-        return gpu_work_real(size, 0); // gpu_work_real triggers CPU math ifnvidia-smi fails
-    }
 
-    println!("[INFERNO]: {} actieve CudaDevice(s) op de Master Node. Splitsen van werklast...", gpu_count);
-    
-    // Split the node's payload evenly across all local GPUs (3060 and 5060 simultaneously)
-    let per_gpu_size = size / (gpu_count as usize);
+    let cpu_threads = rayon::current_num_threads();
+    println!("[INFERNO]: {} GPU(s) + {} CPU threads op de Master Node.", gpu_count, cpu_threads);
+
+    // Split work: GPUs each get full size, CPU gets a scaled-down portion
+    // CPU is ~10x slower per element, so we give it a proportional chunk
+    let cpu_size = (size as f64 * 0.3) as usize; // ~30% van GPU grootte
+    let per_gpu_size = size;
+
     let start_inferno = Instant::now();
 
     use rayon::prelude::*;
-    let gpu_ids: Vec<usize> = (0..gpu_count as usize).collect();
-    
-    let results: Vec<Result<()>> = gpu_ids.into_par_iter().map(|id| {
-        println!("[THREAD-{}]: Spin up kernel for size {}...", id, per_gpu_size);
-        gpu_work_real(per_gpu_size, id)
+
+    // Bouw worker lijst: GPU IDs + CPU als laatste
+    enum Worker { Gpu(usize), Cpu }
+    let mut workers: Vec<Worker> = (0..gpu_count).map(Worker::Gpu).collect();
+    workers.push(Worker::Cpu);
+
+    let results: Vec<Result<String>> = workers.into_par_iter().map(|w| match w {
+        Worker::Gpu(id) => {
+            println!("[GPU-{}]: Kernel starten ({}x{})...", id, per_gpu_size, per_gpu_size);
+            gpu_work_real(per_gpu_size, id)?;
+            Ok(format!("GPU-{}", id))
+        }
+        Worker::Cpu => {
+            println!("{}", format!("[CPU-{}T]: Tiled matmul starten ({}x{})...", cpu_threads, cpu_size, cpu_size).cyan());
+            let gflops = cpu_matmul_tiled(cpu_size);
+            println!("{}", format!("[CPU]: COMPUTE FINISHED. Prestatie: {:.2} GFLOPS", gflops).cyan());
+            Ok(format!("CPU @ {:.1} GFLOPS", gflops))
+        }
     }).collect();
 
     let mut had_error = false;
-    for (i, res) in results.iter().enumerate() {
+    for res in &results {
         if let Err(e) = res {
-             println!("{}", format!("[ERROR-GPU-{}]: Lokale Cuda Fout opgetreden: {}", i, e).red());
-             had_error = true;
+            println!("{}", format!("[ERROR]: {}", e).red());
+            had_error = true;
         }
     }
 
     if had_error {
-        return Err(anyhow::anyhow!("Een of meerdere GPU threads crashte tijdens Inferno execution."));
+        return Err(anyhow::anyhow!("Een of meerdere workers crashten tijdens Inferno execution."));
     }
 
     let duration = start_inferno.elapsed();
-    println!("{}", format!("[INFERNO]: Lokale Multi-GPU Compute Complete!").green().bold());
+    println!("{}", "[INFERNO]: Lokale Multi-Device Compute Complete!".green().bold());
     println!("[INFERNO]: Totale Parallelle Rekentijd: {:.2?}", duration);
-    
-    // Calculate final GFLOPS (All GPU's combined payload)
-    let m = per_gpu_size; let n = m; let k = m;
-    let gflops = ((2.0 * m as f64 * n as f64 * k as f64 * (gpu_count as f64)) / duration.as_secs_f64()) / 1e9;
-    println!("[INFERNO]: Lokale Prestatie: {:.2} GFLOPS", gflops);
-    
+
+    let gpu_flops = if gpu_count > 0 {
+        (2.0 * per_gpu_size as f64 * per_gpu_size as f64 * per_gpu_size as f64 * gpu_count as f64) / 1e9
+    } else { 0.0 };
+    let cpu_flops = (2.0 * cpu_size as f64 * cpu_size as f64 * cpu_size as f64) / 1e9;
+    let total_gflops = (gpu_flops + cpu_flops) / duration.as_secs_f64();
+    println!("[INFERNO]: Gecombineerde Prestatie: {:.2} GFLOPS (GPU + CPU)", total_gflops);
+
     Ok(())
 }
