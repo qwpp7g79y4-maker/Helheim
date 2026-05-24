@@ -50,7 +50,7 @@ helheim service --port 9003
 
 **Dispatch to Swarm:**
 ```bash
-helheim run "stuur 'voer uit ls -la' naar 192.168.1.100:9003"
+helheim run "stuur 'voer uit ls -la' naar 10.0.0.50:9003"
 ```
 
 ---

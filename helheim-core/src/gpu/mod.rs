@@ -384,6 +384,55 @@ pub fn gpu_execute_raw_ptx_ids(ptx_src: &str, id_a: usize, id_b: usize, id_c: us
     Ok(gflops)
 }
 
+pub async fn gpu_execute_hel_block(raw_source: &str) -> Result<()> {
+    use colored::*;
+    println!("{}", "Checking hardware for Hel-modus acceleration...".magenta());
+    let has_nvidia = std::process::Command::new("nvidia-smi").output().is_ok();
+    
+    if !has_nvidia {
+        return Err(anyhow::anyhow!("Hel-modus vereist een actieve NVIDIA GPU voor bare-metal executie."));
+    }
+
+    println!("{}", "[HEL-MODUS]: JIT Compiling raw C++/PTX via NVRTC...".magenta());
+    let dev = CudaContext::new(0)?;
+    
+    let ptx = match cudarc::nvrtc::compile_ptx(raw_source) {
+        Ok(p) => p,
+        Err(e) => {
+            return Err(anyhow::anyhow!("Compilation Error:\n{:?}", e));
+        }
+    };
+    
+    println!("{}", "[HEL-MODUS]: Kernel succesvol gecompileerd. Laden in VRAM...".magenta());
+    let module = dev.load_module(ptx)?;
+    
+    let f = match module.load_function("custom_kernel") {
+        Ok(func) => func,
+        Err(_) => return Err(anyhow::anyhow!("Kan 'custom_kernel' niet vinden. Zorg dat je kernel `extern \"C\" __global__ void custom_kernel(float* data)` heet.")),
+    };
+
+    println!("{}", "[HEL-MODUS]: Lanceren van custom kernel (Block: 256, Grid: 1)...".red().bold());
+    let stream = dev.default_stream();
+    
+    let mut dev_data = stream.alloc_zeros::<f32>(1024)?;
+    
+    let cfg = LaunchConfig {
+        grid_dim: (1, 1, 1),
+        block_dim: (256, 1, 1),
+        shared_mem_bytes: 0,
+    };
+
+    unsafe {
+        let mut bld = stream.launch_builder(&f);
+        bld.arg(&mut dev_data);
+        bld.launch(cfg)?;
+    }
+    stream.synchronize()?;
+    
+    println!("{}", "[HEL-MODUS]: ✅ Executie voltooid. Veilig terug in de basis.".green().bold());
+    Ok(())
+}
+
 pub fn gpu_execute_tensor_add(ptx_src: &str, id_a: usize, id_b: usize, id_c: usize, m: usize, n: usize) -> Result<f64> {
     let dev = CudaContext::new(0)?;
     let stream = dev.default_stream();
@@ -458,6 +507,97 @@ pub fn gpu_execute_tensor_relu(ptx_src: &str, id_a: usize, id_b: usize, m: usize
     let gflops = (elements as f64) / (elapsed * 1e9);
 
     store.insert(id_b, dev_b);
+    Ok(gflops)
+}
+
+pub fn cpu_execute_matmul(id_a: usize, id_b: usize, id_c: usize, m: usize, n: usize, k: usize) -> Result<f64> {
+    let dev = CudaContext::new(0)?;
+    let stream = dev.default_stream();
+    
+    let mut a_host = vec![0.0f32; m * k];
+    let mut b_host = vec![0.0f32; k * n];
+    let mut c_host = vec![0.0f32; m * n];
+
+    {
+        let store = TENSOR_STORE.lock().unwrap();
+        let dev_a = store.get(&id_a).ok_or_else(|| anyhow::anyhow!("A not found"))?;
+        let dev_b = store.get(&id_b).ok_or_else(|| anyhow::anyhow!("B not found"))?;
+        
+        stream.memcpy_dtoh(dev_a, &mut a_host)?;
+        stream.memcpy_dtoh(dev_b, &mut b_host)?;
+        stream.synchronize()?;
+    }
+
+    use rayon::prelude::*;
+    const TILE: usize = 64;
+
+    let start = std::time::Instant::now();
+    
+    c_host.par_chunks_mut(n).enumerate().for_each(|(i, c_row)| {
+        for kk in (0..k).step_by(TILE) {
+            for jj in (0..n).step_by(TILE) {
+                let k_end = (kk + TILE).min(k);
+                let j_end = (jj + TILE).min(n);
+                for kk_inner in kk..k_end {
+                    let a_ik = a_host[i * k + kk_inner];
+                    for j in jj..j_end {
+                        c_row[j] += a_ik * b_host[kk_inner * n + j];
+                    }
+                }
+            }
+        }
+    });
+
+    let elapsed = start.elapsed().as_secs_f64();
+    let gflops = (2.0 * m as f64 * n as f64 * k as f64) / (elapsed * 1e9);
+
+    {
+        let mut store = TENSOR_STORE.lock().unwrap();
+        let mut dev_c = store.remove(&id_c).ok_or_else(|| anyhow::anyhow!("C not found"))?;
+        stream.memcpy_htod(&c_host, &mut dev_c)?;
+        stream.synchronize()?;
+        store.insert(id_c, dev_c);
+    }
+
+    Ok(gflops)
+}
+
+pub fn cpu_execute_tensor_add(id_a: usize, id_b: usize, id_c: usize, m: usize, n: usize) -> Result<f64> {
+    let dev = CudaContext::new(0)?;
+    let stream = dev.default_stream();
+    let elements = m * n;
+    
+    let mut a_host = vec![0.0f32; elements];
+    let mut b_host = vec![0.0f32; elements];
+    let mut c_host = vec![0.0f32; elements];
+
+    {
+        let store = TENSOR_STORE.lock().unwrap();
+        let dev_a = store.get(&id_a).ok_or_else(|| anyhow::anyhow!("A not found"))?;
+        let dev_b = store.get(&id_b).ok_or_else(|| anyhow::anyhow!("B not found"))?;
+        stream.memcpy_dtoh(dev_a, &mut a_host)?;
+        stream.memcpy_dtoh(dev_b, &mut b_host)?;
+        stream.synchronize()?;
+    }
+
+    use rayon::prelude::*;
+    let start = std::time::Instant::now();
+    
+    c_host.par_iter_mut().zip(a_host.par_iter().zip(b_host.par_iter())).for_each(|(c, (a, b))| {
+        *c = *a + *b;
+    });
+
+    let elapsed = start.elapsed().as_secs_f64();
+    let gflops = (elements as f64) / (elapsed * 1e9);
+
+    {
+        let mut store = TENSOR_STORE.lock().unwrap();
+        let mut dev_c = store.remove(&id_c).ok_or_else(|| anyhow::anyhow!("C not found"))?;
+        stream.memcpy_htod(&c_host, &mut dev_c)?;
+        stream.synchronize()?;
+        store.insert(id_c, dev_c);
+    }
+
     Ok(gflops)
 }
 
@@ -555,3 +695,6 @@ pub fn inferno_work_real(size: usize, _device_id: usize) -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod cpu_test;

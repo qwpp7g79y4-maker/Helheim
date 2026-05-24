@@ -1,0 +1,6 @@
+zet NAAM = "Helheim";
+zet TEMP = 90;
+print "Hallo $NAAM, de temperatuur is $TEMP graden.";
+
+zet VAL = 10 % 3;
+print "10 modulo 3 is: $VAL";

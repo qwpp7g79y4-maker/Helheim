@@ -4,7 +4,7 @@ De Helheim-programmeertaal is een Nederlandse DSL gebouwd op Rust en CUDA.
 Zero overhead, bare-metal GPU toegang, gedistribueerde compute — allemaal in begrijpelijke Nederlandse syntax.
 
 Laatste verificatie: 2026-05-25
-Hardware: RTX 5060 Ti (16GB) + RTX 3060 (12GB) | Rust release build
+Hardware: Cross-Platform (CPU/Nvidia GPU) | Rust release build
 Geïmplementeerde commando's: 50+
 
 ---
@@ -95,7 +95,7 @@ zet INHOUD = lees pad/naar/bestand.txt;
 Variabelen worden automatisch geïnterpoleerd in alle commando's:
 ```helheim
 zet TERM = pepai;
-voer uit grep -rl TERM /home/bitboi/dev_2;
+voer uit grep -rl TERM /opt/project/src;
 ```
 
 Rekenkundige expressies:
@@ -322,8 +322,8 @@ nodes;
 
 Stuur commando naar specifiek node:
 ```helheim
-stuur "matmul 4096" naar 192.168.1.100;
-stuur "voer uit nvidia-smi" naar 192.168.1.100;
+stuur "matmul 4096" naar 192.168.0.x;
+stuur "voer uit nvidia-smi" naar 192.168.0.x;
 ```
 
 Broadcast naar alle nodes:

@@ -28,7 +28,7 @@ impl HelParser {
         };
 
         match token.as_str() {
-            "zet" => {
+            "zet" | "let" | "set" => {
                 // zet [naam] = [waarde]
                 let name = iter
                     .next()
@@ -68,7 +68,7 @@ impl HelParser {
 
                 Ok(Some(CodeTaal::VarDef { name, value }))
             }
-            "zolang" => {
+            "zolang" | "while" | "repeat" => {
                 // zolang [conditie] { ... }
                 // Conditie is alles tot de {
                 let mut condition_parts = Vec::new();
@@ -124,7 +124,7 @@ impl HelParser {
                     body: body_ast,
                 }))
             }
-            "als" => {
+            "als" | "if" => {
                 // als [conditie] dan { ... } [anders { ... }]
                 let mut condition_parts = Vec::new();
                 while let Some(t) = iter.peek() {
@@ -205,7 +205,7 @@ impl HelParser {
                 let size: usize = size_str.parse().map_err(|_| anyhow::anyhow!("Ongeldige grootte: {}", size_str))?;
                 Ok(Some(CodeTaal::MatMul { m: size, n: size, k: size }))
             }
-            "functie" => {
+            "functie" | "func" | "fn" | "function" => {
                 // functie [naam] met [arg1] [arg2] { ... } -> of 'functie [naam] a b {'
                 let name = iter.next().ok_or(anyhow::anyhow!("Verwacht functienaam"))?;
                 let mut params = Vec::new();
@@ -221,7 +221,7 @@ impl HelParser {
                     body: body_ast,
                 }))
             }
-            "geef_terug" => {
+            "geef_terug" | "return" => {
                 let mut val_tokens = Vec::new();
                 while let Some(t) = iter.peek() {
                     if t == ";" || t == "}" { break; }

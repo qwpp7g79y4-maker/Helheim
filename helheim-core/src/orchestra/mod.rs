@@ -109,12 +109,12 @@ impl Orchestrator {
         // EXCEPTION: Do NOT resolve for 'zet' (assignment), 'zolang', 'voor', 'script:', 'als', 'functie'
         // because we need the raw variable names for AST logic parsing.
         let mut resolved_input = trimmed.to_string();
-        if !trimmed.starts_with("zet ") 
-            && !trimmed.starts_with("zolang ") 
+        if !trimmed.starts_with("zet ") && !trimmed.starts_with("let ") && !trimmed.starts_with("set ")
+            && !trimmed.starts_with("zolang ") && !trimmed.starts_with("while ") && !trimmed.starts_with("repeat ")
             && !trimmed.starts_with("voor ")
             && !trimmed.starts_with("script:")
-            && !trimmed.starts_with("als ")
-            && !trimmed.starts_with("functie ") {
+            && !trimmed.starts_with("als ") && !trimmed.starts_with("if ")
+            && !trimmed.starts_with("functie ") && !trimmed.starts_with("func ") && !trimmed.starts_with("fn ") && !trimmed.starts_with("function ") {
                 
             let store = self.var_store.lock().unwrap();
             for scope in store.iter().rev() {
@@ -130,19 +130,22 @@ impl Orchestrator {
         tracing::info!(target: "orchestrator", command = ?trimmed, "Verwerken van instructie.");
         println!("[EXECUTION]: Verwerken van instructie: '{}'", trimmed);
 
-        // --- Phase 8: Memory Layer (Set Command) ---
-        if trimmed.starts_with("zet ") {
-            if let Some((name_part, value_part)) = trimmed[4..].split_once('=') {
-                let name = name_part.trim().to_string();
-                let value = value_part.trim().trim_matches('"').to_string(); // Strip quotes
-                
-                println!("[MEMORY]: Opslaan variabele '{}' = '{}'...", name, value);
-                self.set_var(name, value);
-                return Ok(());
-            } else {
-                 println!("[ERROR]: Syntax fout. Gebruik: zet [naam] = [waarde]");
-                 return Ok(());
-            }
+        // --- We delegate 'zet' entirely to the AST Parser so it can evaluate expressions ---
+
+        // --- Phase 4: Hel-modus (Bare-Metal C++/PTX Blocks) ---
+        if trimmed.starts_with("hel {") || trimmed.starts_with("unsafe {") {
+            use colored::*;
+            println!("{}", "=================================================".red().bold());
+            println!("{}", " ⚠️ WAARSCHUWING: JE VERLAAT NU DE VEILIGE ZONE. ".red().bold());
+            println!("{}", "    Je kunt nu nog terug... je belandt in HEL!   ".red().bold());
+            println!("{}", "=================================================".red().bold());
+            
+            let start_idx = trimmed.find('{').unwrap() + 1;
+            let end_idx = trimmed.rfind('}').unwrap_or(trimmed.len());
+            let raw_code = trimmed[start_idx..end_idx].trim();
+            
+            crate::gpu::gpu_execute_hel_block(raw_code).await?;
+            return Ok(());
         }
 
         if trimmed.starts_with("script:") {
@@ -159,10 +162,11 @@ impl Orchestrator {
         }
 
         // --- Phase 8: Logic Layer (If/Else) ---
-        if trimmed.starts_with("als ") {
+        if trimmed.starts_with("als ") || trimmed.starts_with("if ") {
+            let offset = if trimmed.starts_with("als ") { 4 } else { 3 };
             // Syntax: als [condition] dan { [command] }
             // Example: als file_exists "test.txt" dan { lees "test.txt" }
-            if let Some((condition_id_part, action_part)) = trimmed[4..].split_once(" dan ") {
+            if let Some((condition_id_part, action_part)) = trimmed[offset..].split_once(" dan ").or_else(|| trimmed[offset..].split_once(" then ")) {
                 let condition = condition_id_part.trim();
                 let block = action_part.trim();
                 
@@ -182,9 +186,9 @@ impl Orchestrator {
         }
 
         // --- Phase 8: Loops (Iteration) ---
-        if trimmed.starts_with("zolang ") {
-            // Syntax: zolang [condition] { [command] }
-            let loop_body = trimmed[7..].trim();
+        if trimmed.starts_with("zolang ") || trimmed.starts_with("while ") || trimmed.starts_with("repeat ") {
+            let offset = if trimmed.starts_with("zolang ") { 7 } else if trimmed.starts_with("while ") { 6 } else { 7 };
+            let loop_body = trimmed[offset..].trim();
              // Find first brace to split condition and block
             if let Some(start_brace) = loop_body.find('{') {
                 if loop_body.ends_with('}') {
@@ -216,9 +220,9 @@ impl Orchestrator {
         }
 
         // --- Phase 8: Functions (Subroutines) ---
-        if trimmed.starts_with("functie ") {
-             // Syntax: functie [name] { [body] }
-             let func_def = trimmed[8..].trim();
+        if trimmed.starts_with("functie ") || trimmed.starts_with("func ") || trimmed.starts_with("fn ") || trimmed.starts_with("function ") {
+             let offset = if trimmed.starts_with("functie ") { 8 } else if trimmed.starts_with("func ") { 5 } else if trimmed.starts_with("fn ") { 3 } else { 9 };
+             let func_def = trimmed[offset..].trim();
              if let Some(start_brace) = func_def.find('{') {
                 if func_def.ends_with('}') {
                     let name = func_def[..start_brace].trim().to_string();
@@ -522,9 +526,32 @@ impl Orchestrator {
         }
 
         // --- Standard Library Extensions (Python Killer) ---
-        if trimmed.starts_with("print ") {
-            let msg = trimmed[6..].trim().trim_matches('"');
-            println!("[UITVOER]: {}", msg);
+        if trimmed.starts_with("print ") || trimmed.starts_with("print(") || trimmed.starts_with("druk_af ") || trimmed.starts_with("druk_af(") {
+            let start_idx = if trimmed.starts_with("print(") || trimmed.starts_with("druk_af(") {
+                trimmed.find('(').unwrap() + 1
+            } else if trimmed.starts_with("print ") { 6 } else { 8 };
+            
+            let mut msg = trimmed[start_idx..].trim();
+            if msg.ends_with(')') || msg.ends_with(';') {
+                msg = &msg[..msg.len()-1];
+                if msg.ends_with(')') { msg = &msg[..msg.len()-1]; }
+            }
+            let clean_msg = msg.trim_matches('"');
+            
+            // Re-apply variable interpolation ONLY for the string content (since we intercepted print)
+            let mut final_msg = clean_msg.to_string();
+            let store = self.var_store.lock().unwrap();
+            for scope in store.iter().rev() {
+                for (k, v) in scope.iter() {
+                    let key = format!("${}", k);
+                    if final_msg.contains(&key) {
+                        // strip quotes if the value is a string, so they don't leak into the output
+                        final_msg = final_msg.replace(&key, v.trim_matches('"'));
+                    }
+                }
+            }
+            
+            println!("[UITVOER]: {}", final_msg);
             return Ok(());
         }
 
@@ -1110,7 +1137,13 @@ impl Orchestrator {
                     println!("[GPU]: Activeren van WMMA Tensor Cores (Project Apex)...");
                     match crate::gpu::gpu_execute_raw_ptx_ids(&ptx, id_a, id_b, out_id, m, n, k1) {
                         Ok(gflops) => println!("[GPU]: ✅ Tensor Executie voltooid. Performance: {:.2} GFLOPS", gflops),
-                        Err(e) => println!("[ERROR]: GPU Tensor Runtime Fail: {}", e),
+                        Err(e) => {
+                            println!("[GPU ERROR]: {} - Terugvallen op CPU (Rayon)...", e);
+                            match crate::gpu::cpu_execute_matmul(id_a, id_b, out_id, m, n, k1) {
+                                Ok(gflops) => println!("[CPU]: ✅ Tensor Executie voltooid (Fallback). Performance: {:.2} GFLOPS", gflops),
+                                Err(e) => println!("[CPU ERROR]: {}", e),
+                            }
+                        }
                     }
                     return format!("tensor({}, {}, id={})", m, n, out_id);
                 } else {
@@ -1138,7 +1171,13 @@ impl Orchestrator {
                     let ptx = crate::orchestra::synthesis::KernelSynthesisEngine::synthesize(crate::orchestra::synthesis::CodeTaal::TensorAdd { m: m1, n: n1 }).unwrap();
                     match crate::gpu::gpu_execute_tensor_add(&ptx, id_a, id_b, out_id, m1, n1) {
                         Ok(gflops) => println!("[GPU]: ✅ Tensor Optelling voltooid. Performance: {:.2} GFLOPS", gflops),
-                        Err(e) => println!("[ERROR]: GPU Tensor Add Fail: {}", e),
+                        Err(e) => {
+                            println!("[GPU ERROR]: {} - Terugvallen op CPU (Rayon)...", e);
+                            match crate::gpu::cpu_execute_tensor_add(id_a, id_b, out_id, m1, n1) {
+                                Ok(gflops) => println!("[CPU]: ✅ Tensor Optelling voltooid (Fallback). Performance: {:.2} GFLOPS", gflops),
+                                Err(e) => println!("[CPU ERROR]: {}", e),
+                            }
+                        }
                     }
                     return format!("tensor({}, {}, id={})", m1, n1, out_id);
                 }

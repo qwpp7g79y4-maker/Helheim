@@ -6,7 +6,6 @@ use rand::Rng;
 pub mod cage;
 pub mod crypto;
 pub mod governor;
-pub mod trap;
 pub mod wire;
 
 /// De kern van de Helheim Shield: Chaos & Bescherming

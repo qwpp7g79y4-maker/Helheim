@@ -47,6 +47,8 @@ pub enum CodeTaal {
     VarGet { name: String },
     /// Code Blok: `{ ... }`
     Block { statements: Vec<CodeTaal> },
+    /// Hel-modus Blok (Raw PTX/C++): `hel { ... }`
+    HelBlock { raw_code: String },
     /// Loop Structure: `zolang [cond] { ... }`
     Loop {
         condition: Box<CodeTaal>,
@@ -129,6 +131,11 @@ impl KernelSynthesisEngine {
                     target,
                     payload.len()
                 )
+            }
+            CodeTaal::HelBlock { ref raw_code } => {
+                println!("[SYNTHESIS]: Hel-modus detectie. JIT compilatie van ruwe bare-metal logica.");
+                // We return the raw code directly. The execution engine will pass it to NVRTC.
+                format!("// HEL_BLOCK_START\n{}\n// HEL_BLOCK_END", raw_code)
             }
             CodeTaal::Encrypt { ref algo, ref data } => {
                 println!("[SECURITY]: Encrypting data with {}...", algo);

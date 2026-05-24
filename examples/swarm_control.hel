@@ -16,7 +16,7 @@ functie voer_optie_een_uit met leeg {
     # We sturen een onschuldig commando naar the native engine (bijv. gpu ops of netwerk ping)
     # Normaal runnen we hier 'netwerk status' of iets vergelijkbaars, we printen nu logica.
     print "-> Master Node: ONLINE";
-    print "-> Slave Node (192.168.69.161): STANDBY";
+    print "-> Slave Node (192.168.0.x): STANDBY";
     print "-> Pepijn Node: STANDBY";
 }
 
@@ -25,7 +25,7 @@ functie voer_optie_twee_uit met leeg {
     print "Berekeningen worden voorbereid voor distributie...";
     
     # We demonstreren de Array/Lijst feature!
-    zet netwerk_nodes = ["127.0.0.1", "192.168.69.161", "213.132.219.149"];
+    zet netwerk_nodes = ["127.0.0.1", "192.168.0.x", "xxx.xxx.xxx.xxx"];
     print "Doelwitten binnen de HIVE:";
     voor elke node in netwerk_nodes {
         print node;

@@ -35,24 +35,6 @@ pub enum Commands {
         #[arg(short, long)]
         url: String,
     },
-    /// Generate Honeypot Bait (Project Artisjok)
-    Trap {
-        #[arg(short, long, default_value = "env")]
-        type_: String, // env, rsa, sql
-    },
-    /// Active Defense: Ban malicious IPs
-    Cage {
-        #[arg(long)]
-        ban: Option<String>,
-        #[arg(long)]
-        log: Option<String>,
-    },
-    /// Consult the Helheim Brain (Mistral AI)
-    Brain {
-        /// The prompt to send
-        #[arg(short, long)]
-        prompt: String,
-    },
 }
 
 // Parse "stuur [what] naar [target]"

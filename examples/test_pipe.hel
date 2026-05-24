@@ -1,0 +1,2 @@
+print "Testen van de system pipe:";
+voer uit ls | wc -l;

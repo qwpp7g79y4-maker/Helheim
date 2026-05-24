@@ -1,5 +1,6 @@
 [workspace]
 members = [
-    "helheim-cli"
+    "helheim-cli",
+    "helheim-core"
 ]
 resolver = "2"
