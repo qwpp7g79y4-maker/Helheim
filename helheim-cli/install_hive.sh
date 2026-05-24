@@ -35,12 +35,12 @@ echo "✅ Rust detected. Proceeding with build..."
 # 1. Build Helheim Body (CLI/Service)
 echo "[BUILD] Compiling Helheim Body (Release Mode)..."
 # Ensure we are compiling as the USER, not root (unless user is root)
-cd /home/bitboi_slave/Helheim/helheim-cli
+cd $HOME/Helheim/helheim-cli
 cargo build --release --bin helheim-cli
 
 # 2. Build Helheim Brain (CPU Mode)
 echo "[BUILD] Compiling Helheim Brain (CPU Mode - No GPU)..."
-cd /home/bitboi_slave/Helheim_Brain
+cd $HOME/Helheim_Brain
 # Ensure we build without CUDA features (default is now CPU due to Cargo.toml change)
 cargo build --release
 
@@ -50,13 +50,13 @@ sudo systemctl stop helheim-brain || true
 sudo systemctl stop helheim-body || true
 
 echo "[INSTALL] Moving binaries to /usr/local/bin (Password may be required)..."
-sudo cp /home/bitboi_slave/Helheim/helheim-cli/target/release/helheim-cli /usr/local/bin/helheim
-sudo cp /home/bitboi_slave/Helheim_Brain/target/release/Helheim_Brain /usr/local/bin/helheim-brain
+sudo cp $HOME/Helheim/helheim-cli/target/release/helheim-cli /usr/local/bin/helheim
+sudo cp $HOME/Helheim_Brain/target/release/Helheim_Brain /usr/local/bin/helheim-brain
 
 # 4. Install Service Files (REQUIRES SUDO)
 echo "[SYSTEMD] Configuring Services..."
-sudo cp /home/bitboi_slave/Helheim/helheim-cli/deploy/helheim-body.service /etc/systemd/system/
-sudo cp /home/bitboi_slave/Helheim/helheim-cli/deploy/helheim-brain.service /etc/systemd/system/
+sudo cp $HOME/Helheim/helheim-cli/deploy/helheim-body.service /etc/systemd/system/
+sudo cp $HOME/Helheim/helheim-cli/deploy/helheim-brain.service /etc/systemd/system/
 
 # 5. Enable and Start (REQUIRES SUDO)
 echo "[IGNITION] Reloading Daemon and Starting Services..."

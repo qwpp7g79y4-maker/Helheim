@@ -1,16 +1,16 @@
 print "=== HELHEIM GPU FILE SCANNER ===";
 
 print "Stap 1: Projectbestanden tellen...";
-voer uit find /home/bitboi/dev_2/Helheim -name *.rs -type f 2>/dev/null | wc -l;
+voer uit find /opt/Helheim -name *.rs -type f 2>/dev/null | wc -l;
 
 print "Stap 2: Totale codegrootte meten...";
-voer uit find /home/bitboi/dev_2/Helheim -name *.rs -type f 2>/dev/null | xargs wc -l 2>/dev/null | tail -1;
+voer uit find /opt/Helheim -name *.rs -type f 2>/dev/null | xargs wc -l 2>/dev/null | tail -1;
 
 print "Stap 3: GPU warmup + compute...";
 gpu work 1940;
 
 print "Stap 4: Resultaat opslaan...";
-voer uit echo Helheim GPU Scan klaar >> /home/bitboi/dev_2/Helheim/scan_log.txt;
-voer uit date >> /home/bitboi/dev_2/Helheim/scan_log.txt;
+voer uit echo Helheim GPU Scan klaar >> /opt/Helheim/scan_log.txt;
+voer uit date >> /opt/Helheim/scan_log.txt;
 
 print "=== KLAAR ===";

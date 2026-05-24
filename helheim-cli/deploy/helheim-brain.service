@@ -4,10 +4,10 @@ After=network.target helheim-body.service
 
 [Service]
 Type=simple
-User=bitboi_slave
+User=helheim_user
 # Uses CPU (No GPU Detected)
 # Directory needed for .gguf model loading
-WorkingDirectory=/home/bitboi_slave/Helheim_Brain
+WorkingDirectory=/opt/Helheim_Brain
 ExecStart=/usr/local/bin/helheim-brain
 Restart=always
 RestartSec=10

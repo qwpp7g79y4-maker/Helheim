@@ -5,8 +5,8 @@ set -e
 echo "🚀 [UPGRADE]: Activating RTX 5060 Ti Support (Helheim v1.1)..."
 
 # 1. Paths
-BODY_DIR="/media/bitboi/DATA1/Helheim/helheim-cli"
-BRAIN_DIR="/media/bitboi/DATA1/Helheim_Brain"
+BODY_DIR="/opt/helheim-cli"
+BRAIN_DIR="/opt/Helheim_Brain"
 
 # 2. Rebuild Body (With new GPU features)
 echo "💪 [COMPILER]: Building Helheim CLI (with 'gpu work on ID')..."
@@ -21,9 +21,9 @@ sudo chmod +x /usr/local/bin/helheim
 
 # FORCE UPDATE local user bin (Crucial for user shell precedence)
 echo "📦 [INSTALL]: Forcing update of local user binary..."
-mkdir -p /home/bitboi/.local/bin
-cp -f "$BODY_DIR/target/release/helheim-cli" /home/bitboi/.local/bin/helheim
-chmod +x /home/bitboi/.local/bin/helheim
+mkdir -p $HOME/.local/bin
+cp -f "$BODY_DIR/target/release/helheim-cli" $HOME/.local/bin/helheim
+chmod +x $HOME/.local/bin/helheim
 
 # 4. Verify GPU 1 (5060 Ti) Access
 echo "🧪 [TEST]: Verifying CLI can see GPU 1..."

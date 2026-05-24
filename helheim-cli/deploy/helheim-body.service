@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 Type=simple
-User=bitboi_slave
+User=helheim_user
 # Default standard port is 9001
 ExecStart=/usr/local/bin/helheim service --port 9001
 Restart=always
