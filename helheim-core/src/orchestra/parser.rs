@@ -277,6 +277,24 @@ impl HelParser {
                     value: val_tokens.join(" "),
                 }))
             }
+            "model" => {
+                let name = iter.next().unwrap_or_default().to_string();
+                let next_token = iter.next().unwrap_or_default();
+                if next_token != "{" {
+                    return Err(anyhow::anyhow!("Verwacht '{{' na model naam"));
+                }
+                let mut fields = Vec::new();
+                while let Some(t) = iter.next() {
+                    if t == "}" {
+                        break;
+                    }
+                    let clean_field = t.trim_matches(',').to_string();
+                    if !clean_field.is_empty() {
+                        fields.push(clean_field);
+                    }
+                }
+                Ok(Some(CodeTaal::ModelDef { name, fields }))
+            }
             "gooi" => {
                 let mut val_tokens = Vec::new();
                 while let Some(t) = iter.peek() {

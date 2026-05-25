@@ -24,6 +24,7 @@ pub struct Orchestrator {
             (Vec<String>, Box<crate::orchestra::synthesis::CodeTaal>),
         >,
     >,
+    model_store: std::sync::Mutex<std::collections::HashMap<String, Vec<String>>>,
 }
 
 impl Orchestrator {
@@ -45,11 +46,17 @@ impl Orchestrator {
             }
         };
 
+        let mut initial_scope = std::collections::HashMap::new();
+        for (k, v) in globals {
+            initial_scope.insert(k, v);
+        }
+
         Self {
             discovery,
-            var_store: std::sync::Mutex::new(vec![globals]),
+            var_store: std::sync::Mutex::new(vec![initial_scope]),
             func_store: std::sync::Mutex::new(funcs),
             ast_funcs: std::sync::Mutex::new(std::collections::HashMap::new()),
+            model_store: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
 
@@ -1005,6 +1012,15 @@ impl Orchestrator {
                             params.len()
                         );
                     }
+                    CodeTaal::ModelDef { name, fields } => {
+                        let mut store = self.model_store.lock().unwrap();
+                        store.insert(name.clone(), fields.clone());
+                        println!("[MEMORY]: Blauwdruk opgeslagen voor model '{}' met {} velden.", name, fields.len());
+                    }
+                    CodeTaal::ModelInit { model_name, args } => {
+                        // Not used in execute_ast natively because VarDef intercepts 'nieuw'
+                        println!("[AST]: Onverwachte losse ModelInit voor {}", model_name);
+                    }
                     CodeTaal::VarDef { name, value } => {
                         let mut evaluated_value = value.clone();
                         let clean_val = evaluated_value.trim();
@@ -1020,8 +1036,8 @@ impl Orchestrator {
                                 evaluated_value =
                                     self.execute_function_call(&func_name, args).await?;
                             }
-                        } else if clean_val.starts_with("vraag ") {
-                            let prompt = clean_val[6..].trim().trim_matches('"');
+                        } else if let Some(prompt) = clean_val.strip_prefix("vraag ") {
+                            let prompt = prompt.trim().trim_matches('"');
                             let resolved_prompt = self.resolve_value(prompt);
                             use std::io::Write;
                             print!("{} ", resolved_prompt);
@@ -1029,15 +1045,61 @@ impl Orchestrator {
                             let mut input = String::new();
                             std::io::stdin().read_line(&mut input).unwrap();
                             evaluated_value = input.trim().to_string();
-                        } else if clean_val.starts_with("lees ") {
-                            let path = clean_val[5..].trim().trim_matches('"');
-                            let path_resolved = self.resolve_value(path);
-                            evaluated_value = tokio::fs::read_to_string(&path_resolved)
-                                .await
-                                .unwrap_or_else(|_| "".to_string());
+                        } else if let Some(path) = clean_val.strip_prefix("lees ") {
+                            let path = path.trim().trim_matches('"');
+                            let resolved_path = self.resolve_value(path);
+                            match std::fs::read_to_string(&resolved_path) {
+                                Ok(content) => evaluated_value = content,
+                                Err(e) => {
+                                    println!("[ERROR]: Kan bestand '{}' niet lezen: {}", resolved_path, e);
+                                    evaluated_value = "".to_string();
+                                }
+                            }
+                        } else if let Some(model_init) = clean_val.strip_prefix("nieuw ") {
+                            // Format: nieuw Server("192.168.1.1", 9000)
+                            let mut parts = model_init.splitn(2, '(');
+                            let model_name = parts.next().unwrap_or("").trim().to_string();
+                            let args_str = parts.next().unwrap_or("").trim().trim_end_matches(')');
+                            
+                            let mut args = Vec::new();
+                            for arg in args_str.split(',') {
+                                let arg_val = arg.trim().trim_matches('"').to_string();
+                                if !arg_val.is_empty() {
+                                    args.push(self.resolve_value(&arg_val));
+                                }
+                            }
+                            
+                            let store = self.model_store.lock().unwrap();
+                            if let Some(fields) = store.get(&model_name) {
+                                if fields.len() != args.len() {
+                                    println!("[ERROR]: Model '{}' verwacht {} argumenten, kreeg er {}.", model_name, fields.len(), args.len());
+                                    evaluated_value = "null".to_string();
+                                } else {
+                                    let mut json_map = serde_json::Map::new();
+                                    for (i, field) in fields.iter().enumerate() {
+                                        // Attempt to parse as number or boolean, else store as string
+                                        let val_str = &args[i];
+                                        let json_val = if let Ok(num) = val_str.parse::<f64>() {
+                                            serde_json::json!(num)
+                                        } else if val_str == "waar" || val_str == "true" {
+                                            serde_json::json!(true)
+                                        } else if val_str == "onwaar" || val_str == "false" {
+                                            serde_json::json!(false)
+                                        } else {
+                                            serde_json::json!(val_str)
+                                        };
+                                        json_map.insert(field.clone(), json_val);
+                                    }
+                                    evaluated_value = serde_json::to_string(&json_map).unwrap_or_else(|_| "null".to_string());
+                                }
+                            } else {
+                                println!("[ERROR]: Model '{}' is niet gedefinieerd.", model_name);
+                                evaluated_value = "null".to_string();
+                            }
                         } else {
                             evaluated_value = self.evaluate_expression(&value);
                         }
+                        let evaluated_value = self.resolve_value(&evaluated_value);
                         println!("[MEM]: {} = {}", name, evaluated_value);
                         self.set_var(name, evaluated_value);
                     }
@@ -1309,6 +1371,49 @@ impl Orchestrator {
 
                         return Ok(new_list);
                     }
+        }
+
+        // --- STD LIB: TEKST ---
+        if name == "tekst.lengte" && args.len() == 1 {
+            let s = self.resolve_value(&args[0]).trim_matches('"').to_string();
+            return Ok(s.len().to_string());
+        }
+        if name == "tekst.vervang" && args.len() == 3 {
+            let s = self.resolve_value(&args[0]).trim_matches('"').to_string();
+            let zoek = self.resolve_value(&args[1]).trim_matches('"').to_string();
+            let vervang = self.resolve_value(&args[2]).trim_matches('"').to_string();
+            return Ok(s.replace(&zoek, &vervang));
+        }
+        if name == "tekst.hoofdletters" && args.len() == 1 {
+            let s = self.resolve_value(&args[0]).trim_matches('"').to_string();
+            return Ok(s.to_uppercase());
+        }
+        if name == "tekst.splitsen" && args.len() == 2 {
+            let s = self.resolve_value(&args[0]).trim_matches('"').to_string();
+            let delimeter = self.resolve_value(&args[1]).trim_matches('"').to_string();
+            let parts: Vec<String> = s.split(&delimeter).map(|p| p.to_string()).collect();
+            let json_arr = serde_json::to_string(&parts).unwrap_or_else(|_| "[]".to_string());
+            return Ok(json_arr);
+        }
+
+        // --- STD LIB: WISKUNDE ---
+        if name == "wiskunde.willekeurig" && args.len() == 2 {
+            let min_val = self.resolve_value(&args[0]).trim_matches('"').parse::<i64>().unwrap_or(0);
+            let max_val = self.resolve_value(&args[1]).trim_matches('"').parse::<i64>().unwrap_or(100);
+            if min_val <= max_val {
+                use rand::Rng;
+                let mut rng = rand::rng();
+                let random_num: i64 = rng.random_range(min_val..=max_val);
+                return Ok(random_num.to_string());
+            } else {
+                return Ok("0".to_string());
+            }
+        }
+        if name == "wiskunde.afronden" && args.len() == 1 {
+            let val = self.resolve_value(&args[0]).trim_matches('"').to_string();
+            if let Ok(num) = val.parse::<f64>() {
+                return Ok(num.round().to_string());
+            }
         }
 
         let func_tuple = {

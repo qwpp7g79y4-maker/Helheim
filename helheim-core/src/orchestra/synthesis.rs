@@ -89,6 +89,16 @@ pub enum CodeTaal {
         catch_block: Box<CodeTaal>,
         error_var: Option<String>,
     },
+    /// Model Definitie: `model Persoon { naam, leeftijd }`
+    ModelDef {
+        name: String,
+        fields: Vec<String>,
+    },
+    /// Model Initialisatie: `nieuw Persoon("Pieter", 30)` (Returns a JSON string internally)
+    ModelInit {
+        model_name: String,
+        args: Vec<String>,
+    },
     /// Manual Error Raise: `gooi [foutmelding]`
     Throw { message: String },
     /// Operator: `x > 10` of `x + y`

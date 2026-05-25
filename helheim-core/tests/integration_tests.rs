@@ -176,3 +176,44 @@ async fn test_import_module() {
         "Functie uit module faalde"
     );
 }
+
+#[tokio::test]
+async fn test_models() {
+    let script = r#"
+        model Persoon { naam, leeftijd, actief }
+        zet werknemer = nieuw Persoon("Pieter", 30, waar);
+        zet info = werknemer["naam"];
+    "#;
+    
+    let engine = run_helheim_script(script).await;
+    
+    // De output JSON checken
+    let raw_json = engine.get_var("werknemer").unwrap();
+    assert!(raw_json.contains("\"naam\":\"Pieter\""), "Naam faalde in model");
+    assert!(raw_json.contains("\"leeftijd\":30.0"), "Leeftijd faalde in model: {}", raw_json);
+    assert!(raw_json.contains("\"actief\":true"), "Boolean faalde in model: {}", raw_json);
+    
+    // Check de extractie via haken syntax
+    assert_eq!(engine.get_var("info").unwrap(), "Pieter", "Uitlezen uit model faalde");
+}
+
+#[tokio::test]
+async fn test_stdlib() {
+    let script = r#"
+        zet bron = "Hallo Helheim Wereld";
+        zet l = roep_aan tekst.lengte bron;
+        zet vervangen = roep_aan tekst.vervang bron "Wereld" "Matrix";
+        zet caps = roep_aan tekst.hoofdletters bron;
+        
+        zet rnd = roep_aan wiskunde.willekeurig 1 1;
+        zet afgerond = roep_aan wiskunde.afronden "3.7";
+    "#;
+    
+    let engine = run_helheim_script(script).await;
+    
+    assert_eq!(engine.get_var("l").unwrap(), "20");
+    assert_eq!(engine.get_var("vervangen").unwrap(), "Hallo Helheim Matrix");
+    assert_eq!(engine.get_var("caps").unwrap(), "HALLO HELHEIM WERELD");
+    assert_eq!(engine.get_var("rnd").unwrap(), "1");
+    assert_eq!(engine.get_var("afgerond").unwrap(), "4");
+}
