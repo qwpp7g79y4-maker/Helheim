@@ -2,7 +2,10 @@ use clap::{Parser, Subcommand};
 pub mod intent;
 
 #[derive(Parser, Debug)]
-#[command(name = "helheim", about = "Helheim CLI - de taal die Python obsolete maakt")]
+#[command(
+    name = "helheim",
+    about = "Helheim CLI - de taal die Python obsolete maakt"
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
@@ -11,15 +14,11 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Versnel je actie: voer een raw file of command uit
-    Run {
-        input: String,
-    },
+    Run { input: String },
     /// Start de Helheim Interactive REPL
     Repl,
     /// Voer een Helheim script (.hel) uit
-    Script {
-        path: String,
-    },
+    Script { path: String },
     /// Start de Helheim Node listener (Antigravity Cluster)
     Listen {
         #[arg(short, long, default_value_t = 8080)]
@@ -44,17 +43,15 @@ pub fn parse_simple_command(input: &str) -> Option<(String, String)> {
     if input_lc.contains("stuur") && input_lc.contains("naar") {
         // Simple regex-like capture
         let words: Vec<&str> = input.split_whitespace().collect();
-        if let Some(stuur_pos) = words.iter().position(|&w| w.to_lowercase() == "stuur") {
-            if let Some(naar_pos) = words.iter().position(|&w| w.to_lowercase() == "naar") {
-                if naar_pos > stuur_pos + 1 && words.len() > naar_pos + 1 {
+        if let Some(stuur_pos) = words.iter().position(|&w| w.to_lowercase() == "stuur")
+            && let Some(naar_pos) = words.iter().position(|&w| w.to_lowercase() == "naar")
+                && naar_pos > stuur_pos + 1 && words.len() > naar_pos + 1 {
                     let what = words[stuur_pos + 1..naar_pos].join(" ");
                     let target = words[naar_pos + 1..].join(" ");
                     return Some((what, target));
                 }
-            }
-        }
     }
-    
+
     // Fallback to legacy exact match
     let trimmed = input.trim();
     if !trimmed.starts_with("stuur ") {

@@ -1,0 +1,13 @@
+print "=== TEST IMPORT SYSTEEM ===";
+
+gebruik "/home/bitboi/dev_2/Helheim/wiskunde.hel";
+
+print "Module succesvol geladen! Nu testen...";
+
+roep_aan begroet "Gebruiker";
+
+zet getal = 8;
+zet vierkant = roep_aan kwadraat $getal;
+
+print "Het kwadraat van $getal is $vierkant";
+print "=== EINDE TEST ===";

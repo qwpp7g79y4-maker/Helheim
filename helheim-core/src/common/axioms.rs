@@ -48,6 +48,12 @@ pub struct Soul {
     pub active_axiom: Axiom,
 }
 
+impl Default for Soul {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Soul {
     pub fn new() -> Self {
         Self {

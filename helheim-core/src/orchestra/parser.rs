@@ -28,6 +28,21 @@ impl HelParser {
         };
 
         match token.as_str() {
+            "gebruik" | "use" | "import" => {
+                let path = iter.next().ok_or(anyhow::anyhow!(
+                    "Verwacht een bestandsnaam na 'gebruik' of 'use'"
+                ))?;
+                // Remove semicolon if attached (tokenizer splits them unless quoted, but just in case)
+                let clean_path = path.trim_matches('"').trim_end_matches(';').to_string();
+
+                // Optionele puntkomma consumeren
+                if let Some(next_tok) = iter.peek()
+                    && next_tok == ";" {
+                        iter.next();
+                    }
+
+                Ok(Some(CodeTaal::Gebruik { path: clean_path }))
+            }
             "zet" | "let" | "set" => {
                 // zet [naam] = [waarde]
                 let name = iter
@@ -99,14 +114,16 @@ impl HelParser {
                 if elke != "elke" {
                     return Err(anyhow::anyhow!("Verwacht 'elke' na 'voor'"));
                 }
-                
-                let iterator = iter.next().ok_or(anyhow::anyhow!("Verwacht variabele na 'voor elke'"))?;
-                
+
+                let iterator = iter
+                    .next()
+                    .ok_or(anyhow::anyhow!("Verwacht variabele na 'voor elke'"))?;
+
                 let in_kw = iter.next().unwrap_or_default();
                 if in_kw != "in" {
                     return Err(anyhow::anyhow!("Verwacht 'in' na '{}'", iterator));
                 }
-                
+
                 // We consume everything till '{' as the iterable string
                 let mut iter_parts = Vec::new();
                 while let Some(t) = iter.peek() {
@@ -143,16 +160,15 @@ impl HelParser {
                 });
 
                 let body_ast = Box::new(Self::parse_block(iter)?);
-                
+
                 // Optioneel 'anders' blok vangen
                 let mut else_block = None;
-                if let Some(next_token) = iter.peek() {
-                    if next_token == "anders" {
+                if let Some(next_token) = iter.peek()
+                    && next_token == "anders" {
                         // Consume 'anders'
-                        iter.next(); 
+                        iter.next();
                         else_block = Some(Box::new(Self::parse_block(iter)?));
                     }
-                }
 
                 Ok(Some(CodeTaal::If {
                     condition: cond_ast,
@@ -160,19 +176,35 @@ impl HelParser {
                     else_block,
                 }))
             }
+            "tegelijkertijd" => {
+                let block_ast = Box::new(Self::parse_block(iter)?);
+                let statements = if let CodeTaal::Block { statements } = *block_ast {
+                    statements
+                } else {
+                    Vec::new()
+                };
+                Ok(Some(CodeTaal::Concurrent { statements }))
+            }
             "probeer" => {
-                // probeer { ... } vang { ... }
+                // probeer { ... } vang err { ... }
                 let try_ast = Box::new(Self::parse_block(iter)?);
-                
+
                 let vang_token = iter.next().unwrap_or_default();
                 if vang_token != "vang" {
                     return Err(anyhow::anyhow!("Verwacht 'vang' na 'probeer'-blok"));
                 }
-                
+
+                let mut error_var = None;
+                if let Some(t) = iter.peek()
+                    && t != "{" {
+                        error_var = Some(iter.next().unwrap().to_string());
+                    }
+
                 let catch_ast = Box::new(Self::parse_block(iter)?);
                 Ok(Some(CodeTaal::TryCatch {
                     try_block: try_ast,
                     catch_block: catch_ast,
+                    error_var,
                 }))
             }
             "stuur" => {
@@ -184,8 +216,8 @@ impl HelParser {
                 // Als payload tussen quotes staat, is het 1 token.
 
                 let mut targets = Vec::new();
-                if let Some(naar) = iter.next() {
-                    if naar == "naar" {
+                if let Some(naar) = iter.next()
+                    && naar == "naar" {
                         while let Some(t) = iter.peek() {
                             if t == ";" || t == "}" {
                                 break;
@@ -193,7 +225,6 @@ impl HelParser {
                             targets.push(iter.next().unwrap());
                         }
                     }
-                }
                 let target_str = targets.join(" ");
                 Ok(Some(CodeTaal::Send {
                     target: target_str,
@@ -201,17 +232,30 @@ impl HelParser {
                 }))
             }
             "matmul" => {
-                let size_str = iter.next().ok_or(anyhow::anyhow!("Verwachte grootte na 'matmul'"))?;
-                let size: usize = size_str.parse().map_err(|_| anyhow::anyhow!("Ongeldige grootte: {}", size_str))?;
-                Ok(Some(CodeTaal::MatMul { m: size, n: size, k: size }))
+                let size_str = iter
+                    .next()
+                    .ok_or(anyhow::anyhow!("Verwachte grootte na 'matmul'"))?;
+                let size: usize = size_str
+                    .parse()
+                    .map_err(|_| anyhow::anyhow!("Ongeldige grootte: {}", size_str))?;
+                Ok(Some(CodeTaal::MatMul {
+                    m: size,
+                    n: size,
+                    k: size,
+                }))
             }
             "functie" | "func" | "fn" | "function" => {
                 // functie [naam] met [arg1] [arg2] { ... } -> of 'functie [naam] a b {'
                 let name = iter.next().ok_or(anyhow::anyhow!("Verwacht functienaam"))?;
                 let mut params = Vec::new();
                 while let Some(t) = iter.peek() {
-                    if t == "{" { break; }
-                    if t == "met" || t == "," { iter.next(); continue; }
+                    if t == "{" {
+                        break;
+                    }
+                    if t == "met" || t == "," {
+                        iter.next();
+                        continue;
+                    }
                     params.push(iter.next().unwrap());
                 }
                 let body_ast = Box::new(Self::parse_block(iter)?);
@@ -224,30 +268,86 @@ impl HelParser {
             "geef_terug" | "return" => {
                 let mut val_tokens = Vec::new();
                 while let Some(t) = iter.peek() {
-                    if t == ";" || t == "}" { break; }
+                    if t == ";" || t == "}" {
+                        break;
+                    }
                     val_tokens.push(iter.next().unwrap());
                 }
-                Ok(Some(CodeTaal::Return { value: val_tokens.join(" ") }))
+                Ok(Some(CodeTaal::Return {
+                    value: val_tokens.join(" "),
+                }))
             }
             "gooi" => {
                 let mut val_tokens = Vec::new();
                 while let Some(t) = iter.peek() {
-                    if t == ";" || t == "}" { break; }
+                    if t == ";" || t == "}" {
+                        break;
+                    }
                     val_tokens.push(iter.next().unwrap());
                 }
-                Ok(Some(CodeTaal::Throw { message: val_tokens.join(" ") }))
+                Ok(Some(CodeTaal::Throw {
+                    message: val_tokens.join(" "),
+                }))
+            }
+            "voeg_toe" => {
+                let array_name = iter
+                    .next()
+                    .ok_or(anyhow::anyhow!("Verwacht array naam na 'voeg_toe'"))?;
+                let mut val_tokens = Vec::new();
+                while let Some(t) = iter.peek() {
+                    if t == ";" || t == "}" {
+                        break;
+                    }
+                    val_tokens.push(iter.next().unwrap());
+                }
+                let value = val_tokens.join(" ");
+                if value.is_empty() {
+                    return Err(anyhow::anyhow!(
+                        "Verwacht waarde na array naam in 'voeg_toe'"
+                    ));
+                }
+                Ok(Some(CodeTaal::ArrayPush { array_name, value }))
+            }
+            "verwijder" => {
+                let array_name = iter
+                    .next()
+                    .ok_or(anyhow::anyhow!("Verwacht array naam na 'verwijder'"))?;
+                let mut val_tokens = Vec::new();
+                while let Some(t) = iter.peek() {
+                    if t == ";" || t == "}" {
+                        break;
+                    }
+                    val_tokens.push(iter.next().unwrap());
+                }
+                let index = val_tokens.join(" ");
+                if index.is_empty() {
+                    return Err(anyhow::anyhow!(
+                        "Verwacht index na array naam in 'verwijder'"
+                    ));
+                }
+                Ok(Some(CodeTaal::ArrayRemove { array_name, index }))
             }
             "roep_aan" => {
                 // top-level roep_aan functie arg1 arg2
                 let mut call_tokens = Vec::new();
                 while let Some(t) = iter.peek() {
-                    if t == ";" || t == "}" { break; }
+                    if t == ";" || t == "}" {
+                        break;
+                    }
                     call_tokens.push(iter.next().unwrap());
                 }
                 let call_str = call_tokens.join(" ");
                 let parts: Vec<&str> = call_str.split_whitespace().collect();
-                let name = if !parts.is_empty() { parts[0].to_string() } else { "".to_string() };
-                let args = if parts.len() > 1 { parts[1..].iter().map(|s| s.to_string()).collect() } else { Vec::new() };
+                let name = if !parts.is_empty() {
+                    parts[0].to_string()
+                } else {
+                    "".to_string()
+                };
+                let args = if parts.len() > 1 {
+                    parts[1..].iter().map(|s| s.to_string()).collect()
+                } else {
+                    Vec::new()
+                };
                 Ok(Some(CodeTaal::FunctionCall { name, args }))
             }
             "}" => {
@@ -313,10 +413,18 @@ struct Tokenizer;
 impl Tokenizer {
     fn tokenize(input: &str) -> Vec<String> {
         let mut tokens = Vec::new();
+        // Remove comment lines first
+        let clean_input: String = input
+            .lines()
+            .map(|l| l.trim())
+            .filter(|l| !l.starts_with("//"))
+            .collect::<Vec<&str>>()
+            .join("\n");
+
         let mut current = String::new();
         let mut in_quote = false;
 
-        let chars: Vec<char> = input.chars().collect();
+        let chars: Vec<char> = clean_input.chars().collect();
         let mut i = 0;
 
         while i < chars.len() {

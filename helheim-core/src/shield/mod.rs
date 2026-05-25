@@ -1,5 +1,5 @@
-use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use lazy_static::lazy_static;
 use rand::Rng;
 
@@ -57,7 +57,7 @@ impl HelheimShield {
     /// HSP: De-Noise & Decrypt
     pub fn decrypt_packet(input: &str) -> anyhow::Result<String> {
         let decoded = STANDARD.decode(input)?;
-        if decoded.len() < 1 {
+        if decoded.is_empty() {
             return Err(anyhow::anyhow!("Empty Packet"));
         }
 
@@ -82,7 +82,12 @@ impl HelheimShield {
             0 => {
                 let user = format!("admin_{}", rng.random_range(1000..9999));
                 let pass = STANDARD.encode(rng.random::<[u8; 16]>());
-                format!("# CONFIG_VERSION: 1.33.7\nDB_USER={}\nDB_PASS={}\nDB_HOST=10.0.0.{} \n# LOGOUT_ON_SUCCESS=false", user, pass, rng.random_range(1..254))
+                format!(
+                    "# CONFIG_VERSION: 1.33.7\nDB_USER={}\nDB_PASS={}\nDB_HOST=10.0.0.{} \n# LOGOUT_ON_SUCCESS=false",
+                    user,
+                    pass,
+                    rng.random_range(1..254)
+                )
             }
             1 => {
                 let body = STANDARD.encode(rng.random::<[u8; 64]>());

@@ -1,5 +1,5 @@
-use std::process::Command;
 use anyhow::{Result, anyhow};
+use std::process::Command;
 
 /// De Helheim System Module
 /// Directe interface voor OS-level commando's (Bash/Shell).
@@ -21,8 +21,11 @@ impl SystemManager {
             Ok(stdout)
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            Err(anyhow!("SYS Commando faalde (Exit Code {}): {}", 
-                output.status.code().unwrap_or(-1), stderr))
+            Err(anyhow!(
+                "SYS Commando faalde (Exit Code {}): {}",
+                output.status.code().unwrap_or(-1),
+                stderr
+            ))
         }
     }
 }

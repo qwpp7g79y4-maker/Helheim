@@ -14,8 +14,10 @@ impl HttpManager {
             .call()
             .map_err(|e| anyhow!("HTTP Fout bij verbinden met '{}': {}", url, e))?;
 
-        let body = resp.body_mut().read_to_string()
-             .map_err(|e| anyhow!("HTTP Fout bij lezen van response: {}", e))?;
+        let body = resp
+            .body_mut()
+            .read_to_string()
+            .map_err(|e| anyhow!("HTTP Fout bij lezen van response: {}", e))?;
 
         Ok(body)
     }

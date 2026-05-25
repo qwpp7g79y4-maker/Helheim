@@ -60,11 +60,10 @@ impl IntentParser {
 
         // 3. Matrix Kernels: "matmul 2048"
         let re_matmul = Regex::new(r"(?i)matmul\s+(\d+)").unwrap();
-        if let Some(caps) = re_matmul.captures(normalized) {
-            if let Ok(size) = caps[1].parse::<usize>() {
+        if let Some(caps) = re_matmul.captures(normalized)
+            && let Ok(size) = caps[1].parse::<usize>() {
                 return Intent::MatMul { size };
             }
-        }
 
         // 3. Simple Keyword Matching
         let lower = normalized.to_lowercase();

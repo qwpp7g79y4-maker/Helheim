@@ -1,0 +1,12 @@
+print "=== TEST SYSTEEM & TIJD ===";
+
+zet nu = roep_aan huidige_tijd;
+print "De huidige UNIX tijd is: $nu";
+
+zet random = roep_aan willekeurig_getal 10;
+print "Willekeurig getal (0-10): $random";
+
+zet map = roep_aan lees_map "./";
+print "Inhoud van de huidige map: $map";
+
+print "=== EINDE TEST ===";

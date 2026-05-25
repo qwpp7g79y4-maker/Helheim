@@ -1,0 +1,39 @@
+// Helheim Logic & Array Test
+print "--- HELHEIM ARRAY TEST ---";
+
+zet mijn_lijst = [10, 20, 30, 40];
+print("De lijst is: $mijn_lijst");
+
+zet lengte_lijst = lengte(mijn_lijst);
+print "Lengte van lijst is: $lengte_lijst";
+
+zet eerste = mijn_lijst[0];
+print "Eerste element is: $eerste";
+
+zet tweede = mijn_lijst[1];
+print "Tweede element is: $tweede";
+
+voeg_toe mijn_lijst 50;
+print("Lijst na toevoegen 50: $mijn_lijst");
+
+print "--- ITERATIE (VOOR ELKE) ---";
+voor elke getal in mijn_lijst {
+    zet dubbel = getal * 2;
+    print "Het dubbele van $getal is $dubbel";
+}
+
+print "--- WHILE LOOP (ZOLANG) ---";
+zet teller = 0;
+zolang teller < 3 {
+    print "Teller is nu: $teller";
+    zet teller = teller + 1;
+}
+
+print "--- ALS/DAN LOGICA ---";
+als teller == 3 dan {
+    print "Teller is exact 3!";
+} anders {
+    print "Teller is NIET 3!";
+}
+
+print "--- SUCCES ---";

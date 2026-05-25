@@ -1,0 +1,11 @@
+// Helheim Native Concurrency Test
+print "--- START CONCURRENTIE TEST ---";
+
+tegelijkertijd {
+    roep_aan wacht 2;
+    roep_aan wacht 2;
+    roep_aan wacht 2;
+    print "Dit gebeurt tegelijkertijd!";
+}
+
+print "--- EINDE CONCURRENTIE TEST (Dit zou na ~2 seconden moeten printen, niet 6) ---";

@@ -137,33 +137,14 @@ async fn main() -> Result<()> {
         Commands::Script { path } => {
             println!("[SCRIPT]: Executing '{}' via Native AST Engine...", path);
             let content = tokio::fs::read_to_string(path).await?;
-            let mut script_buffer = String::new();
-            let mut brace_depth = 0i32;
-
-            for line in content.lines() {
-                let trimmed = line.trim();
-                if trimmed.is_empty() || trimmed.starts_with("//") { continue; }
-                
-                brace_depth += trimmed.chars().filter(|&c| c == '{').count() as i32;
-                brace_depth -= trimmed.chars().filter(|&c| c == '}').count() as i32;
-                
-                if !script_buffer.is_empty() {
-                    script_buffer.push('\n');
-                }
-                script_buffer.push_str(trimmed);
-                
-                if brace_depth > 0 {
-                    continue;
-                }
-                
-                let final_input = script_buffer.clone();
-                script_buffer.clear();
-                brace_depth = 0;
-
-                if let Err(e) = orchestrator.process_command(&final_input).await {
-                    println!("[ERROR]: {}", e);
-                    break;
-                }
+            use helheim_core::orchestra::parser::HelParser;
+            match HelParser::parse(&content) {
+                Ok(ast) => {
+                    if let Err(e) = orchestrator.execute_ast(ast).await {
+                        println!("[ERROR]: Runtime Error: {}", e);
+                    }
+                },
+                Err(e) => println!("[ERROR]: Parse Error: {}", e),
             }
         }
 

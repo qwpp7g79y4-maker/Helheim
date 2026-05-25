@@ -41,12 +41,20 @@ pub enum CodeTaal {
     HttpOp { method: String, url: String },
 
     // --- LANGUAGE CORE (V1) ---
+    /// Module Import: `gebruik "bestand.hel"`
+    Gebruik { path: String },
     /// Variabele Definitie: `zet x = 10`
     VarDef { name: String, value: String }, // TODO: Type system (Int/Float/Str)
     /// Variabele Gebruik: `$x` of check
     VarGet { name: String },
+    /// Array Mutatie (Toevoegen): `voeg_toe lijst_naam "waarde"`
+    ArrayPush { array_name: String, value: String },
+    /// Array Mutatie (Verwijderen): `verwijder lijst_naam 0`
+    ArrayRemove { array_name: String, index: String },
     /// Code Blok: `{ ... }`
     Block { statements: Vec<CodeTaal> },
+    /// Concurrent Blok: `tegelijkertijd { ... }`
+    Concurrent { statements: Vec<CodeTaal> },
     /// Hel-modus Blok (Raw PTX/C++): `hel { ... }`
     HelBlock { raw_code: String },
     /// Loop Structure: `zolang [cond] { ... }`
@@ -73,23 +81,16 @@ pub enum CodeTaal {
         body: Box<CodeTaal>,
     },
     /// Function Call: `roep_aan x(1, 2)` or evaluated in var definition
-    FunctionCall {
-        name: String,
-        args: Vec<String>, 
-    },
+    FunctionCall { name: String, args: Vec<String> },
     /// Return statement: `geef_terug [waarde]`
-    Return {
-        value: String,
-    },
-    /// Error Handling: `probeer { ... } vang { ... }`
+    Return { value: String },
     TryCatch {
         try_block: Box<CodeTaal>,
         catch_block: Box<CodeTaal>,
+        error_var: Option<String>,
     },
     /// Manual Error Raise: `gooi [foutmelding]`
-    Throw {
-        message: String,
-    },
+    Throw { message: String },
     /// Operator: `x > 10` of `x + y`
     Op {
         left: Box<CodeTaal>,
@@ -133,7 +134,9 @@ impl KernelSynthesisEngine {
                 )
             }
             CodeTaal::HelBlock { ref raw_code } => {
-                println!("[SYNTHESIS]: Hel-modus detectie. JIT compilatie van ruwe bare-metal logica.");
+                println!(
+                    "[SYNTHESIS]: Hel-modus detectie. JIT compilatie van ruwe bare-metal logica."
+                );
                 // We return the raw code directly. The execution engine will pass it to NVRTC.
                 format!("// HEL_BLOCK_START\n{}\n// HEL_BLOCK_END", raw_code)
             }
@@ -148,7 +151,7 @@ impl KernelSynthesisEngine {
                     println!("[SECURITY]: Result: {}", obf);
                     format!("// HOST_OP: ENCRYPT (Hash: {:X})", hash)
                 } else {
-                    format!("// HOST_OP: UNKNOWN_ALGO")
+                    "// HOST_OP: UNKNOWN_ALGO".to_string()
                 }
             }
             CodeTaal::FileOp {
@@ -169,10 +172,10 @@ impl KernelSynthesisEngine {
                         println!("[FS]: Wrote to {}", path);
                         format!("// HOST_OP: FS_WRITE -> {}", path)
                     } else {
-                        format!("// HOST_OP: FS_WRITE_ERROR (No Content)")
+                        "// HOST_OP: FS_WRITE_ERROR (No Content)".to_string()
                     }
                 }
-                _ => format!("// HOST_OP: FS_UNKNOWN"),
+                _ => "// HOST_OP: FS_UNKNOWN".to_string(),
             },
             CodeTaal::SysOp { ref command } => {
                 use crate::std::sys::SystemManager;
@@ -180,11 +183,11 @@ impl KernelSynthesisEngine {
                 match SystemManager::execute(command) {
                     Ok(out) => {
                         println!("[SYS]: Output:\n{}", out.trim());
-                        format!("// HOST_OP: SYS_EXEC (Success)")
+                        "// HOST_OP: SYS_EXEC (Success)".to_string()
                     }
                     Err(e) => {
                         println!("[SYS]: Error: {}", e);
-                        format!("// HOST_OP: SYS_ERROR")
+                        "// HOST_OP: SYS_ERROR".to_string()
                     }
                 }
             }
@@ -201,11 +204,15 @@ impl KernelSynthesisEngine {
                     }
                     Err(e) => {
                         println!("[HTTP]: Error: {}", e);
-                        format!("// HOST_OP: HTTP_ERROR")
+                        "// HOST_OP: HTTP_ERROR".to_string()
                     }
                 }
             }
-            _ => format!("// HOST_OP: INTERPRETER_LOGIC (CPU-Side)"),
+            CodeTaal::Gebruik { ref path } => {
+                println!("[SYNTHESIS]: Host-op for import: {}", path);
+                format!("// HOST_OP: IMPORT -> {}", path)
+            }
+            _ => "// HOST_OP: INTERPRETER_LOGIC (CPU-Side)".to_string(),
         };
 
         // Stap 3: Opslaan in Cache
@@ -218,22 +225,21 @@ impl KernelSynthesisEngine {
         // WMMA (Warp Matrix Multiply and Accumulate)
         // Uses Hardware Tensor Cores via TF32 precision (allows standard floats as input but uses 19-bit math cores).
         // Warp Size: 32 threads. Block Size: 128 (4 warps).
-        format!(
-            r#"
+        r#"
 #include <mma.h>
 #include <cuda_fp16.h>
 using namespace nvcuda;
 
 // Inline PTX for Async Copy
-__device__ __forceinline__ void cp_async_16B(void* smem, const void* gmem) {{
+__device__ __forceinline__ void cp_async_16B(void* smem, const void* gmem) {
     unsigned int smem_int = __cvta_generic_to_shared(smem);
     asm volatile("cp.async.cg.shared.global [%0], [%1], 16;\n" :: "r"(smem_int), "l"((const char*)gmem));
-}}
-__device__ __forceinline__ void cp_async_commit() {{ asm volatile("cp.async.commit_group;\n"); }}
-__device__ __forceinline__ void cp_async_wait() {{ asm volatile("cp.async.wait_group 0;\n"); }}
+}
+__device__ __forceinline__ void cp_async_commit() { asm volatile("cp.async.commit_group;\n"); }
+__device__ __forceinline__ void cp_async_wait() { asm volatile("cp.async.wait_group 0;\n"); }
 
 // FP16 WMMA Kernel for Maximum Throughput (Project Apex-WMMA)
-extern "C" __global__ void matmul_kernel(int M, int N, int K, float alpha, const half* A, const half* B, float beta, float* C) {{
+extern "C" __global__ void matmul_kernel(int M, int N, int K, float alpha, const half* A, const half* B, float beta, float* C) {
     // Block dimension: 256 threads (8 warps).
     // Each block processes a 128x128 tile of C.
     
@@ -256,16 +262,16 @@ extern "C" __global__ void matmul_kernel(int M, int N, int K, float alpha, const
 
     // 16 accumulators (each 16x16) for the 64x64 tile per warp
     wmma::fragment<wmma::accumulator, 16, 16, 16, float> c_frag[4][4];
-    for (int i = 0; i < 4; i++) {{
-        for (int j = 0; j < 4; j++) {{
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
             wmma::fill_fragment(c_frag[i][j], 0.0f);
-        }}
-    }}
+        }
+    }
 
     // PRE-LOAD the FIRST tile using cp.async
     // 256 threads loading 128x32 elements = 4096 elements.
     // Each thread loads 16 elements = 2x 16-byte chunks (8 elements each).
-    for (int i = 0; i < 2; i++) {{
+    for (int i = 0; i < 2; i++) {
         int a_idx = i * 256 + tx;
         int a_r = a_idx / 4; // 128 rows, 4 chunks of 8 elements = 32 elements.
         int a_c = (a_idx % 4) * 8;
@@ -277,7 +283,7 @@ extern "C" __global__ void matmul_kernel(int M, int N, int K, float alpha, const
         int b_c = (b_idx % 16) * 8;
         if (b_r < K && (bx * 128 + b_c) < N)
             cp_async_16B(&s_B[0][b_r][b_c], &B[b_r * N + bx * 128 + b_c]);
-    }}
+    }
     cp_async_commit();
     cp_async_wait();
     __syncthreads();
@@ -286,10 +292,10 @@ extern "C" __global__ void matmul_kernel(int M, int N, int K, float alpha, const
     int compute_idx = 0;
 
     // Iterate over K in chunks of 32
-    for (int k_step = 0; k_step < K; k_step += 32) {{
+    for (int k_step = 0; k_step < K; k_step += 32) {
         // ASYNC LOAD NEXT TILE
-        if (k_step + 32 < K) {{
-            for (int i = 0; i < 2; i++) {{
+        if (k_step + 32 < K) {
+            for (int i = 0; i < 2; i++) {
                 int a_idx = i * 256 + tx;
                 int a_r = a_idx / 4;
                 int a_c = (a_idx % 4) * 8;
@@ -301,12 +307,12 @@ extern "C" __global__ void matmul_kernel(int M, int N, int K, float alpha, const
                 int b_c = (b_idx % 16) * 8;
                 if ((k_step + 32 + b_r) < K && (bx * 128 + b_c) < N)
                     cp_async_16B(&s_B[load_idx][b_r][b_c], &B[(k_step + 32 + b_r) * N + bx * 128 + b_c]);
-            }}
+            }
             cp_async_commit();
-        }}
+        }
 
         // COMPUTE CURRENT TILE WITH FP16 TENSOR CORES
-        for (int k_frag = 0; k_frag < 32; k_frag += 16) {{
+        for (int k_frag = 0; k_frag < 32; k_frag += 16) {
             wmma::fragment<wmma::matrix_a, 16, 16, 16, half, wmma::row_major> a_frag[4];
             wmma::fragment<wmma::matrix_b, 16, 16, 16, half, wmma::row_major> b_frag[4];
 
@@ -316,64 +322,59 @@ extern "C" __global__ void matmul_kernel(int M, int N, int K, float alpha, const
             for(int j=0; j<4; j++) wmma::load_matrix_sync(b_frag[j], &s_B[compute_idx][k_frag][warpCol + j*16], 128);
 
             #pragma unroll
-            for (int i = 0; i < 4; i++) {{
+            for (int i = 0; i < 4; i++) {
                 #pragma unroll
-                for (int j = 0; j < 4; j++) {{
+                for (int j = 0; j < 4; j++) {
                     wmma::mma_sync(c_frag[i][j], a_frag[i], b_frag[j], c_frag[i][j]);
-                }}
-            }}
-        }}
+                }
+            }
+        }
 
-        if (k_step + 32 < K) {{
+        if (k_step + 32 < K) {
             cp_async_wait();
             __syncthreads();
             load_idx ^= 1;
             compute_idx ^= 1;
-        }}
-    }}
+        }
+    }
 
     // STORE RESULTS
-    for (int i = 0; i < 4; i++) {{
-        for (int j = 0; j < 4; j++) {{
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
             int r = globalRow + i * 16;
             int c = globalCol + j * 16;
-            if (r < M && c < N) {{
+            if (r < M && c < N) {
                 wmma::store_matrix_sync(C + r * N + c, c_frag[i][j], N, wmma::mem_row_major);
-            }}
-        }}
-    }}
-}}
-"#
-        )
+            }
+        }
+    }
+}
+"#.to_string()
     }
 
     fn generate_tensor_add_ptx(_m: usize, _n: usize) -> String {
-        format!(
-            r#"
-extern "C" __global__ void tensor_add_kernel(const float* A, const float* B, float* C, int M, int N) {{
+        r#"
+extern "C" __global__ void tensor_add_kernel(const float* A, const float* B, float* C, int M, int N) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int total_elements = M * N;
-    if (idx < total_elements) {{
+    if (idx < total_elements) {
         C[idx] = A[idx] + B[idx];
-    }}
-}}
-"#
-        )
+    }
+}
+"#.to_string()
     }
 
     fn generate_tensor_relu_ptx(_m: usize, _n: usize) -> String {
-        format!(
-            r#"
-extern "C" __global__ void tensor_relu_kernel(const float* A, float* B, int M, int N) {{
+        r#"
+extern "C" __global__ void tensor_relu_kernel(const float* A, float* B, int M, int N) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int total_elements = M * N;
-    if (idx < total_elements) {{
+    if (idx < total_elements) {
         float val = A[idx];
         B[idx] = val > 0.0f ? val : 0.0f;
-    }}
-}}
-"#
-        )
+    }
+}
+"#.to_string()
     }
 
     fn generate_vector_add_ptx(_len: usize) -> String {

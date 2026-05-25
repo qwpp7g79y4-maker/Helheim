@@ -12,6 +12,12 @@ pub struct DiscoveryService {
     pub peers: Arc<Mutex<HashMap<String, NodeCapabilities>>>,
 }
 
+impl Default for DiscoveryService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DiscoveryService {
     pub fn new() -> Self {
         Self {
@@ -29,7 +35,10 @@ impl DiscoveryService {
         let socket = match UdpSocket::bind(&addr) {
             Ok(s) => s,
             Err(_) => {
-                println!("ℹ️  Port {} is bezet. Helheim draait op deze node in 'Social Mode' (alleen zenden).", port);
+                println!(
+                    "ℹ️  Port {} is bezet. Helheim draait op deze node in 'Social Mode' (alleen zenden).",
+                    port
+                );
                 return Ok(());
             }
         };
@@ -87,12 +96,14 @@ impl DiscoveryService {
         let protected_payload = format!("KYBER_PROTECTED_{}", payload);
         // ----------------------------
 
-        std::thread::spawn(move || loop {
-            let _ = socket.send_to(
-                protected_payload.as_bytes(),
-                format!("255.255.255.255:{}", port),
-            );
-            std::thread::sleep(std::time::Duration::from_secs(5));
+        std::thread::spawn(move || {
+            loop {
+                let _ = socket.send_to(
+                    protected_payload.as_bytes(),
+                    format!("255.255.255.255:{}", port),
+                );
+                std::thread::sleep(std::time::Duration::from_secs(5));
+            }
         });
         Ok(())
     }

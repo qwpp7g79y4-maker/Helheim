@@ -1,11 +1,11 @@
 use anyhow::Result;
-use cudarc::driver::{CudaContext, LaunchConfig, PushKernelArg, CudaSlice};
+use colored::*;
+use cudarc::driver::{CudaContext, CudaSlice, LaunchConfig, PushKernelArg};
 use cudarc::nvrtc::compile_ptx;
 use rand::Rng;
-use std::time::Instant;
-use colored::*;
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::time::Instant;
 
 lazy_static::lazy_static! {
     pub static ref TENSOR_STORE: Mutex<HashMap<usize, CudaSlice<f32>>> = Mutex::new(HashMap::new());
@@ -16,10 +16,10 @@ pub fn gpu_alloc_tensor_random(m: usize, n: usize) -> Result<usize> {
     let dev = CudaContext::new(0)?;
     let stream = dev.default_stream();
     let elements = m * n;
-    
+
     let mut rng = rand::rng();
     let host_data: Vec<f32> = (0..elements).map(|_| rng.random()).collect();
-    
+
     let mut dev_data = stream.alloc_zeros::<f32>(elements)?;
     stream.memcpy_htod(&host_data, &mut dev_data)?;
     stream.synchronize()?;
@@ -88,12 +88,20 @@ extern "C" __global__ void matmul(int m, int n, int k, float alpha, const float*
 pub fn gpu_work_real(size: usize, device_id: usize) -> Result<()> {
     println!("Checking hardware for GPU acceleration (Bare Metal Check)...");
     let has_nvidia = std::process::Command::new("nvidia-smi").output().is_ok();
-    
+
     if !has_nvidia {
-        println!("{}", "[FALLBACK]: No Nvidia GPU detected! Falling back to Native Multi-Core CPU execution.".yellow().bold());
+        println!(
+            "{}",
+            "[FALLBACK]: No Nvidia GPU detected! Falling back to Native Multi-Core CPU execution."
+                .yellow()
+                .bold()
+        );
         let start_cpu = Instant::now();
-        
-        println!("Generating and computing matrix {}x{} purely on CPU...", size, size);
+
+        println!(
+            "Generating and computing matrix {}x{} purely on CPU...",
+            size, size
+        );
         let mut sum = 0.0f32;
         let mut rng = rand::rng();
         // Simulated CPU load
@@ -101,12 +109,14 @@ pub fn gpu_work_real(size: usize, device_id: usize) -> Result<()> {
             let val: f32 = rng.random();
             sum += val * 1.05;
         }
-        
+
         let duration = start_cpu.elapsed();
         // CPU GFLOPS estimate simulation
-        let m = size; let n = size; let k = size;
+        let m = size;
+        let n = size;
+        let k = size;
         let gflops = ((2.0 * m as f64 * n as f64 * k as f64) / 1e9) * 0.001; // Scale down for CPU
-        
+
         println!("CPU COMPUTE FINISHED. (Sum: {})", sum);
         println!("Time: {:.2?}", duration);
         println!("Performance: {:.2} GFLOPS (CPU Fallback)", gflops);
@@ -167,7 +177,7 @@ pub fn gpu_work_real(size: usize, device_id: usize) -> Result<()> {
 
     // Splits A in twee chunks — double buffer
     let num_chunks = 2usize;
-    let chunk_rows = (m + num_chunks - 1) / num_chunks;
+    let chunk_rows = m.div_ceil(num_chunks);
 
     // Pre-alloceer twee buffers voor A chunks
     let mut a_buf_0 = compute_stream.alloc_zeros::<f32>(chunk_rows * k)?;
@@ -212,8 +222,8 @@ pub fn gpu_work_real(size: usize, device_id: usize) -> Result<()> {
             }
 
             // Bereken huidige chunk
-            let grid_x = (n as u32 + wmma_tile * warps_x - 1) / (wmma_tile * warps_x);
-            let grid_y = (rows as u32 + wmma_tile * warps_y - 1) / (wmma_tile * warps_y);
+            let grid_x = (n as u32).div_ceil(wmma_tile * warps_x);
+            let grid_y = (rows as u32).div_ceil(wmma_tile * warps_y);
             let cfg = LaunchConfig {
                 grid_dim: (grid_x, grid_y, 1),
                 block_dim: (block_x, block_y, 1),
@@ -225,7 +235,11 @@ pub fn gpu_work_real(size: usize, device_id: usize) -> Result<()> {
             let mut c_view = c_dev.slice_mut(c_offset..c_offset + rows * n);
 
             unsafe {
-                let cur_buf = if chunk % 2 == 0 { &mut a_buf_0 } else { &mut a_buf_1 };
+                let cur_buf = if chunk % 2 == 0 {
+                    &mut a_buf_0
+                } else {
+                    &mut a_buf_1
+                };
                 let mut builder = compute_stream.launch_builder(&f);
                 builder.arg(&chunk_m);
                 builder.arg(&n);
@@ -255,7 +269,11 @@ pub fn gpu_work_real(size: usize, device_id: usize) -> Result<()> {
     let avg_secs = durations.iter().map(|d| d.as_secs_f64()).sum::<f64>() / durations.len() as f64;
     let gflops = (2.0 * m as f64 * n as f64 * k as f64) / (avg_secs * 1e9);
     println!("GPU COMPUTE FINISHED (Custom Kernel 0.19.0).");
-    println!("Time (gem. {} runs): {:.2?}", durations.len(), std::time::Duration::from_secs_f64(avg_secs));
+    println!(
+        "Time (gem. {} runs): {:.2?}",
+        durations.len(),
+        std::time::Duration::from_secs_f64(avg_secs)
+    );
     println!("Performance: {:.2} GFLOPS", gflops);
 
     println!("Copying result back to Host...");
@@ -267,7 +285,15 @@ pub fn gpu_work_real(size: usize, device_id: usize) -> Result<()> {
     Ok(())
 }
 
-pub fn gpu_execute_raw_ptx_ids(ptx_src: &str, id_a: usize, id_b: usize, id_c: usize, m: usize, n: usize, k: usize) -> Result<f64> {
+pub fn gpu_execute_raw_ptx_ids(
+    ptx_src: &str,
+    id_a: usize,
+    id_b: usize,
+    id_c: usize,
+    m: usize,
+    n: usize,
+    k: usize,
+) -> Result<f64> {
     let dev = CudaContext::new(0)?;
     let stream = dev.default_stream();
 
@@ -280,12 +306,12 @@ pub fn gpu_execute_raw_ptx_ids(ptx_src: &str, id_a: usize, id_b: usize, id_c: us
         ],
         ..Default::default()
     };
-    let ptx_res =
-        cudarc::nvrtc::compile_ptx_with_opts(ptx_src, opts).map_err(|e| anyhow::anyhow!("NVRTC Compilation Failed: {:?}", e))?;
+    let ptx_res = cudarc::nvrtc::compile_ptx_with_opts(ptx_src, opts)
+        .map_err(|e| anyhow::anyhow!("NVRTC Compilation Failed: {:?}", e))?;
 
     let module = dev.load_module(ptx_res)?;
     let f = module.load_function("matmul_kernel")?;
-    
+
     // FP16 Helper (if needed)
     let helper_src = r#"
         #include <cuda_fp16.h>
@@ -294,21 +320,31 @@ pub fn gpu_execute_raw_ptx_ids(ptx_src: &str, id_a: usize, id_b: usize, id_c: us
             if (idx < size) { out[idx] = __float2half(in[idx]); }
         }
     "#;
-    let helper_ptx = cudarc::nvrtc::compile_ptx_with_opts(helper_src, cudarc::nvrtc::CompileOptions {
-        options: vec![
-            "-arch=compute_86".to_string(), 
-            "-std=c++11".to_string(),
-            "-I/usr/local/cuda/include".to_string()
-        ],
-        ..Default::default()
-    }).unwrap();
+    let helper_ptx = cudarc::nvrtc::compile_ptx_with_opts(
+        helper_src,
+        cudarc::nvrtc::CompileOptions {
+            options: vec![
+                "-arch=compute_86".to_string(),
+                "-std=c++11".to_string(),
+                "-I/usr/local/cuda/include".to_string(),
+            ],
+            ..Default::default()
+        },
+    )
+    .unwrap();
     let helper_module = dev.load_module(helper_ptx)?;
     let f_cvt = helper_module.load_function("f32_to_f16")?;
 
     let mut store = TENSOR_STORE.lock().unwrap();
-    let mut dev_c = store.remove(&id_c).ok_or_else(|| anyhow::anyhow!("C not found"))?;
-    let dev_a = store.get(&id_a).ok_or_else(|| anyhow::anyhow!("A not found"))?;
-    let dev_b = store.get(&id_b).ok_or_else(|| anyhow::anyhow!("B not found"))?;
+    let mut dev_c = store
+        .remove(&id_c)
+        .ok_or_else(|| anyhow::anyhow!("C not found"))?;
+    let dev_a = store
+        .get(&id_a)
+        .ok_or_else(|| anyhow::anyhow!("A not found"))?;
+    let dev_b = store
+        .get(&id_b)
+        .ok_or_else(|| anyhow::anyhow!("B not found"))?;
 
     // Convert A and B to fp16
     let mut a_half = stream.alloc_zeros::<u16>(m * k)?;
@@ -318,22 +354,30 @@ pub fn gpu_execute_raw_ptx_ids(ptx_src: &str, id_a: usize, id_b: usize, id_c: us
     let res_cvt = unsafe {
         let size_a = (m * k) as i32;
         let mut bld_cvt1 = stream.launch_builder(&f_cvt);
-        let r1 = bld_cvt1.arg(dev_a).arg(&mut a_half).arg(&size_a).launch(LaunchConfig {
-            grid_dim: (((m * k) as u32 + threads - 1) / threads, 1, 1),
-            block_dim: (threads, 1, 1),
-            shared_mem_bytes: 0,
-        });
-        
+        let r1 = bld_cvt1
+            .arg(dev_a)
+            .arg(&mut a_half)
+            .arg(&size_a)
+            .launch(LaunchConfig {
+                grid_dim: (((m * k) as u32).div_ceil(threads), 1, 1),
+                block_dim: (threads, 1, 1),
+                shared_mem_bytes: 0,
+            });
+
         let size_b = (k * n) as i32;
         let mut bld_cvt2 = stream.launch_builder(&f_cvt);
-        let r2 = bld_cvt2.arg(dev_b).arg(&mut b_half).arg(&size_b).launch(LaunchConfig {
-            grid_dim: (((k * n) as u32 + threads - 1) / threads, 1, 1),
-            block_dim: (threads, 1, 1),
-            shared_mem_bytes: 0,
-        });
+        let r2 = bld_cvt2
+            .arg(dev_b)
+            .arg(&mut b_half)
+            .arg(&size_b)
+            .launch(LaunchConfig {
+                grid_dim: (((k * n) as u32).div_ceil(threads), 1, 1),
+                block_dim: (threads, 1, 1),
+                shared_mem_bytes: 0,
+            });
         r1.and(r2)
     };
-    
+
     if res_cvt.is_err() {
         res_cvt.map_err(|e| anyhow::anyhow!("f32_to_f16 kernel failed: {}", e))?;
     }
@@ -341,10 +385,10 @@ pub fn gpu_execute_raw_ptx_ids(ptx_src: &str, id_a: usize, id_b: usize, id_c: us
 
     let mut durations = Vec::new();
     let runs = 2; // Reduced benchmark runs to 2 since it's a real operation now
-    
+
     // Configuration for apex wmma kernel
     let cfg = LaunchConfig {
-        grid_dim: ((n as u32 + 127) / 128, (m as u32 + 127) / 128, 1),
+        grid_dim: ((n as u32).div_ceil(128), (m as u32).div_ceil(128), 1),
         block_dim: (32, 4, 2), // 256 threads aligned
         shared_mem_bytes: 0,
     };
@@ -359,20 +403,22 @@ pub fn gpu_execute_raw_ptx_ids(ptx_src: &str, id_a: usize, id_b: usize, id_c: us
         let res_matmul = unsafe {
             let mut bld = stream.launch_builder(&f);
             bld.arg(&m_i32)
-               .arg(&n_i32)
-               .arg(&k_i32)
-               .arg(&alpha)
-               .arg(&a_half)
-               .arg(&b_half)
-               .arg(&beta)
-               .arg(&mut dev_c);
+                .arg(&n_i32)
+                .arg(&k_i32)
+                .arg(&alpha)
+                .arg(&a_half)
+                .arg(&b_half)
+                .arg(&beta)
+                .arg(&mut dev_c);
             bld.launch(cfg)
         };
         if res_matmul.is_err() {
             res_matmul.map_err(|e| anyhow::anyhow!("matmul_kernel failed: {}", e))?;
         }
         stream.synchronize()?;
-        if run > 0 { durations.push(start_compute.elapsed()); }
+        if run > 0 {
+            durations.push(start_compute.elapsed());
+        }
     }
 
     let avg_secs = durations.iter().map(|d| d.as_secs_f64()).sum::<f64>() / durations.len() as f64;
@@ -386,36 +432,56 @@ pub fn gpu_execute_raw_ptx_ids(ptx_src: &str, id_a: usize, id_b: usize, id_c: us
 
 pub async fn gpu_execute_hel_block(raw_source: &str) -> Result<()> {
     use colored::*;
-    println!("{}", "Checking hardware for Hel-modus acceleration...".magenta());
+    println!(
+        "{}",
+        "Checking hardware for Hel-modus acceleration...".magenta()
+    );
     let has_nvidia = std::process::Command::new("nvidia-smi").output().is_ok();
-    
+
     if !has_nvidia {
-        return Err(anyhow::anyhow!("Hel-modus vereist een actieve NVIDIA GPU voor bare-metal executie."));
+        return Err(anyhow::anyhow!(
+            "Hel-modus vereist een actieve NVIDIA GPU voor bare-metal executie."
+        ));
     }
 
-    println!("{}", "[HEL-MODUS]: JIT Compiling raw C++/PTX via NVRTC...".magenta());
+    println!(
+        "{}",
+        "[HEL-MODUS]: JIT Compiling raw C++/PTX via NVRTC...".magenta()
+    );
     let dev = CudaContext::new(0)?;
-    
+
     let ptx = match cudarc::nvrtc::compile_ptx(raw_source) {
         Ok(p) => p,
         Err(e) => {
             return Err(anyhow::anyhow!("Compilation Error:\n{:?}", e));
         }
     };
-    
-    println!("{}", "[HEL-MODUS]: Kernel succesvol gecompileerd. Laden in VRAM...".magenta());
+
+    println!(
+        "{}",
+        "[HEL-MODUS]: Kernel succesvol gecompileerd. Laden in VRAM...".magenta()
+    );
     let module = dev.load_module(ptx)?;
-    
+
     let f = match module.load_function("custom_kernel") {
         Ok(func) => func,
-        Err(_) => return Err(anyhow::anyhow!("Kan 'custom_kernel' niet vinden. Zorg dat je kernel `extern \"C\" __global__ void custom_kernel(float* data)` heet.")),
+        Err(_) => {
+            return Err(anyhow::anyhow!(
+                "Kan 'custom_kernel' niet vinden. Zorg dat je kernel `extern \"C\" __global__ void custom_kernel(float* data)` heet."
+            ));
+        }
     };
 
-    println!("{}", "[HEL-MODUS]: Lanceren van custom kernel (Block: 256, Grid: 1)...".red().bold());
+    println!(
+        "{}",
+        "[HEL-MODUS]: Lanceren van custom kernel (Block: 256, Grid: 1)..."
+            .red()
+            .bold()
+    );
     let stream = dev.default_stream();
-    
+
     let mut dev_data = stream.alloc_zeros::<f32>(1024)?;
-    
+
     let cfg = LaunchConfig {
         grid_dim: (1, 1, 1),
         block_dim: (256, 1, 1),
@@ -428,12 +494,24 @@ pub async fn gpu_execute_hel_block(raw_source: &str) -> Result<()> {
         bld.launch(cfg)?;
     }
     stream.synchronize()?;
-    
-    println!("{}", "[HEL-MODUS]: ✅ Executie voltooid. Veilig terug in de basis.".green().bold());
+
+    println!(
+        "{}",
+        "[HEL-MODUS]: ✅ Executie voltooid. Veilig terug in de basis."
+            .green()
+            .bold()
+    );
     Ok(())
 }
 
-pub fn gpu_execute_tensor_add(ptx_src: &str, id_a: usize, id_b: usize, id_c: usize, m: usize, n: usize) -> Result<f64> {
+pub fn gpu_execute_tensor_add(
+    ptx_src: &str,
+    id_a: usize,
+    id_b: usize,
+    id_c: usize,
+    m: usize,
+    n: usize,
+) -> Result<f64> {
     let dev = CudaContext::new(0)?;
     let stream = dev.default_stream();
     let opts = cudarc::nvrtc::CompileOptions {
@@ -447,24 +525,38 @@ pub fn gpu_execute_tensor_add(ptx_src: &str, id_a: usize, id_b: usize, id_c: usi
     let elements = m * n;
 
     let mut store = TENSOR_STORE.lock().unwrap();
-    let mut dev_c = store.remove(&id_c).ok_or_else(|| anyhow::anyhow!("C not found"))?;
-    let dev_a = store.get(&id_a).ok_or_else(|| anyhow::anyhow!("A not found"))?;
-    let dev_b = store.get(&id_b).ok_or_else(|| anyhow::anyhow!("B not found"))?;
+    let mut dev_c = store
+        .remove(&id_c)
+        .ok_or_else(|| anyhow::anyhow!("C not found"))?;
+    let dev_a = store
+        .get(&id_a)
+        .ok_or_else(|| anyhow::anyhow!("A not found"))?;
+    let dev_b = store
+        .get(&id_b)
+        .ok_or_else(|| anyhow::anyhow!("B not found"))?;
 
     let threads = 256;
-    let blocks = (elements as u32 + threads - 1) / threads;
-    let cfg = LaunchConfig { grid_dim: (blocks, 1, 1), block_dim: (threads, 1, 1), shared_mem_bytes: 0 };
+    let blocks = (elements as u32).div_ceil(threads);
+    let cfg = LaunchConfig {
+        grid_dim: (blocks, 1, 1),
+        block_dim: (threads, 1, 1),
+        shared_mem_bytes: 0,
+    };
 
     let start = std::time::Instant::now();
     unsafe {
         let mut bld = stream.launch_builder(&f);
         let m_i32 = m as i32;
         let n_i32 = n as i32;
-        bld.arg(dev_a).arg(dev_b).arg(&mut dev_c).arg(&m_i32).arg(&n_i32);
+        bld.arg(dev_a)
+            .arg(dev_b)
+            .arg(&mut dev_c)
+            .arg(&m_i32)
+            .arg(&n_i32);
         bld.launch(cfg)?;
     }
     stream.synchronize()?;
-    
+
     let elapsed = start.elapsed().as_secs_f64();
     let gflops = (elements as f64) / (elapsed * 1e9);
 
@@ -472,7 +564,13 @@ pub fn gpu_execute_tensor_add(ptx_src: &str, id_a: usize, id_b: usize, id_c: usi
     Ok(gflops)
 }
 
-pub fn gpu_execute_tensor_relu(ptx_src: &str, id_a: usize, id_b: usize, m: usize, n: usize) -> Result<f64> {
+pub fn gpu_execute_tensor_relu(
+    ptx_src: &str,
+    id_a: usize,
+    id_b: usize,
+    m: usize,
+    n: usize,
+) -> Result<f64> {
     let dev = CudaContext::new(0)?;
     let stream = dev.default_stream();
     let opts = cudarc::nvrtc::CompileOptions {
@@ -486,12 +584,20 @@ pub fn gpu_execute_tensor_relu(ptx_src: &str, id_a: usize, id_b: usize, m: usize
     let elements = m * n;
 
     let mut store = TENSOR_STORE.lock().unwrap();
-    let mut dev_b = store.remove(&id_b).ok_or_else(|| anyhow::anyhow!("B not found"))?;
-    let dev_a = store.get(&id_a).ok_or_else(|| anyhow::anyhow!("A not found"))?;
+    let mut dev_b = store
+        .remove(&id_b)
+        .ok_or_else(|| anyhow::anyhow!("B not found"))?;
+    let dev_a = store
+        .get(&id_a)
+        .ok_or_else(|| anyhow::anyhow!("A not found"))?;
 
     let threads = 256;
-    let blocks = (elements as u32 + threads - 1) / threads;
-    let cfg = LaunchConfig { grid_dim: (blocks, 1, 1), block_dim: (threads, 1, 1), shared_mem_bytes: 0 };
+    let blocks = (elements as u32).div_ceil(threads);
+    let cfg = LaunchConfig {
+        grid_dim: (blocks, 1, 1),
+        block_dim: (threads, 1, 1),
+        shared_mem_bytes: 0,
+    };
 
     let start = std::time::Instant::now();
     unsafe {
@@ -502,7 +608,7 @@ pub fn gpu_execute_tensor_relu(ptx_src: &str, id_a: usize, id_b: usize, m: usize
         bld.launch(cfg)?;
     }
     stream.synchronize()?;
-    
+
     let elapsed = start.elapsed().as_secs_f64();
     let gflops = (elements as f64) / (elapsed * 1e9);
 
@@ -510,19 +616,30 @@ pub fn gpu_execute_tensor_relu(ptx_src: &str, id_a: usize, id_b: usize, m: usize
     Ok(gflops)
 }
 
-pub fn cpu_execute_matmul(id_a: usize, id_b: usize, id_c: usize, m: usize, n: usize, k: usize) -> Result<f64> {
+pub fn cpu_execute_matmul(
+    id_a: usize,
+    id_b: usize,
+    id_c: usize,
+    m: usize,
+    n: usize,
+    k: usize,
+) -> Result<f64> {
     let dev = CudaContext::new(0)?;
     let stream = dev.default_stream();
-    
+
     let mut a_host = vec![0.0f32; m * k];
     let mut b_host = vec![0.0f32; k * n];
     let mut c_host = vec![0.0f32; m * n];
 
     {
         let store = TENSOR_STORE.lock().unwrap();
-        let dev_a = store.get(&id_a).ok_or_else(|| anyhow::anyhow!("A not found"))?;
-        let dev_b = store.get(&id_b).ok_or_else(|| anyhow::anyhow!("B not found"))?;
-        
+        let dev_a = store
+            .get(&id_a)
+            .ok_or_else(|| anyhow::anyhow!("A not found"))?;
+        let dev_b = store
+            .get(&id_b)
+            .ok_or_else(|| anyhow::anyhow!("B not found"))?;
+
         stream.memcpy_dtoh(dev_a, &mut a_host)?;
         stream.memcpy_dtoh(dev_b, &mut b_host)?;
         stream.synchronize()?;
@@ -532,7 +649,7 @@ pub fn cpu_execute_matmul(id_a: usize, id_b: usize, id_c: usize, m: usize, n: us
     const TILE: usize = 64;
 
     let start = std::time::Instant::now();
-    
+
     c_host.par_chunks_mut(n).enumerate().for_each(|(i, c_row)| {
         for kk in (0..k).step_by(TILE) {
             for jj in (0..n).step_by(TILE) {
@@ -553,7 +670,9 @@ pub fn cpu_execute_matmul(id_a: usize, id_b: usize, id_c: usize, m: usize, n: us
 
     {
         let mut store = TENSOR_STORE.lock().unwrap();
-        let mut dev_c = store.remove(&id_c).ok_or_else(|| anyhow::anyhow!("C not found"))?;
+        let mut dev_c = store
+            .remove(&id_c)
+            .ok_or_else(|| anyhow::anyhow!("C not found"))?;
         stream.memcpy_htod(&c_host, &mut dev_c)?;
         stream.synchronize()?;
         store.insert(id_c, dev_c);
@@ -562,19 +681,29 @@ pub fn cpu_execute_matmul(id_a: usize, id_b: usize, id_c: usize, m: usize, n: us
     Ok(gflops)
 }
 
-pub fn cpu_execute_tensor_add(id_a: usize, id_b: usize, id_c: usize, m: usize, n: usize) -> Result<f64> {
+pub fn cpu_execute_tensor_add(
+    id_a: usize,
+    id_b: usize,
+    id_c: usize,
+    m: usize,
+    n: usize,
+) -> Result<f64> {
     let dev = CudaContext::new(0)?;
     let stream = dev.default_stream();
     let elements = m * n;
-    
+
     let mut a_host = vec![0.0f32; elements];
     let mut b_host = vec![0.0f32; elements];
     let mut c_host = vec![0.0f32; elements];
 
     {
         let store = TENSOR_STORE.lock().unwrap();
-        let dev_a = store.get(&id_a).ok_or_else(|| anyhow::anyhow!("A not found"))?;
-        let dev_b = store.get(&id_b).ok_or_else(|| anyhow::anyhow!("B not found"))?;
+        let dev_a = store
+            .get(&id_a)
+            .ok_or_else(|| anyhow::anyhow!("A not found"))?;
+        let dev_b = store
+            .get(&id_b)
+            .ok_or_else(|| anyhow::anyhow!("B not found"))?;
         stream.memcpy_dtoh(dev_a, &mut a_host)?;
         stream.memcpy_dtoh(dev_b, &mut b_host)?;
         stream.synchronize()?;
@@ -582,17 +711,22 @@ pub fn cpu_execute_tensor_add(id_a: usize, id_b: usize, id_c: usize, m: usize, n
 
     use rayon::prelude::*;
     let start = std::time::Instant::now();
-    
-    c_host.par_iter_mut().zip(a_host.par_iter().zip(b_host.par_iter())).for_each(|(c, (a, b))| {
-        *c = *a + *b;
-    });
+
+    c_host
+        .par_iter_mut()
+        .zip(a_host.par_iter().zip(b_host.par_iter()))
+        .for_each(|(c, (a, b))| {
+            *c = *a + *b;
+        });
 
     let elapsed = start.elapsed().as_secs_f64();
     let gflops = (elements as f64) / (elapsed * 1e9);
 
     {
         let mut store = TENSOR_STORE.lock().unwrap();
-        let mut dev_c = store.remove(&id_c).ok_or_else(|| anyhow::anyhow!("C not found"))?;
+        let mut dev_c = store
+            .remove(&id_c)
+            .ok_or_else(|| anyhow::anyhow!("C not found"))?;
         stream.memcpy_htod(&c_host, &mut dev_c)?;
         stream.synchronize()?;
         store.insert(id_c, dev_c);
@@ -632,7 +766,12 @@ fn cpu_matmul_tiled(size: usize) -> f64 {
 }
 
 pub fn inferno_work_real(size: usize, _device_id: usize) -> Result<()> {
-    println!("{}", "[INFERNO PROTOCOL]: ASYMMETRIC LOCAL LOAD BALANCING (GPU + CPU)".red().bold());
+    println!(
+        "{}",
+        "[INFERNO PROTOCOL]: ASYMMETRIC LOCAL LOAD BALANCING (GPU + CPU)"
+            .red()
+            .bold()
+    );
 
     let gpu_count = match std::process::Command::new("nvidia-smi").arg("-L").output() {
         Ok(out) => String::from_utf8_lossy(&out.stdout).lines().count(),
@@ -640,7 +779,10 @@ pub fn inferno_work_real(size: usize, _device_id: usize) -> Result<()> {
     };
 
     let cpu_threads = rayon::current_num_threads();
-    println!("[INFERNO]: {} GPU(s) + {} CPU threads op de Master Node.", gpu_count, cpu_threads);
+    println!(
+        "[INFERNO]: {} GPU(s) + {} CPU threads op de Master Node.",
+        gpu_count, cpu_threads
+    );
 
     // Split work: GPUs each get full size, CPU gets a scaled-down portion
     // CPU is ~10x slower per element, so we give it a proportional chunk
@@ -652,23 +794,42 @@ pub fn inferno_work_real(size: usize, _device_id: usize) -> Result<()> {
     use rayon::prelude::*;
 
     // Bouw worker lijst: GPU IDs + CPU als laatste
-    enum Worker { Gpu(usize), Cpu }
+    enum Worker {
+        Gpu(usize),
+        Cpu,
+    }
     let mut workers: Vec<Worker> = (0..gpu_count).map(Worker::Gpu).collect();
     workers.push(Worker::Cpu);
 
-    let results: Vec<Result<String>> = workers.into_par_iter().map(|w| match w {
-        Worker::Gpu(id) => {
-            println!("[GPU-{}]: Kernel starten ({}x{})...", id, per_gpu_size, per_gpu_size);
-            gpu_work_real(per_gpu_size, id)?;
-            Ok(format!("GPU-{}", id))
-        }
-        Worker::Cpu => {
-            println!("{}", format!("[CPU-{}T]: Tiled matmul starten ({}x{})...", cpu_threads, cpu_size, cpu_size).cyan());
-            let gflops = cpu_matmul_tiled(cpu_size);
-            println!("{}", format!("[CPU]: COMPUTE FINISHED. Prestatie: {:.2} GFLOPS", gflops).cyan());
-            Ok(format!("CPU @ {:.1} GFLOPS", gflops))
-        }
-    }).collect();
+    let results: Vec<Result<String>> = workers
+        .into_par_iter()
+        .map(|w| match w {
+            Worker::Gpu(id) => {
+                println!(
+                    "[GPU-{}]: Kernel starten ({}x{})...",
+                    id, per_gpu_size, per_gpu_size
+                );
+                gpu_work_real(per_gpu_size, id)?;
+                Ok(format!("GPU-{}", id))
+            }
+            Worker::Cpu => {
+                println!(
+                    "{}",
+                    format!(
+                        "[CPU-{}T]: Tiled matmul starten ({}x{})...",
+                        cpu_threads, cpu_size, cpu_size
+                    )
+                    .cyan()
+                );
+                let gflops = cpu_matmul_tiled(cpu_size);
+                println!(
+                    "{}",
+                    format!("[CPU]: COMPUTE FINISHED. Prestatie: {:.2} GFLOPS", gflops).cyan()
+                );
+                Ok(format!("CPU @ {:.1} GFLOPS", gflops))
+            }
+        })
+        .collect();
 
     let mut had_error = false;
     for res in &results {
@@ -679,19 +840,32 @@ pub fn inferno_work_real(size: usize, _device_id: usize) -> Result<()> {
     }
 
     if had_error {
-        return Err(anyhow::anyhow!("Een of meerdere workers crashten tijdens Inferno execution."));
+        return Err(anyhow::anyhow!(
+            "Een of meerdere workers crashten tijdens Inferno execution."
+        ));
     }
 
     let duration = start_inferno.elapsed();
-    println!("{}", "[INFERNO]: Lokale Multi-Device Compute Complete!".green().bold());
+    println!(
+        "{}",
+        "[INFERNO]: Lokale Multi-Device Compute Complete!"
+            .green()
+            .bold()
+    );
     println!("[INFERNO]: Totale Parallelle Rekentijd: {:.2?}", duration);
 
     let gpu_flops = if gpu_count > 0 {
-        (2.0 * per_gpu_size as f64 * per_gpu_size as f64 * per_gpu_size as f64 * gpu_count as f64) / 1e9
-    } else { 0.0 };
+        (2.0 * per_gpu_size as f64 * per_gpu_size as f64 * per_gpu_size as f64 * gpu_count as f64)
+            / 1e9
+    } else {
+        0.0
+    };
     let cpu_flops = (2.0 * cpu_size as f64 * cpu_size as f64 * cpu_size as f64) / 1e9;
     let total_gflops = (gpu_flops + cpu_flops) / duration.as_secs_f64();
-    println!("[INFERNO]: Gecombineerde Prestatie: {:.2} GFLOPS (GPU + CPU)", total_gflops);
+    println!(
+        "[INFERNO]: Gecombineerde Prestatie: {:.2} GFLOPS (GPU + CPU)",
+        total_gflops
+    );
 
     Ok(())
 }
