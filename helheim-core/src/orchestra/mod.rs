@@ -1416,6 +1416,28 @@ impl Orchestrator {
             }
         }
 
+        // --- STD LIB: JSON ---
+        if name == "json.ontleden" && args.len() == 1 {
+            let mut s = self.resolve_value(&args[0]);
+            if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
+                let unescaped = s[1..s.len() - 1].replace("\\\"", "\"").replace("\\n", "\n");
+                s = unescaped;
+            }
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&s) {
+                return Ok(parsed.to_string());
+            } else {
+                return Ok(s);
+            }
+        }
+        if name == "json.tekst" && args.len() == 1 {
+            let s = self.resolve_value(&args[0]);
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&s) {
+                return Ok(serde_json::to_string(&parsed).unwrap_or(s));
+            } else {
+                return Ok(format!("\"{}\"", s));
+            }
+        }
+
         let func_tuple = {
             let store = self.ast_funcs.lock().unwrap();
             store.get(name).cloned()
@@ -1662,8 +1684,10 @@ impl Orchestrator {
                 let store = self.var_store.lock().unwrap();
                 for scope in store.iter().rev() {
                     for (k, v) in scope.iter() {
-                        if let Ok(num) = v.parse::<f64>() {
-                            let _ = context.set_value(k.clone(), evalexpr::Value::Float(num));
+                        if let Ok(num_int) = v.parse::<i64>() {
+                            let _ = context.set_value(k.clone(), evalexpr::Value::Int(num_int));
+                        } else if let Ok(num_float) = v.parse::<f64>() {
+                            let _ = context.set_value(k.clone(), evalexpr::Value::Float(num_float));
                         } else {
                             // Only set string if it doesn't conflict (evalexpr treats barewords as identifiers, so string values are fine)
                             let _ = context.set_value(k.clone(), v.clone().into());

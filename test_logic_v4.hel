@@ -1,0 +1,15 @@
+zet x = 10;
+zet y = 20;
+
+als x == 10 && y == 20 dan {
+    print "Beide zijn waar (AND)";
+}
+
+als x == 5 || y == 20 dan {
+    print "Eén is waar (OR)";
+}
+
+zolang x > 5 && x < 12 {
+    print x;
+    zet x = x + 1;
+}

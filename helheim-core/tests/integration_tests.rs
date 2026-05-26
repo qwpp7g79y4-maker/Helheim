@@ -217,3 +217,36 @@ async fn test_stdlib() {
     assert_eq!(engine.get_var("rnd").unwrap(), "1");
     assert_eq!(engine.get_var("afgerond").unwrap(), "4");
 }
+
+#[tokio::test]
+async fn test_logic_operators() {
+    let script = r#"
+        zet x = 10;
+        zet y = 20;
+        
+        zet is_and = x == 10 && y == 20;
+        zet is_or = x == 5 || y == 20;
+        zet is_false = x == 5 && y == 20;
+    "#;
+    let engine = run_helheim_script(script).await;
+    
+    assert_eq!(engine.get_var("is_and").unwrap(), "waar");
+    assert_eq!(engine.get_var("is_or").unwrap(), "waar");
+    assert_eq!(engine.get_var("is_false").unwrap(), "onwaar");
+}
+
+#[tokio::test]
+async fn test_json_parsing() {
+    let script = r#"
+        zet ruw = "\"{\\\"naam\\\":\\\"NEXUS\\\",\\\"leeftijd\\\":1}\"";
+        zet ontleed = roep_aan json.ontleden ruw;
+        
+        // Nu kunnen we de haken-syntax gebruiken
+        zet naam = ontleed["naam"];
+        zet leeftijd = ontleed["leeftijd"];
+    "#;
+    let engine = run_helheim_script(script).await;
+    
+    assert_eq!(engine.get_var("naam").unwrap(), "NEXUS");
+    assert_eq!(engine.get_var("leeftijd").unwrap(), "1");
+}
