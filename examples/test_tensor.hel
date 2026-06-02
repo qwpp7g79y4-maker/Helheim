@@ -1,5 +1,0 @@
-zet A = tensor(4096, 4096);
-zet B = tensor(4096, 4096);
-print "Tensors aangemaakt!";
-zet C = A * B;
-print "Klaar met C!";

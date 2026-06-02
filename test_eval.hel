@@ -1,8 +1,0 @@
-zet x = 10;
-zet y = 20;
-
-zet res1 = x == 10 && y == 20;
-print res1;
-
-zet res2 = x == 5 || y == 20;
-print res2;

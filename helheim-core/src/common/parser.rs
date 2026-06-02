@@ -1,4 +1,4 @@
-use crate::orchestra::synthesis::CodeTaal;
+use helheim_lang::ast::{CodeTaal, LiteralValue};
 use anyhow::Result;
 use std::collections::HashMap;
 
@@ -74,17 +74,18 @@ impl Parser {
                         });
                     }
                 } else if clean.starts_with("lees ") {
+                    let p = clean[5..].trim().to_string();
                     program.stroom.push(CodeTaal::FileOp {
                         action: "read".to_string(),
-                        path: clean[5..].trim().to_string(),
+                        path: Box::new(CodeTaal::Literal(LiteralValue::String(p))),
                         content: None,
                     });
                 } else if clean.starts_with("schrijf ") {
                     if let Some((content, path)) = clean[8..].split_once(" naar ") {
                         program.stroom.push(CodeTaal::FileOp {
                             action: "write".to_string(),
-                            path: path.trim().to_string(),
-                            content: Some(content.trim().to_string()),
+                            path: Box::new(CodeTaal::Literal(LiteralValue::String(path.trim().to_string()))),
+                            content: Some(Box::new(CodeTaal::Literal(LiteralValue::String(content.trim().to_string())))),
                         });
                     }
                 } else if clean.starts_with("voer uit ") {
@@ -92,9 +93,10 @@ impl Parser {
                         command: clean[9..].trim().to_string(),
                     });
                 } else if clean.starts_with("haal ") {
+                    let u = clean[5..].trim().to_string();
                     program.stroom.push(CodeTaal::HttpOp {
                         method: "GET".to_string(),
-                        url: clean[5..].trim().to_string(),
+                        url: Box::new(CodeTaal::Literal(LiteralValue::String(u))),
                     });
                 }
             } else {

@@ -1,6 +1,7 @@
 /// Universele types en stubs voor Helheim
 /// Voorbereid op WASM, Embedded (no_std) en ML stubs.
 pub mod axioms;
+pub mod context;
 pub mod parser;
 pub mod probe;
 pub mod rune;

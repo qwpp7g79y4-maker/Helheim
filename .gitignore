@@ -1,16 +1,56 @@
 # Build artifacts
 target/
-*.tmp
-*.bak
+**/target/
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+Cargo.lock
 
-# Logs & history
+# Logs, history, AI creation traces (nooit in public taal repo)
 history.txt
 scan_log.txt
 helheim-logs/
+*.log
+audit.log*
+helheim-log-*.md
+log-update.sh
 
-# Secrets (never commit)
+# Interne AI/creatie docs & junk (niet voor public "programmeertaal")
+Optimization_Plan.md
+Helheim_Language_Spec.md
+DRAWBACKS.md
+GITHUB_PREFLIGHT_AUDIT.md
+.codegraph/
+experiments/
+vscode-helheim/
+ai_archive/
+runestones/
+deploy/
+
+# Persoonlijke data & paden
+/home/bitboi/
+**/*bitboi*
+
+# Secrets
 .env
 *.env
 *.pem
 *.key
-id_rsa
+id_rsa*
+
+# IDE & OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Test & temp (curate goede in examples/)
+test_*.hel
+*.tmp
+*.bak
+.audit-junk/

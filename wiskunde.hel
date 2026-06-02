@@ -1,8 +1,0 @@
-functie kwadraat x {
-    zet res = $x * $x;
-    geef_terug $res;
-}
-
-functie begroet naam {
-    print "Hallo vanuit de module, $naam!";
-}

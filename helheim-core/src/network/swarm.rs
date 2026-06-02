@@ -55,9 +55,29 @@ impl SwarmEngine {
                                                     decrypted.len()
                                                 );
 
+                                                let mut ctx = crate::common::context::ExecutionContext::sandbox();
+                                                let mut execution_script = decrypted.as_str();
+
+                                                if decrypted.starts_with("SIGNED: ") {
+                                                    if let Some((sig_part, script_part)) = decrypted[8..].split_once(" | ") {
+                                                        use base64::Engine;
+                                                        if let Ok(sig_bytes) = base64::engine::general_purpose::STANDARD.decode(sig_part.trim()) {
+                                                            if crate::shield::crypto::HelSigner::verify_update(script_part.as_bytes(), &sig_bytes).is_ok() {
+                                                                println!("[SWARM]: ✅ Geldige Master Key handtekening. Elevated Privileges geactiveerd.");
+                                                                ctx = crate::common::context::ExecutionContext::default_privileged();
+                                                                execution_script = script_part;
+                                                            } else {
+                                                                println!("[SWARM]: ⚠️ Ongeldige handtekening. Fallback naar Sandbox.");
+                                                            }
+                                                        }
+                                                    }
+                                                } else {
+                                                    println!("[SWARM]: 🛡️ Ongesigneerd verzoek. Executie in Sandbox Mode.");
+                                                }
+
                                                 // Actively process the command via the Orchestrator
                                                 let exec_result = orchestrator_clone
-                                                    .process_command(&decrypted)
+                                                    .process_command(execution_script, ctx)
                                                     .await;
 
                                                 let (ack, _secure_resp) = match exec_result {

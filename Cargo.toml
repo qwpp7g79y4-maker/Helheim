@@ -2,5 +2,5 @@
 members = [
     "helheim-cli",
     "helheim-core"
-]
+, "helheim-lang"]
 resolver = "2"

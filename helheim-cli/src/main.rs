@@ -4,7 +4,7 @@ use clap::Parser;
 use colored::*;
 use rustyline::error::ReadlineError;
 use rustyline::{Editor, history::DefaultHistory};
-use tokio::io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader};
+
 
 use helheim_core::cli::{Cli, Commands};
 use helheim_core::common::probe::HelProbe;
@@ -67,7 +67,7 @@ async fn main() -> Result<()> {
             let mut brace_depth = 0i32;
 
             loop {
-                let prompt = if brace_depth > 0 {
+                let prompt = if brace_depth > 0 || !repl_buffer.is_empty() {
                     format!("{}", "... ".yellow())
                 } else {
                     format!("{}", "helheim> ".green())
@@ -77,18 +77,34 @@ async fn main() -> Result<()> {
                 match readline {
                     Ok(line) => {
                         let input = line.trim();
-                        if input.is_empty() { continue; }
                         
-                        brace_depth += input.chars().filter(|&c| c == '{').count() as i32;
-                        brace_depth -= input.chars().filter(|&c| c == '}').count() as i32;
-                        
-                        if !repl_buffer.is_empty() {
-                            repl_buffer.push('\n');
-                        }
-                        repl_buffer.push_str(input);
-                        
-                        if brace_depth > 0 {
-                            continue;
+                        if input.is_empty() {
+                            if repl_buffer.is_empty() {
+                                continue;
+                            } else if brace_depth == 0 {
+                                // Empty line triggers execution of complete multiline buffer
+                                // Allow execution to proceed by falling through
+                            } else {
+                                // Still inside a block, ignore empty lines
+                                continue;
+                            }
+                        } else {
+                            brace_depth += input.chars().filter(|&c| c == '{').count() as i32;
+                            brace_depth -= input.chars().filter(|&c| c == '}').count() as i32;
+                            
+                            if !repl_buffer.is_empty() {
+                                repl_buffer.push('\n');
+                            }
+                            repl_buffer.push_str(input);
+                            
+                            if brace_depth > 0 {
+                                continue;
+                            }
+                            
+                            // Require an empty line to execute a multiline block
+                            if repl_buffer.contains('\n') {
+                                continue;
+                            }
                         }
 
                         let final_input = repl_buffer.clone();
@@ -111,7 +127,8 @@ async fn main() -> Result<()> {
                         }
 
                         // Orchestrator Execution
-                        if let Err(e) = orchestrator.process_command(&final_input).await {
+                        let ctx = helheim_core::common::context::ExecutionContext::default_privileged();
+                        if let Err(e) = orchestrator.process_command(&final_input, ctx).await {
                              println!("{} {}", "[ERROR]".red().bold(), e);
                         }
                     }
@@ -139,8 +156,13 @@ async fn main() -> Result<()> {
             let content = tokio::fs::read_to_string(path).await?;
             use helheim_core::orchestra::parser::HelParser;
             match HelParser::parse(&content) {
-                Ok(ast) => {
-                    if let Err(e) = orchestrator.execute_ast(ast).await {
+                Ok(mut ast) => {
+                    if let Err(e) = helheim_core::orchestra::semantic::SemanticAnalyzer::analyze(&mut ast) {
+                        println!("{}", e);
+                        return Ok(());
+                    }
+                    let ctx = helheim_core::common::context::ExecutionContext::default_privileged();
+                    if let Err(e) = orchestrator.execute_ast(ast, ctx).await {
                         println!("[ERROR]: Runtime Error: {}", e);
                     }
                 },
@@ -150,7 +172,8 @@ async fn main() -> Result<()> {
 
         Commands::Run { input } => {
              // Direct command execution
-             orchestrator.process_command(&input).await?;
+             let ctx = helheim_core::common::context::ExecutionContext::default_privileged();
+             orchestrator.process_command(&input, ctx).await?;
         }
 
         Commands::Upgrade { url } => {

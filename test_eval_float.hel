@@ -1,5 +1,0 @@
-zet x = 10;
-zet y = 20;
-
-zet res1 = x == 10.0 && y == 20.0;
-print res1;

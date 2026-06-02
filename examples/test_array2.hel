@@ -1,4 +1,0 @@
-zet LIJST = ["apple", "banaan", "kersen"];
-print "De lijst is $LIJST";
-zet EERSTE = LIJST[0];
-print "Eerste item: $EERSTE";

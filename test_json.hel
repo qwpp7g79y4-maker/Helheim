@@ -1,3 +1,0 @@
-zet raw_json = "{\"naam\": \"pieter\", \"leeftijd\": 30}";
-print raw_json["naam"];
-print raw_json["leeftijd"];

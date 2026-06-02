@@ -1,3 +1,11 @@
+pub mod backend;
+pub mod ptx_backend;
+pub mod cpu_backend;
+
+use backend::GpuBackend;
+use ptx_backend::PtxBackend;
+use cpu_backend::CpuBackend;
+
 use anyhow::Result;
 use colored::*;
 use cudarc::driver::{CudaContext, CudaSlice, LaunchConfig, PushKernelArg};
@@ -10,6 +18,27 @@ use std::time::Instant;
 lazy_static::lazy_static! {
     pub static ref TENSOR_STORE: Mutex<HashMap<usize, CudaSlice<f32>>> = Mutex::new(HashMap::new());
     pub static ref NEXT_TENSOR_ID: Mutex<usize> = Mutex::new(1);
+}
+
+/// JIT executor entry point for lowered general blocks (the full Helheim -> PTX -> CUDA execution pipeline).
+/// context: host variables to bind into the PTX kernel as input params (enables `zet a=10; {retourneer a*2;}` etc).
+pub fn launch_lowered_block_jit(
+    code: &helheim_lang::ast::CodeTaal,
+    context: &std::collections::HashMap<String, helheim_lang::ast::LiteralValue>,
+) -> anyhow::Result<Option<f32>> {
+    let backend = get_backend();
+    backend.execute_lowered_block(code, context)
+        .map_err(|e| anyhow::anyhow!("Lowered block GPU launch failed: {}", e))
+}
+
+pub fn get_backend() -> Box<dyn GpuBackend> {
+    if let Ok(ptx) = PtxBackend::new() {
+        println!("[HELHEIM] NVIDIA CUDA gedetecteerd. PtxBackend geladen.");
+        Box::new(ptx)
+    } else {
+        println!("[HELHEIM] Geen CUDA gedetecteerd. Fallback naar Rayon (CpuBackend) voor 5950X.");
+        Box::new(CpuBackend::new())
+    }
 }
 
 pub fn gpu_alloc_tensor_random(m: usize, n: usize) -> Result<usize> {
