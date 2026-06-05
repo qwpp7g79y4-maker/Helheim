@@ -8,7 +8,8 @@ name = "helheim_core"
 crate-type = ["rlib"]
 
 [features]
-cuda = []
+cuda = ["dep:cudarc"]
+default = []
 
 [dependencies]
 helheim-lang = { path = "../helheim-lang" }
@@ -19,7 +20,7 @@ clap = { version = "4.5.54", features = ["derive"] }
 num_cpus = "1.16"
 socket2 = "0.5"
 lazy_static = "1.4"
-cudarc = { version = "0.19.0", features = ["driver", "nvrtc", "cuda-11040"] }
+cudarc = { version = "0.19.0", features = ["driver", "nvrtc", "cuda-11040"], optional = true }
 hex = "0.4.3"
 ndarray = "0.17.2"
 ndarray-linalg = "0.18.1"

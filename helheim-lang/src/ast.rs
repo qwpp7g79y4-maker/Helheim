@@ -11,6 +11,8 @@ pub enum LiteralValue {
     Float(f64),
     String(String),
     Bool(bool),
+    /// Support for 1D/2D+ lists of spikes (tensors). Nested for matrices.
+    List(Vec<LiteralValue>),
 }
 
 impl std::fmt::Display for LiteralValue {
@@ -20,6 +22,10 @@ impl std::fmt::Display for LiteralValue {
             LiteralValue::Float(fl) => write!(f, "{}", fl),
             LiteralValue::String(s) => write!(f, "{}", s),
             LiteralValue::Bool(b) => write!(f, "{}", if *b { "waar" } else { "onwaar" }),
+            LiteralValue::List(items) => {
+                let s = items.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(", ");
+                write!(f, "[{}]", s)
+            }
         }
     }
 }
@@ -97,8 +103,10 @@ pub enum CodeTaal {
     /// Strongly typed literal (major improvement over Literal(String))
     Literal(LiteralValue),
 
-    /// List literal for booleans/spikes etc, e.g. [waar, onwaar, waar]
+    /// List literal for booleans/spikes etc, e.g. [waar, onwaar, waar] (1D)
     ListLiteral { items: Vec<LiteralValue> },
+    /// 2D matrix of spikes (tensors) e.g. [[waar, onwaar], [waar, waar]] for 2D SNN processing
+    MatrixLiteral { rows: Vec<Vec<LiteralValue>> },
 
     // --- GPU SECTION ---
     GpuKernel(GpuKernelDef),

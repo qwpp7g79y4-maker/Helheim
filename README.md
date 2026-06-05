@@ -1,26 +1,29 @@
-# 🐺 HELHEIM: The Native Ascension
+# Helheim
 
 > **Status:** Bare-Metal, CLI-First, CUDA-Accelerated.
-> **Language:** Native Bilingual (English & Dutch) — CodeTaal.
+> **Language:** Bilingual DSL (English & Dutch) — CodeTaal.
 
-Helheim is a high-performance, strictly native inference and execution engine designed for extreme latency optimization and bare-metal hardware control. It operates completely independent of bloated web frameworks or HTTP overhead. It is the "Body" to the AI "Brain".
+Helheim is a high-performance native execution engine designed for low-latency computation and direct hardware control. It runs independently of web frameworks or HTTP overhead, executing AST natively on CPU and GPU.
 
-## 🚀 The Philosophy
-1. **Zero Bloat:** No REST APIs, no heavy wrappers. Just a pure Rust binary executing AST natively on CPU and GPU.
+## Design Principles
+
+1. **No abstraction overhead:** No REST APIs, no wrappers. A Rust binary executing AST natively on CPU and GPU.
 2. **Double-Buffered CUDA:** Maximizes VRAM throughput by asynchronously overlapping host-to-device memory copies with active tensor computation.
-3. **Asymmetric Load Balancing ("Inferno Mode"):** Automatically distributes workloads across all available Nvidia GPUs (NVRTC/PTX) and multi-core CPUs via Rayon.
-4. **HSP Swarm Protocol:** Native TCP node distribution utilizing lock-free connection pooling (`dashmap`) and XOR stream encryption.
+3. **Asymmetric Load Balancing (Inferno Mode):** Distributes workloads across all available Nvidia GPUs (NVRTC/PTX) and multi-core CPUs via Rayon.
+4. **HSP Swarm Protocol:** Native TCP node distribution with lock-free connection pooling (`dashmap`) and XOR stream encryption.
 
-## 🧠 Zero-Overhead SNN on Bare Metal (Motor Cortex)
-Helheim makes Python + PyTorch obsolete for specific high-performance workloads.
-Spikes are bit-packed as `u32` masks and directly lowered to PTX with `popc.b32` thresholding. This executes via a true JIT `hel_lowered` entry on CUDA without Python interpreter overhead or PyTorch tensor bloat. 
-Context binding allows host variables (e.g., `zet x=...`) to seamlessly flow into GPU code. Results are bit-cast into a VRAM ringbuffer and unpacked by the host to `waar/onwaar` lists.
+## SNN Support (Motor Cortex)
 
-## ⚡ The Architecture
+Helheim provides a zero-overhead path for Spiking Neural Network workloads without Python interpreter or PyTorch tensor overhead.
 
-### 1. CodeTaal (The DSL)
-Helheim understands a custom, natively bilingual (English/Dutch) syntax that is compiled directly to an Abstract Syntax Tree (AST).
-*Example:*
+Spikes are bit-packed as `u32` masks and lowered directly to PTX via `popc.b32` thresholding. Context binding allows host variables (e.g., `zet x=...`) to flow into GPU kernels as `.param` inputs. Results are bit-cast into a VRAM ringbuffer and unpacked to `waar/onwaar` lists on the host.
+
+## Architecture
+
+### 1. CodeTaal (DSL)
+
+Helheim uses a bilingual (English/Dutch) DSL compiled to an Abstract Syntax Tree (AST).
+
 ```helheim
 zet input_spikes = [waar, onwaar, waar, waar];
 zet gewichten = [waar, waar, onwaar, waar];
@@ -34,27 +37,32 @@ als fire_count >= 2 dan {
 }
 ```
 
-### 2. Lowered Blocks & Real PTX JIT
-No interpreter overhead for Block/If/Loop/Op. CodeTaal is lowered directly into highly optimized PTX instructions for Nvidia GPUs.
+### 2. PTX JIT Lowering
 
-### 3. The Engine (`helheim-cli`)
-You execute scripts directly from the terminal. The Orchestrator dynamically evaluates the AST or JIT-compiles it.
+CodeTaal blocks are lowered directly to PTX instructions for Nvidia GPUs, with no interpreter overhead for conditionals, loops, or operations.
+
+### 3. CLI (`helheim-cli`)
+
+Scripts are executed from the terminal. The orchestrator dynamically evaluates the AST or JIT-compiles to PTX.
+
 ```bash
 helheim run examples/snn/03_snn_cortex.hel
 ```
 
-## 🛠️ Usage
+## Usage
 
 **Interactive REPL:**
 ```bash
 helheim repl
 ```
 
-**Deploy as Swarm Node:**
-Start a headless worker node that listens for encrypted commands via the HSP protocol (No TCP Handshake latency).
+**Swarm Node:**
+Start a headless worker node listening for encrypted commands via the HSP protocol.
 ```bash
 helheim service --port 9003
 ```
 
----
-*Built for the Antigravity Standard. Speed, Truth, and Absolute Control.*
+## Documentation
+
+- [Language Specification](docs/LANGUAGE_SPEC.md)
+- [Motor Cortex — SNN JIT Engine](docs/MOTOR_CORTEX.md)

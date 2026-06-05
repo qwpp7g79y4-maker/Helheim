@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Helheim Starfield Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&family=Fira+Code:wght@400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar / Editor -->
+        <aside class="sidebar glass-panel">
+            <div class="header">
+                <h1>🐺 HELHEIM</h1>
+                <span class="badge">MOTOR CORTEX v1.0</span>
+            </div>
+
+            <div class="editor-section">
+                <label for="code-editor">CodeTaal JIT Compiler</label>
+                <textarea id="code-editor" spellcheck="false">
+// SNN Motor Cortex Test
+zet input_spikes = [[waar, onwaar, waar], [waar, waar, onwaar]];
+zet weight_mask = [[waar, waar, onwaar], [waar, waar, onwaar]];
+
+functie neuron_vuurt met spikes mask drempel {
+    zet overlap = spikes & mask;
+    
+    // We return the raw spike overlap list for the Starfield visualizer!
+    retourneer overlap;
+}
+
+zet resultaat = roep_aan neuron_vuurt input_spikes weight_mask 2;
+druk_af resultaat;</textarea>
+            </div>
+
+            <div class="controls">
+                <button id="btn-execute" class="btn-primary">Execute PTX Kernel</button>
+            </div>
+
+            <div class="console-section">
+                <label>JIT Output & Terminal</label>
+                <div id="terminal" class="terminal-output">System Ready. Awaiting execution...</div>
+            </div>
+            
+            <div class="status-bar">
+                <div class="status-indicator">
+                    <span id="ws-status" class="dot disconnected"></span>
+                    <span id="ws-text">WebSocket: Disconnected</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Canvas Area -->
+        <main class="main-content">
+            <div class="overlay-ui">
+                <h2>Starfield SNN Topology</h2>
+                <p>Live visualization of lowered bit-packed spikes.</p>
+            </div>
+            <canvas id="starfield-canvas"></canvas>
+        </main>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

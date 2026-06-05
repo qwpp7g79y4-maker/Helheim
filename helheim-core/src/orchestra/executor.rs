@@ -200,43 +200,6 @@ impl Executor {
                             CodeTaal::Literal(ref l) => l.to_string(),
                             CodeTaal::VarGet { ref name } => self.memory.resolve_value(name),
                             CodeTaal::Op { ref left, ref op, ref right } => {
-                                // Super simple fallback string representation so evaluate_expression can catch it
-                                // Or better: we could build a string and pass it to evaluate_expression
-                                let l = match **left {
-                                    CodeTaal::Literal(ref s) => s.to_string(),
-                                    CodeTaal::VarGet { ref name } => self.memory.resolve_value(name),
-                                    _ => "".to_string(),
-                                };
-                                let r = match **right {
-                                    CodeTaal::Literal(ref s) => s.to_string(),
-                                    CodeTaal::VarGet { ref name } => self.memory.resolve_value(name),
-                                    _ => "".to_string(),
-                                };
-                                format!("{} {} {}", l, op, r)
-                            }
-                            CodeTaal::FileOp { .. } | CodeTaal::HttpOp { .. } => {
-                                // Perform I/O at VarDef time so `zet x = lees p` or `zet x = haal u` works
-                                // We can't easily await here in the match without restructuring, so delegate to the top level handler
-                                // by executing the sub expr (side effect + last read)
-                                // For now fall back to the generic execution path for the value (it will run the I/O arm)
-                                // and use the magic last read var.
-                                let _ = Box::pin(self.execute_ast(vec![(*value).clone()], ctx.clone())).await;
-                                self.memory.resolve_value("__last_read")
-                            }
-                            CodeTaal::ListLiteral { ref items } => {
-                                // Set list in memory for SNN spikes etc.
-                                let json_items: Vec<serde_json::Value> = items.iter().map(|l| match l {
-                                    helheim_lang::ast::LiteralValue::Bool(b) => serde_json::json!(*b),
-                                    helheim_lang::ast::LiteralValue::Int(i) => serde_json::json!(*i),
-                                    helheim_lang::ast::LiteralValue::Float(f) => serde_json::json!(*f),
-                                    helheim_lang::ast::LiteralValue::String(s) => serde_json::json!(s),
-                                }).collect();
-                                self.memory.set_var_native(name.clone(), HelheimType::List(json_items));
-                                "[list]".to_string()
-                            }
-                            CodeTaal::Block { .. } => {
-                                // Context binding + Spike Packing (Host-to-Device for SNN)
-                                // If a free var is a List of bools, pack on CPU into u32 bitmask and pass as Int.
                                 let free_vars = helheim_lang::synthesis::collect_free_variables(&*value);
                                 let mut context: std::collections::HashMap<String, helheim_lang::ast::LiteralValue> = std::collections::HashMap::new();
                                 for name in free_vars {
@@ -246,7 +209,6 @@ impl Executor {
                                                 context.insert(name, helheim_lang::ast::LiteralValue::Int(if b { 1 } else { 0 }));
                                             }
                                             HelheimType::List(items) => {
-                                                // Pack boolean list into u32 bitmask for .b32 / bitwise
                                                 let mut mask: u32 = 0;
                                                 for (i, item) in items.iter().take(32).enumerate() {
                                                     let is_true = match item {
@@ -286,11 +248,152 @@ impl Executor {
                                 let gpu_backend = crate::gpu::get_backend();
                                 match gpu_backend.execute_lowered_block(&*value, &context) {
                                     Ok(Some(val)) => {
-                                        println!("[EXECUTOR]: Expression Block evaluated on GPU via PTX JIT path. Result: {}", val);
-                                        // SNN host unpacking: if lowered returned packed bits (via b32 store in f32 pool), unpack to list string
+                                        println!("[EXECUTOR]: Op evaluated on GPU via PTX JIT path. Result: {}", val);
                                         let mask = val.to_bits() as u32;
                                         let mut spike_list = vec![];
-                                        for i in 0..6 {  // demo width for test script
+                                        for i in 0..32 {
+                                            let b = (mask & (1u32 << i)) != 0;
+                                            spike_list.push(if b { "waar" } else { "onwaar" });
+                                        }
+                                        let unpacked = format!("[{}]", spike_list.join(", "));
+                                        self.memory.set_var_native(name.clone(), HelheimType::parse(&unpacked));
+                                        unpacked
+                                    }
+                                    _ => {
+                                        let l = match **left {
+                                            CodeTaal::Literal(ref s) => s.to_string(),
+                                            CodeTaal::VarGet { ref name } => self.memory.resolve_value(name),
+                                            _ => "".to_string(),
+                                        };
+                                        let r = match **right {
+                                            CodeTaal::Literal(ref s) => s.to_string(),
+                                            CodeTaal::VarGet { ref name } => self.memory.resolve_value(name),
+                                            _ => "".to_string(),
+                                        };
+                                        format!("{} {} {}", l, op, r)
+                                    }
+                                }
+                            }
+                            CodeTaal::FileOp { .. } | CodeTaal::HttpOp { .. } => {
+                                // Perform I/O at VarDef time so `zet x = lees p` or `zet x = haal u` works
+                                // We can't easily await here in the match without restructuring, so delegate to the top level handler
+                                // by executing the sub expr (side effect + last read)
+                                // For now fall back to the generic execution path for the value (it will run the I/O arm)
+                                // and use the magic last read var.
+                                let _ = Box::pin(self.execute_ast(vec![(*value).clone()], ctx.clone())).await;
+                                self.memory.resolve_value("__last_read")
+                            }
+                            CodeTaal::ListLiteral { ref items } => {
+                                // Set list in memory for SNN spikes etc.
+                                let mut string_items = Vec::new();
+                                let json_items: Vec<serde_json::Value> = items.iter().map(|l| match l {
+                                    helheim_lang::ast::LiteralValue::Bool(b) => {
+                                        string_items.push(if *b { "waar" } else { "onwaar" }.to_string());
+                                        serde_json::json!(if *b { "waar" } else { "onwaar" })
+                                    },
+                                    helheim_lang::ast::LiteralValue::Int(i) => {
+                                        string_items.push(i.to_string());
+                                        serde_json::json!(*i)
+                                    },
+                                    helheim_lang::ast::LiteralValue::Float(f) => {
+                                        string_items.push(f.to_string());
+                                        serde_json::json!(*f)
+                                    },
+                                    helheim_lang::ast::LiteralValue::String(s) => {
+                                        string_items.push(format!("\"{}\"", s));
+                                        serde_json::json!(s)
+                                    },
+                                    helheim_lang::ast::LiteralValue::List(sub) => {
+                                        string_items.push("[list]".to_string());
+                                        serde_json::json!(sub.iter().map(|x| x.to_string()).collect::<Vec<_>>())
+                                    },
+                                }).collect();
+                                self.memory.set_var_native(name.clone(), HelheimType::List(json_items));
+                                format!("[{}]", string_items.join(", "))
+                            }
+                            CodeTaal::MatrixLiteral { ref rows } => {
+                                // 2D spike tensor support
+                                let mut flat: Vec<serde_json::Value> = Vec::new();
+                                let mut string_items = Vec::new();
+                                for row in rows {
+                                    for item in row {
+                                        let v = match item {
+                                            helheim_lang::ast::LiteralValue::Bool(b) => {
+                                                string_items.push(if *b { "waar" } else { "onwaar" }.to_string());
+                                                serde_json::json!(if *b { "waar" } else { "onwaar" })
+                                            },
+                                            _ => {
+                                                string_items.push(item.to_string());
+                                                serde_json::json!(item.to_string())
+                                            },
+                                        };
+                                        flat.push(v);
+                                    }
+                                }
+                                self.memory.set_var_native(name.clone(), HelheimType::List(flat));
+                                format!("[{}]", string_items.join(", "))
+                            }
+                            CodeTaal::Block { .. } => {
+                                // Context binding + Spike Packing (Host-to-Device for SNN)
+                                // If a free var is a List of bools, pack on CPU into u32 bitmask and pass as Int.
+                                let free_vars = helheim_lang::synthesis::collect_free_variables(&*value);
+                                let mut context: std::collections::HashMap<String, helheim_lang::ast::LiteralValue> = std::collections::HashMap::new();
+                                for name in free_vars {
+                                    if let Some(typed) = self.memory.get_var_native(&name) {
+                                        match typed {
+                                            HelheimType::Bool(b) => {
+                                                context.insert(name, helheim_lang::ast::LiteralValue::Int(if b { 1 } else { 0 }));
+                                            }
+                                            HelheimType::List(items) => {
+                                                // Pack boolean list into u32 bitmask for .b32 / bitwise
+                                                let mut mask: u32 = 0;
+                                                for (i, item) in items.iter().take(32).enumerate() {
+                                                    let is_true = match item {
+                                                        serde_json::Value::Bool(b) => *b,
+                                                        serde_json::Value::String(s) => s == "waar" || s == "true" || s == "1",
+                                                        _ => false,
+                                                    };
+                                                    if is_true {
+                                                        mask |= 1 << i;
+                                                    }
+                                                }
+                                                context.insert(name, helheim_lang::ast::LiteralValue::Int(mask as i64));
+                                            }
+                                            // 2D matrix of spikes: pack rows into multiple masks if needed (simple for small 2D)
+                                            // For demo, pack first row or flatten bits
+                                            // (full 2D support would allocate device tensor buffer)
+                                            HelheimType::Int(i) => {
+                                                context.insert(name, helheim_lang::ast::LiteralValue::Int(i));
+                                            }
+                                            HelheimType::Float(f) => {
+                                                context.insert(name, helheim_lang::ast::LiteralValue::Float(f));
+                                            }
+                                            _ => {
+                                                let s = typed.to_string();
+                                                context.insert(name, helheim_lang::ast::LiteralValue::String(s.trim_matches('"').to_string()));
+                                            }
+                                        }
+                                    } else {
+                                        let s = self.memory.resolve_value(&name);
+                                        if let Ok(i) = s.parse::<i64>() {
+                                            context.insert(name, helheim_lang::ast::LiteralValue::Int(i));
+                                        } else if let Ok(f) = s.parse::<f64>() {
+                                            context.insert(name, helheim_lang::ast::LiteralValue::Float(f));
+                                        } else {
+                                            context.insert(name, helheim_lang::ast::LiteralValue::String(s.trim_matches('"').to_string()));
+                                        }
+                                    }
+                                }
+
+                                let gpu_backend = crate::gpu::get_backend();
+                                match gpu_backend.execute_lowered_block(&*value, &context) {
+                                    Ok(Some(val)) => {
+                                        println!("[EXECUTOR]: Expression Block evaluated on GPU via PTX JIT path. Result: {}", val);
+                                        // SNN host unpacking: if lowered returned packed bits (via b32 store in f32 pool), unpack to list string
+                                        // Adapted for 2D: larger mask support (up to 32 for demo 2D matrices flattened or per-row)
+                                        let mask = val.to_bits() as u32;
+                                        let mut spike_list = vec![];
+                                        for i in 0..32 {  // support larger 1D or flattened 2D spike tensors
                                             let b = (mask & (1u32 << i)) != 0;
                                             spike_list.push(if b { "waar" } else { "onwaar" });
                                         }
@@ -308,6 +411,14 @@ impl Executor {
                                         }
                                     }
                                 }
+                            }
+                            CodeTaal::FunctionCall { ref name, ref args } => {
+                                let args_str: Vec<String> = args.iter().map(|a| match a {
+                                    CodeTaal::Literal(l) => l.to_string(),
+                                    CodeTaal::VarGet { name: n } => n.clone(),
+                                    _ => "".to_string()
+                                }).collect();
+                                self.execute_function_call(name, args_str, ctx.clone()).await.unwrap_or_default()
                             }
                             _ => "".to_string(),
                         };
@@ -560,9 +671,10 @@ impl Executor {
                             Ok(Some(val)) => {
                                 println!("[EXECUTOR]: Lowered block executed on real GPU via PTX JIT path. Return: {}", val);
                                 // SNN unpacking for direct block return
+                                // Adapted for 2D matrices: support larger flattened spike results (32 bits demo for  e.g. 4x8 or 8x4 2D spike tensors)
                                 let mask = val.to_bits() as u32;
                                 let mut spike_list = vec![];
-                                for i in 0..6 {
+                                for i in 0..32 {
                                     let b = (mask & (1u32 << i)) != 0;
                                     spike_list.push(if b { "waar" } else { "onwaar" });
                                 }

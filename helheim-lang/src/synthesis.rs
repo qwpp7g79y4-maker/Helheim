@@ -440,6 +440,13 @@ impl PtxGenerator {
                     ptx.push(&format!("    // bool {} loaded as b32 mask bit", if *b {1} else {0}));
                     self.variables.insert(name.clone(), reg);
                 }
+                LiteralValue::List(_) => {
+                    // 2D/1D spike tensor - for now pass as 0, real packing happens in executor before lowering for context
+                    let reg = self.reg_alloc.alloc_b32_fragment(1)[0].clone();
+                    ptx.push(&format!("    ld.param.b32 {}, [input_{}];", reg, name));
+                    ptx.push(&format!("    // list/matrix (2D spike tensor) loaded as b32 (packed upstream)"));
+                    self.variables.insert(name.clone(), reg);
+                }
                 _ => {
                     let reg = self.reg_alloc.alloc_f32_fragment(1)[0].clone();
                     ptx.push(&format!("    mov.f32 {}, 0f00000000; // unsupported context type for {}", reg, name));
@@ -524,6 +531,14 @@ impl PtxGenerator {
     fn translate_expression(&mut self, ptx: &mut PtxModule, op: &CodeTaal) -> Result<String> {
         // Type-aware lowering (plan B): Int -> u32/s32 on %r, Float -> f32 on %f
         match op {
+            CodeTaal::MatrixLiteral { rows } => {
+                // 2D spike tensor support - for lowered PTX, the matrix is packed into b32 masks by executor context before lowering
+                let out_reg = self.reg_alloc.alloc_b32_fragment(1)[0].clone();
+                let r = rows.len();
+                let c = rows.first().map_or(0, |row| row.len());
+                ptx.push(&format!("    // MatrixLiteral 2D spikes ({}x{}) - use packed context input or global mem", r, c));
+                Ok(out_reg)
+            }
             CodeTaal::Literal(val) => {
                 match val {
                     LiteralValue::Int(i) => {
@@ -547,6 +562,12 @@ impl PtxGenerator {
                     LiteralValue::Bool(b) => {
                         let out_reg = self.reg_alloc.alloc_pred();
                         ptx.push(&format!("    setp.ne.u32 {}, 0, {};", out_reg, if *b { 1 } else { 0 }));
+                        Ok(out_reg)
+                    }
+                    LiteralValue::List(_) => {
+                        // 2D spike matrix or 1D list literal - not directly in PTX scalar reg for compute, treat host-side for now
+                        let out_reg = self.reg_alloc.alloc_b32_fragment(1)[0].clone();
+                        ptx.push(&format!("    // list/matrix literal (2D spike tensor) - host/packed side {}", val));
                         Ok(out_reg)
                     }
                 }

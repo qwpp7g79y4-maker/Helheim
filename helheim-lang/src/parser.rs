@@ -815,6 +815,35 @@ impl HelParser {
         // Support I/O as expressions too (e.g. zet x = lees p; zet y = haal url_var)
         if let Some(t) = iter.peek() {
             match t.value.as_str() {
+                "roep_aan" | "invoke" | "call" => {
+                    iter.next(); // consume keyword
+                    let mut call_tokens = Vec::new();
+                    while let Some(u) = iter.peek() {
+                        if u == ";" || u == "}" { break; }
+                        call_tokens.push(iter.next().unwrap());
+                    }
+                    let name = if !call_tokens.is_empty() {
+                        call_tokens[0].value.clone()
+                    } else {
+                        "".to_string()
+                    };
+                    let mut args = Vec::new();
+                    if call_tokens.len() > 1 {
+                        for arg_tok in &call_tokens[1..] {
+                            let expr = if arg_tok.value.parse::<f64>().is_ok() {
+                                CodeTaal::Literal(LiteralValue::Float(arg_tok.value.parse().unwrap()))
+                            } else if arg_tok.value.parse::<i64>().is_ok() {
+                                CodeTaal::Literal(LiteralValue::Int(arg_tok.value.parse().unwrap()))
+                            } else if arg_tok.value.starts_with("\"") {
+                                CodeTaal::Literal(LiteralValue::String(arg_tok.value.trim_matches('"').to_string()))
+                            } else {
+                                CodeTaal::VarGet { name: arg_tok.value.clone() }
+                            };
+                            args.push(expr);
+                        }
+                    }
+                    return Ok(CodeTaal::FunctionCall { name, args });
+                }
                 "haal" | "fetch" => {
                     iter.next(); // consume keyword
                     let mut url_tokens = Vec::new();
@@ -865,38 +894,92 @@ impl HelParser {
             }
         }
 
-        // Support list literals for spikes/booleans: [waar, onwaar, ...]
+        // Support list literals for spikes/booleans: [waar, onwaar, ...] (1D) and [[..],[..]] (2D matrices for tensors)
         if let Some(t) = iter.peek() {
             if t.value == "[" {
                 iter.next(); // consume [
-                let mut items = Vec::new();
-                while let Some(tok) = iter.peek() {
-                    if tok.value == "]" {
-                        iter.next();
-                        break;
+                // Peek to see if 2D: next non-comma is another [
+                let mut is_2d = false;
+                // simple peek for nested structure
+                if let Some(next) = iter.peek() {
+                    if next.value == "[" {
+                        is_2d = true;
                     }
-                    if tok.value == "," {
-                        iter.next();
-                        continue;
-                    }
-                    // parse simple literal
-                    let item_tok = iter.next().unwrap();
-                    let lit = if item_tok.value == "waar" || item_tok.value == "true" {
-                        LiteralValue::Bool(true)
-                    } else if item_tok.value == "onwaar" || item_tok.value == "false" {
-                        LiteralValue::Bool(false)
-                    } else if item_tok.value.parse::<i64>().is_ok() {
-                        LiteralValue::Int(item_tok.value.parse().unwrap())
-                    } else if item_tok.value.parse::<f64>().is_ok() {
-                        LiteralValue::Float(item_tok.value.parse().unwrap())
-                    } else if item_tok.value.starts_with("\"") {
-                        LiteralValue::String(item_tok.value.trim_matches('"').to_string())
-                    } else {
-                        return Err(anyhow::anyhow!("Unsupported list item in literal: {}", item_tok.value));
-                    };
-                    items.push(lit);
                 }
-                return Ok(CodeTaal::ListLiteral { items });
+                if is_2d {
+                    let mut rows: Vec<Vec<LiteralValue>> = Vec::new();
+                    while let Some(tok) = iter.peek() {
+                        if tok.value == "]" {
+                            iter.next();
+                            break;
+                        }
+                        if tok.value == "," {
+                            iter.next();
+                            continue;
+                        }
+                        if tok.value == "[" {
+                            // parse sub list (row)
+                            iter.next(); // [
+                            let mut row = Vec::new();
+                            while let Some(stok) = iter.peek() {
+                                if stok.value == "]" {
+                                    iter.next();
+                                    break;
+                                }
+                                if stok.value == "," {
+                                    iter.next();
+                                    continue;
+                                }
+                                let sitem = iter.next().unwrap();
+                                let slit = if sitem.value == "waar" || sitem.value == "true" {
+                                    LiteralValue::Bool(true)
+                                } else if sitem.value == "onwaar" || sitem.value == "false" {
+                                    LiteralValue::Bool(false)
+                                } else if sitem.value.parse::<i64>().is_ok() {
+                                    LiteralValue::Int(sitem.value.parse().unwrap())
+                                } else if sitem.value.parse::<f64>().is_ok() {
+                                    LiteralValue::Float(sitem.value.parse().unwrap())
+                                } else if sitem.value.starts_with("\"") {
+                                    LiteralValue::String(sitem.value.trim_matches('"').to_string())
+                                } else {
+                                    return Err(anyhow::anyhow!("Unsupported matrix item: {}", sitem.value));
+                                };
+                                row.push(slit);
+                            }
+                            rows.push(row);
+                        }
+                    }
+                    return Ok(CodeTaal::MatrixLiteral { rows });
+                } else {
+                    // 1D list
+                    let mut items = Vec::new();
+                    while let Some(tok) = iter.peek() {
+                        if tok.value == "]" {
+                            iter.next();
+                            break;
+                        }
+                        if tok.value == "," {
+                            iter.next();
+                            continue;
+                        }
+                        let item_tok = iter.next().unwrap();
+                        let lit = if item_tok.value == "waar" || item_tok.value == "true" {
+                            LiteralValue::Bool(true)
+                        } else if item_tok.value == "onwaar" || item_tok.value == "false" {
+                            LiteralValue::Bool(false)
+                        } else if item_tok.value.parse::<i64>().is_ok() {
+                            LiteralValue::Int(item_tok.value.parse().unwrap())
+                        } else if item_tok.value.parse::<f64>().is_ok() {
+                            LiteralValue::Float(item_tok.value.parse().unwrap())
+                        } else if item_tok.value.starts_with("\"") {
+                            LiteralValue::String(item_tok.value.trim_matches('"').to_string())
+                        } else {
+                            return Err(anyhow::anyhow!("Unsupported list item in literal: {}", item_tok.value));
+                        };
+                        items.push(lit);
+                    }
+                    return Ok(CodeTaal::ListLiteral { items });
+                }
             }
         }
 

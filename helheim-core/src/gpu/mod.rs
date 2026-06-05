@@ -1,22 +1,34 @@
 pub mod backend;
-pub mod ptx_backend;
 pub mod cpu_backend;
 
+#[cfg(feature = "cuda")]
+pub mod ptx_backend;
+
 use backend::GpuBackend;
+#[cfg(feature = "cuda")]
 use ptx_backend::PtxBackend;
 use cpu_backend::CpuBackend;
 
 use anyhow::Result;
 use colored::*;
+#[cfg(feature = "cuda")]
 use cudarc::driver::{CudaContext, CudaSlice, LaunchConfig, PushKernelArg};
+#[cfg(feature = "cuda")]
 use cudarc::nvrtc::compile_ptx;
 use rand::Rng;
+#[cfg(feature = "cuda")]
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Instant;
 
+#[cfg(feature = "cuda")]
 lazy_static::lazy_static! {
     pub static ref TENSOR_STORE: Mutex<HashMap<usize, CudaSlice<f32>>> = Mutex::new(HashMap::new());
+    pub static ref NEXT_TENSOR_ID: Mutex<usize> = Mutex::new(1);
+}
+
+#[cfg(not(feature = "cuda"))]
+lazy_static::lazy_static! {
     pub static ref NEXT_TENSOR_ID: Mutex<usize> = Mutex::new(1);
 }
 
@@ -32,15 +44,22 @@ pub fn launch_lowered_block_jit(
 }
 
 pub fn get_backend() -> Box<dyn GpuBackend> {
-    if let Ok(ptx) = PtxBackend::new() {
-        println!("[HELHEIM] NVIDIA CUDA gedetecteerd. PtxBackend geladen.");
-        Box::new(ptx)
-    } else {
-        println!("[HELHEIM] Geen CUDA gedetecteerd. Fallback naar Rayon (CpuBackend) voor 5950X.");
-        Box::new(CpuBackend::new())
+    #[cfg(feature = "cuda")]
+    {
+        if let Ok(ptx) = PtxBackend::new() {
+            println!("[HELHEIM] NVIDIA CUDA gedetecteerd. PtxBackend geladen.");
+            return Box::new(ptx);
+        }
+        println!("[HELHEIM] Geen CUDA gedetecteerd of feature niet enabled. Fallback naar Rayon (CpuBackend).");
     }
+    #[cfg(not(feature = "cuda"))]
+    {
+        println!("[HELHEIM] CUDA feature niet geactiveerd. Gebruik CpuBackend.");
+    }
+    Box::new(CpuBackend::new())
 }
 
+#[cfg(feature = "cuda")]
 pub fn gpu_alloc_tensor_random(m: usize, n: usize) -> Result<usize> {
     let dev = CudaContext::new(0)?;
     let stream = dev.default_stream();
@@ -63,6 +82,12 @@ pub fn gpu_alloc_tensor_random(m: usize, n: usize) -> Result<usize> {
     Ok(id)
 }
 
+#[cfg(not(feature = "cuda"))]
+pub fn gpu_alloc_tensor_random(_m: usize, _n: usize) -> Result<usize> {
+    Err(anyhow::anyhow!("GPU tensor alloc only available with 'cuda' feature"))
+}
+
+#[cfg(feature = "cuda")]
 pub fn gpu_alloc_tensor_empty(m: usize, n: usize) -> Result<usize> {
     let dev = CudaContext::new(0)?;
     let stream = dev.default_stream();
@@ -77,6 +102,11 @@ pub fn gpu_alloc_tensor_empty(m: usize, n: usize) -> Result<usize> {
     store.insert(id, dev_data);
 
     Ok(id)
+}
+
+#[cfg(not(feature = "cuda"))]
+pub fn gpu_alloc_tensor_empty(_m: usize, _n: usize) -> Result<usize> {
+    Err(anyhow::anyhow!("GPU tensor alloc only available with 'cuda' feature"))
 }
 
 pub const PTX_SRC: &str = r#"
@@ -114,6 +144,7 @@ extern "C" __global__ void matmul(int m, int n, int k, float alpha, const float*
 }
 "#;
 
+#[cfg(feature = "cuda")]
 pub fn gpu_work_real(size: usize, device_id: usize) -> Result<()> {
     println!("Checking hardware for GPU acceleration (Bare Metal Check)...");
     let has_nvidia = std::process::Command::new("nvidia-smi").output().is_ok();
@@ -314,6 +345,23 @@ pub fn gpu_work_real(size: usize, device_id: usize) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(feature = "cuda"))]
+pub fn gpu_work_real(size: usize, _device_id: usize) -> Result<()> {
+    println!("[HELHEIM] CUDA feature disabled. Running CPU simulation for gpu_work_real.");
+    let start = std::time::Instant::now();
+    let mut sum = 0.0f32;
+    let mut rng = rand::rng();
+    for _ in 0..(size * 10) {
+        let val: f32 = rng.random();
+        sum += val * 1.05;
+    }
+    let duration = start.elapsed();
+    println!("CPU WORK FINISHED. Sum: {}", sum);
+    println!("Time: {:.2?}", duration);
+    Ok(())
+}
+
+#[cfg(feature = "cuda")]
 pub fn gpu_execute_raw_ptx_ids(
     ptx_src: &str,
     id_a: usize,
@@ -459,6 +507,7 @@ pub fn gpu_execute_raw_ptx_ids(
     Ok(gflops)
 }
 
+#[cfg(feature = "cuda")]
 pub async fn gpu_execute_hel_block(raw_source: &str) -> Result<()> {
     use colored::*;
     println!(
@@ -533,6 +582,12 @@ pub async fn gpu_execute_hel_block(raw_source: &str) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(feature = "cuda"))]
+pub fn gpu_execute_raw_ptx_ids(_ptx: &str, _id_a: usize, _id_b: usize, _id_c: usize, _m: usize, _n: usize, _k: usize) -> Result<f32> {
+    Err(anyhow::anyhow!("GPU PTX execution requires 'cuda' feature"))
+}
+
+#[cfg(feature = "cuda")]
 pub fn gpu_execute_tensor_add(
     ptx_src: &str,
     id_a: usize,
@@ -593,6 +648,12 @@ pub fn gpu_execute_tensor_add(
     Ok(gflops)
 }
 
+#[cfg(not(feature = "cuda"))]
+pub fn gpu_execute_tensor_add(_ptx: &str, _id_a: usize, _id_b: usize, _out_id: usize, _m: usize, _n: usize) -> Result<f64> {
+    Err(anyhow::anyhow!("GPU tensor add requires 'cuda' feature"))
+}
+
+#[cfg(feature = "cuda")]
 pub fn gpu_execute_tensor_relu(
     ptx_src: &str,
     id_a: usize,
@@ -645,6 +706,12 @@ pub fn gpu_execute_tensor_relu(
     Ok(gflops)
 }
 
+#[cfg(not(feature = "cuda"))]
+pub fn gpu_execute_tensor_relu(_ptx: &str, _id_a: usize, _out_id: usize, _m: usize, _n: usize) -> Result<f64> {
+    Err(anyhow::anyhow!("GPU tensor relu requires 'cuda' feature"))
+}
+
+#[cfg(feature = "cuda")]
 pub fn cpu_execute_matmul(
     id_a: usize,
     id_b: usize,
@@ -710,6 +777,12 @@ pub fn cpu_execute_matmul(
     Ok(gflops)
 }
 
+#[cfg(not(feature = "cuda"))]
+pub fn cpu_execute_matmul(_id_a: usize, _id_b: usize, _id_c: usize, _m: usize, _n: usize, _k: usize) -> Result<f64> {
+    Err(anyhow::anyhow!("CPU matmul involving tensor store requires 'cuda' feature"))
+}
+
+#[cfg(feature = "cuda")]
 pub fn cpu_execute_tensor_add(
     id_a: usize,
     id_b: usize,
@@ -762,6 +835,11 @@ pub fn cpu_execute_tensor_add(
     }
 
     Ok(gflops)
+}
+
+#[cfg(not(feature = "cuda"))]
+pub fn cpu_execute_tensor_add(_id_a: usize, _id_b: usize, _id_c: usize, _m: usize, _n: usize) -> Result<f64> {
+    Err(anyhow::anyhow!("CPU tensor add involving tensor store requires 'cuda' feature"))
 }
 
 fn cpu_matmul_tiled(size: usize) -> f64 {

@@ -27,12 +27,13 @@ impl PtxBackend {
         let context = CudaContext::new(0)?;
         let stream = context.default_stream();
 
-        // Pre-allocate a ringbuffer of small result buffers for lowered PTX launches.
-        // Size 512 is a good starting point for concurrent-ish SNN evaluations without stalling.
+        // Pre-allocate a ringbuffer of result buffers for lowered PTX launches.
+        // Adapted for 2D Matrices (Tensors) of Spikes: each slot now 1024 f32 (supports e.g. 32x32 spike results, packed bit matrices, or larger 2D SNN layer outputs).
+        // This avoids per-launch alloc_zeros overhead for high-frequency SNN while supporting 2D data via bitcast/multiple stores in PTX.
         let result_pool_size = 512;
         let mut pool_vec = Vec::with_capacity(result_pool_size);
         for _ in 0..result_pool_size {
-            let buf = stream.alloc_zeros::<f32>(1)
+            let buf = stream.alloc_zeros::<f32>(1024)
                 .map_err(|e| anyhow::anyhow!("Failed to pre-alloc result pool buffer: {}", e))?;
             pool_vec.push(buf);
         }

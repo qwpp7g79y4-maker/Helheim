@@ -130,10 +130,17 @@ impl Orchestrator {
 
                 let start_idx = trimmed.find('{').unwrap() + 1;
                 let end_idx = trimmed.rfind('}').unwrap_or(trimmed.len());
-                let raw_code = trimmed[start_idx..end_idx].trim();
+                let _raw_code = trimmed[start_idx..end_idx].trim();
 
-                crate::gpu::gpu_execute_hel_block(raw_code).await?;
-                return Ok(());
+                #[cfg(feature = "cuda")]
+                {
+                    crate::gpu::gpu_execute_hel_block(_raw_code).await?;
+                    return Ok(());
+                }
+                #[cfg(not(feature = "cuda"))]
+                {
+                    return Err(anyhow::anyhow!("Hel-block execution requires 'cuda' feature"));
+                }
             }
 
             if trimmed.starts_with("script:") {
