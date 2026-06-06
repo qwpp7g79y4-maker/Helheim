@@ -71,6 +71,6 @@ fn test_backend_matmul_launch_ptx() {
     };
 
     println!("Compiling kernel on PTX...");
-    let compiled = backend.compile(&kernel_def).expect("Compile failed");
+    let _compiled = backend.compile(&kernel_def).expect("Compile failed");
     println!("PTX Compilation successful!");
 }

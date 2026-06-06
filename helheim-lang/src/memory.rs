@@ -66,12 +66,15 @@ impl HelheimType {
     }
 }
 
+use dashmap::DashMap;
+
 #[derive(Clone)]
 pub struct MemoryManager {
-    pub var_store: Arc<Mutex<Vec<HashMap<String, HelheimType>>>>,
-    pub func_store: Arc<Mutex<HashMap<String, String>>>,
-    pub ast_funcs: Arc<Mutex<HashMap<String, (Vec<String>, Box<CodeTaal>)>>>,
-    pub model_store: Arc<Mutex<HashMap<String, Vec<String>>>>,
+    pub globals: Arc<DashMap<String, HelheimType>>,
+    pub local_stack: Arc<Mutex<Vec<HashMap<String, HelheimType>>>>,
+    pub func_store: Arc<DashMap<String, String>>,
+    pub ast_funcs: Arc<DashMap<String, (Vec<String>, Box<CodeTaal>)>>,
+    pub model_store: Arc<DashMap<String, Vec<String>>>,
 }
 
 impl MemoryManager {
@@ -89,28 +92,44 @@ impl MemoryManager {
             }
         };
 
-        let mut initial_scope = HashMap::new();
+        let globals_map = DashMap::new();
         for (k, v) in globals {
-            initial_scope.insert(k, HelheimType::parse(&v));
+            globals_map.insert(k, HelheimType::parse(&v));
+        }
+
+        let func_store = DashMap::new();
+        for (k, v) in funcs {
+            func_store.insert(k, v);
         }
 
         Self {
-            var_store: Arc::new(Mutex::new(vec![initial_scope])),
-            func_store: Arc::new(Mutex::new(funcs)),
-            ast_funcs: Arc::new(Mutex::new(HashMap::new())),
-            model_store: Arc::new(Mutex::new(HashMap::new())),
+            globals: Arc::new(globals_map),
+            local_stack: Arc::new(Mutex::new(Vec::new())),
+            func_store: Arc::new(func_store),
+            ast_funcs: Arc::new(DashMap::new()),
+            model_store: Arc::new(DashMap::new()),
         }
     }
 
+    pub fn spawn_daemon_memory(&self) -> Arc<Self> {
+        Arc::new(Self {
+            globals: self.globals.clone(),
+            local_stack: Arc::new(Mutex::new(Vec::new())),
+            func_store: self.func_store.clone(),
+            ast_funcs: self.ast_funcs.clone(),
+            model_store: self.model_store.clone(),
+        })
+    }
+
     pub fn push_scope(&self) {
-        let mut store = self.var_store.lock().unwrap_or_else(|e| e.into_inner());
+        let mut store = self.local_stack.lock().unwrap_or_else(|e| e.into_inner());
         store.push(HashMap::new());
         println!("[SCOPE]: Gepusht naar level {}", store.len());
     }
 
     pub fn pop_scope(&self) {
-        let mut store = self.var_store.lock().unwrap_or_else(|e| e.into_inner());
-        if store.len() > 1 {
+        let mut store = self.local_stack.lock().unwrap_or_else(|e| e.into_inner());
+        if !store.is_empty() {
             store.pop();
             println!("[SCOPE]: Gepopt naar level {}", store.len());
         } else {
@@ -119,11 +138,14 @@ impl MemoryManager {
     }
 
     pub fn get_var_native(&self, key: &str) -> Option<HelheimType> {
-        let store = self.var_store.lock().unwrap_or_else(|e| e.into_inner());
+        let store = self.local_stack.lock().unwrap_or_else(|e| e.into_inner());
         for scope in store.iter().rev() {
             if let Some(val) = scope.get(key) {
                 return Some(val.clone());
             }
+        }
+        if let Some(v) = self.globals.get(key) {
+            return Some(v.value().clone());
         }
         None
     }
@@ -133,9 +155,11 @@ impl MemoryManager {
     }
 
     pub fn set_var_native(&self, key: String, value: HelheimType) {
-        let mut store = self.var_store.lock().unwrap_or_else(|e| e.into_inner());
+        let mut store = self.local_stack.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(scope) = store.last_mut() {
             scope.insert(key, value);
+        } else {
+            self.globals.insert(key, value);
         }
     }
 
@@ -145,22 +169,18 @@ impl MemoryManager {
 
     pub async fn persist(&self) {
         println!("[CACHE]: Bezig met opslaan naar persistent geheugen...");
-        let (globals, funcs) = {
-            let g = self.var_store.lock().unwrap_or_else(|e| e.into_inner());
-            let f = self.func_store.lock().unwrap_or_else(|e| e.into_inner());
-            let global_scope = if !g.is_empty() {
-                let mut stringified = HashMap::new();
-                for (k, v) in &g[0] {
-                    stringified.insert(k.clone(), v.to_string());
-                }
-                stringified
-            } else {
-                HashMap::new()
-            };
-            (global_scope, f.clone())
-        };
+        
+        let mut globals_map = std::collections::HashMap::new();
+        for entry in self.globals.iter() {
+            globals_map.insert(entry.key().clone(), entry.value().to_string());
+        }
 
-        match persistence::MemoryState::save(&globals, &funcs).await {
+        let mut funcs_map = std::collections::HashMap::new();
+        for entry in self.func_store.iter() {
+            funcs_map.insert(entry.key().clone(), entry.value().clone());
+        }
+
+        match persistence::MemoryState::save(&globals_map, &funcs_map).await {
             Ok(msg) => println!("✅ {}", msg),
             Err(e) => println!("❌ Opslaan mislukt: {}", e),
         }
@@ -170,18 +190,20 @@ impl MemoryManager {
         println!("[CACHE]: Geheugen opnieuw laden...");
         match persistence::MemoryState::load().await {
             Ok(state) => {
-                let mut g = self.var_store.lock().unwrap_or_else(|e| e.into_inner());
-                let mut f = self.func_store.lock().unwrap_or_else(|e| e.into_inner());
-                let mut typed_globals = HashMap::new();
+                self.globals.clear();
                 for (k, v) in state.globals {
-                    typed_globals.insert(k, HelheimType::parse(&v));
+                    self.globals.insert(k, HelheimType::parse(&v));
                 }
-                *g = vec![typed_globals];
-                *f = state.functions;
+                
+                self.func_store.clear();
+                for (k, v) in state.functions {
+                    self.func_store.insert(k, v);
+                }
+                
                 println!(
                     "✅ Geheugen hersteld ({} vars, {} funcs)",
-                    g[0].len(),
-                    f.len()
+                    self.globals.len(),
+                    self.func_store.len()
                 );
             }
             Err(e) => println!("❌ Laden mislukt: {}", e),

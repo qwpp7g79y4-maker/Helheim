@@ -1,0 +1,50 @@
+// ==========================================
+// Helheim Language - NEXUS Breach Simulation
+// ==========================================
+// Dit script simuleert een brute force aanval 
+// tegen een fictief firewall knooppunt, met 
+// daemons en logische condities (en/of).
+
+functie probeer_pin met hash {
+    // Simuleer CPU werk
+    roep_aan wacht 0;
+    
+    // Voor de demo, hash '9999' is de winnaar
+    als hash == 9999 dan {
+        retourneer "gebroken";
+    } anders {
+        retourneer "geweigerd";
+    }
+}
+
+zet firewall_status = "veilig";
+zet poging = 9990;
+
+tegelijkertijd {
+    achtergrond {
+        // Observer daemon
+        zet wacht_cycli = 0;
+        zolang (firewall_status == "veilig" en wacht_cycli < 20) {
+            roep_aan wacht 1;
+            zet wacht_cycli = wacht_cycli + 1;
+            // Dit roept een logging commando aan (os interop mock)
+            // roep_aan systeem.shell "echo [DAEMON] firewall is nog veilig...";
+        }
+    }
+
+    // Main crack loop
+    zolang (firewall_status == "veilig" en poging < 10000) {
+        zet poging_hash = poging; 
+        
+        zet resultaat = roep_aan probeer_pin poging_hash;
+        
+        als (resultaat == "gebroken") of (poging == 9999) dan {
+            zet firewall_status = "GEBROKEN";
+        }
+        
+        zet poging = poging + 1;
+    }
+}
+
+// Finale status
+zet eind_rapport = "FIREWALL STATUS: " + firewall_status;

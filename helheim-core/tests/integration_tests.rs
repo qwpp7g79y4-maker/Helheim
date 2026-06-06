@@ -237,6 +237,26 @@ async fn test_logic_operators() {
 }
 
 #[tokio::test]
+async fn test_logic_operators_complex() {
+    let script = r#"
+        zet tekst_var = "100";
+        zet num_var = 100;
+        
+        zet type_check_1 = nummer(tekst_var) == num_var;
+        zet type_check_2 = tekst_var == tekst(num_var);
+        
+        zet is_complex = (nummer(tekst_var) > 50 && num_var < 200) of (nummer(tekst_var) == 10);
+        zet is_complex_false = (nummer(tekst_var) < 50 && num_var < 200) || (nummer(tekst_var) == 10);
+    "#;
+    let engine = run_helheim_script(script).await;
+    
+    assert_eq!(engine.get_var("type_check_1").unwrap(), "waar");
+    assert_eq!(engine.get_var("type_check_2").unwrap(), "waar");
+    assert_eq!(engine.get_var("is_complex").unwrap(), "waar");
+    assert_eq!(engine.get_var("is_complex_false").unwrap(), "onwaar");
+}
+
+#[tokio::test]
 async fn test_json_parsing() {
     let script = r#"
         zet ruw = "{\"naam\":\"NEXUS\",\"leeftijd\":1}";
@@ -469,4 +489,75 @@ async fn test_snn_cortex_bitwise_and_popc() {
     println!("SNN vuurt: {}", fire);
     // At least the script ran without runtime error, and lists were processed
     println!("SNN cortex test script executed successfully (lowered path depends on GPU availability)");
+}
+
+#[tokio::test]
+async fn test_general_pure_functions() {
+    // Pure CodeTaal function test - no SNN, no GPU, no special intrinsics
+    // Tests parse + execute in general CPU path, with expression arg, return, use in var
+    let script = r#"
+        functie vierkant met x {
+            retourneer x * x;
+        }
+
+        zet getal = 6;
+        zet resultaat = roep_aan vierkant getal;
+        // Also test with expression arg
+        zet complex = roep_aan vierkant (getal + 1);
+    "#;
+
+    let engine = run_helheim_script(script).await;
+
+    // Verify the function was defined and called, result computed
+    let res = engine.get_var("resultaat").unwrap_or("".to_string());
+    println!("General function resultaat: {}", res);
+    assert!(res.contains("36") || res == "36", "Expected 36 from vierkant(6), got: {}", res);
+
+    let complex_res = engine.get_var("complex").unwrap_or("".to_string());
+    println!("General function complex: {}", complex_res);
+    assert!(complex_res.contains("49") || complex_res == "49", "Expected 49 from vierkant(7), got: {}", complex_res);
+
+    println!("General pure CodeTaal functions test passed (parse + CPU execution + return + scoping via var)");
+}
+
+#[tokio::test]
+async fn test_general_pure_functions_deep_return() {
+    // Dedicated test for Fase 1.2 return propagation:
+    // return deep inside zolang + als must abort the loop + function immediately,
+    // propagate the value to the caller, and not leak function scope.
+    let script = r#"
+        functie diepe_retour met start {
+            zet i = start;
+            zolang (i > 0) {
+                als (i == 1) dan {
+                    retourneer 777;
+                }
+                zet i = i - 1;
+            }
+            retourneer 0;
+        }
+
+        zet r = roep_aan diepe_retour 5;
+        zet na_func = 42;
+    "#;
+
+    let engine = run_helheim_script(script).await;
+
+    let r = engine.get_var("r").unwrap_or_default();
+    println!("Deep return result: {}", r);
+    assert!(
+        r.contains("777") || r == "777",
+        "Deep return propagation (zolang+als inside functie) failed, got: {}",
+        r
+    );
+
+    // Main execution must have continued after the function returned its value.
+    let na = engine.get_var("na_func").unwrap_or_default();
+    assert!(
+        na.contains("42") || na == "42",
+        "Execution after deep function return failed or scope polluted: {}",
+        na
+    );
+
+    println!("General pure functions deep return (nested zolang/als) test passed");
 }

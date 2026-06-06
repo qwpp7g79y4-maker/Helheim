@@ -78,15 +78,10 @@ impl Executor {
                     }
 
                     CodeTaal::Return { value } => {
-                        let value_str = match value {
-                            Some(box_val) => match *box_val {
-                                CodeTaal::Literal(l) => l.to_string(),
-                                CodeTaal::VarGet { name } => name.clone(),
-                                _ => "".to_string(),
-                            },
+                        let eval = match value {
+                            Some(box_val) => self.evaluate_ast_expr(&*box_val, ctx.clone()).await.unwrap_or_default(),
                             None => "".to_string(),
                         };
-                        let eval = self.evaluate_expression(&value_str);
                         return Ok(Some(eval));
                     }
                     CodeTaal::Throw { message } => {
@@ -149,12 +144,11 @@ impl Executor {
                         }
                     }
                     CodeTaal::FunctionCall { name, args } => {
-                        let args_str: Vec<String> = args.iter().map(|a| match a {
-                            CodeTaal::Literal(l) => l.to_string(),
-                            CodeTaal::VarGet { name } => name.clone(),
-                            _ => "".to_string()
-                        }).collect();
-                        let _ = self.execute_function_call(&name, args_str, ctx.clone()).await?;
+                        let mut resolved_args = Vec::new();
+                        for a in args {
+                            resolved_args.push(self.evaluate_ast_expr(&a, ctx.clone()).await.unwrap_or_default());
+                        }
+                        let _ = self.execute_function_call(&name, resolved_args, ctx.clone()).await?;
                     }
                     CodeTaal::Gebruik { path } => {
                         println!("[AST]: Laden van module: '{}'", path);
@@ -177,8 +171,7 @@ impl Executor {
                         }
                     }
                     CodeTaal::FunctionDef { name, params, body } => {
-                        let mut store = self.memory.ast_funcs.lock().unwrap_or_else(|e| e.into_inner());
-                        store.insert(name.clone(), (params.clone(), body.clone()));
+                        self.memory.ast_funcs.insert(name.clone(), (params.clone(), body.clone()));
                         println!(
                             "[MEMORY]: Opslaan AST-functie '{}' met {} argumenten...",
                             name,
@@ -186,8 +179,7 @@ impl Executor {
                         );
                     }
                     CodeTaal::ModelDef { name, fields } => {
-                        let mut store = self.memory.model_store.lock().unwrap_or_else(|e| e.into_inner());
-                        store.insert(name.clone(), fields.clone());
+                        self.memory.model_store.insert(name.clone(), fields.clone());
                         println!("[MEMORY]: Blauwdruk opgeslagen voor model '{}' met {} velden.", name, fields.len());
                     }
                     CodeTaal::ModelInit { model_name, args: _args } => {
@@ -197,9 +189,14 @@ impl Executor {
                     CodeTaal::VarDef { name, value } => {
                         // Extract literal or variable get, or resolve basic op
                         let value_str = match *value {
-                            CodeTaal::Literal(ref l) => l.to_string(),
+                            CodeTaal::Literal(ref l) => {
+                                match l {
+                                    helheim_lang::ast::LiteralValue::String(s) => format!("\"{}\"", s),
+                                    _ => l.to_string(),
+                                }
+                            },
                             CodeTaal::VarGet { ref name } => self.memory.resolve_value(name),
-                            CodeTaal::Op { ref left, ref op, ref right } => {
+                            CodeTaal::Op { .. } => {
                                 let free_vars = helheim_lang::synthesis::collect_free_variables(&*value);
                                 let mut context: std::collections::HashMap<String, helheim_lang::ast::LiteralValue> = std::collections::HashMap::new();
                                 for name in free_vars {
@@ -260,17 +257,8 @@ impl Executor {
                                         unpacked
                                     }
                                     _ => {
-                                        let l = match **left {
-                                            CodeTaal::Literal(ref s) => s.to_string(),
-                                            CodeTaal::VarGet { ref name } => self.memory.resolve_value(name),
-                                            _ => "".to_string(),
-                                        };
-                                        let r = match **right {
-                                            CodeTaal::Literal(ref s) => s.to_string(),
-                                            CodeTaal::VarGet { ref name } => self.memory.resolve_value(name),
-                                            _ => "".to_string(),
-                                        };
-                                        format!("{} {} {}", l, op, r)
+                                        // Let evaluate_ast_expr handle it cleanly so that nested Ops and logic work
+                                        self.evaluate_ast_expr(&*value, ctx.clone()).await.unwrap_or_default()
                                     }
                                 }
                             }
@@ -413,12 +401,11 @@ impl Executor {
                                 }
                             }
                             CodeTaal::FunctionCall { ref name, ref args } => {
-                                let args_str: Vec<String> = args.iter().map(|a| match a {
-                                    CodeTaal::Literal(l) => l.to_string(),
-                                    CodeTaal::VarGet { name: n } => n.clone(),
-                                    _ => "".to_string()
-                                }).collect();
-                                self.execute_function_call(name, args_str, ctx.clone()).await.unwrap_or_default()
+                                let mut resolved_args = Vec::new();
+                                for a in args {
+                                    resolved_args.push(self.evaluate_ast_expr(a, ctx.clone()).await.unwrap_or_default());
+                                }
+                                self.execute_function_call(name, resolved_args, ctx.clone()).await.unwrap_or_default()
                             }
                             _ => "".to_string(),
                         };
@@ -479,15 +466,15 @@ impl Executor {
                                 }
                             }
                             
-                            let store = self.memory.model_store.lock().unwrap_or_else(|e| e.into_inner());
-                            if let Some(fields) = store.get(&model_name) {
+                            let fields_opt = self.memory.model_store.get(&model_name).map(|v| v.value().clone());
+                            if let Some(fields) = fields_opt {
                                 if fields.len() != args.len() {
                                     println!("[ERROR]: Model '{}' verwacht {} argumenten, kreeg er {}.", model_name, fields.len(), args.len());
                                     evaluated_value = "null".to_string();
                                 } else {
                                     let mut json_map = serde_json::Map::new();
                                     for (i, field) in fields.iter().enumerate() {
-                                        let val_str = &args[i];
+                                        let val_str: &str = &args[i];
                                         let json_val = if let Ok(num) = val_str.parse::<f64>() {
                                             serde_json::json!(num)
                                         } else if val_str == "waar" || val_str == "true" {
@@ -523,17 +510,15 @@ impl Executor {
                         // Very simple infinite loop guard
                         let mut iterations = 0;
                         loop {
-                            // Evaluate condition
-                            let should_run = self.evaluate_ast_condition(&condition).await;
+                            let should_run = self.evaluate_ast_condition(&condition, ctx.clone()).await;
                             if !should_run || iterations > 1000 {
                                 break;
                             }
 
-                            // Execute Body
-                            if let CodeTaal::Block { statements } = *body.clone()
-                                && let Some(ret) = self.execute_ast(statements, ctx.clone()).await? {
-                                    return Ok(Some(ret));
-                                }
+                            // Propagate return from body (zolang containing als/retourneer etc.)
+                            if let Some(ret) = self.propagate_return(&body, ctx.clone()).await? {
+                                return Ok(Some(ret));
+                            }
                             iterations += 1;
                         }
                     }
@@ -561,11 +546,10 @@ impl Executor {
                                 } else {
                                     v.to_string()
                                 };
-                                // Inject localized variables directly into memory
                                 self.memory.set_var_native(iterator.clone(), HelheimType::parse(&item_str));
-                                if let Some(ret) =
-                                    self.execute_ast(clone_statements.clone(), ctx.clone()).await?
-                                {
+                                // Use propagate helper for return from for-each body
+                                let body_block = CodeTaal::Block { statements: clone_statements.clone() };
+                                if let Some(ret) = self.propagate_return(&body_block, ctx.clone()).await? {
                                     return Ok(Some(ret));
                                 }
                             }
@@ -581,16 +565,15 @@ impl Executor {
                         then,
                         else_block,
                     } => {
-                        if self.evaluate_ast_condition(&condition).await {
-                            if let CodeTaal::Block { statements } = *then.clone()
-                                && let Some(ret) = self.execute_ast(statements, ctx.clone()).await? {
-                                    return Ok(Some(ret));
-                                }
-                        } else if let Some(else_b) = else_block
-                            && let CodeTaal::Block { statements } = *else_b.clone()
-                                && let Some(ret) = self.execute_ast(statements, ctx.clone()).await? {
-                                    return Ok(Some(ret));
-                                }
+                        if self.evaluate_ast_condition(&condition, ctx.clone()).await {
+                            if let Some(ret) = self.propagate_return(&then, ctx.clone()).await? {
+                                return Ok(Some(ret));
+                            }
+                        } else if let Some(else_b) = else_block {
+                            if let Some(ret) = self.propagate_return(&else_b, ctx.clone()).await? {
+                                return Ok(Some(ret));
+                            }
+                        }
                     }
                     CodeTaal::ArrayPush { array_name, value } => {
                         let args = vec![array_name.clone(), value.clone()];
@@ -718,23 +701,14 @@ impl Executor {
                         };
                         match self.execute_ast(statements, ctx.clone()).await {
                             Ok(Some(ret)) => return Ok(Some(ret)),
-                            Ok(None) => {} // Success without return
+                            Ok(None) => {}
                             Err(e) => {
                                 println!("[VANG]: Fout afgevangen: {}", e);
                                 if let Some(err_name) = error_var {
-                                    let mut store = self.memory.var_store.lock().unwrap_or_else(|e| e.into_inner());
-                                    if let Some(scope) = store.last_mut() {
-                                        scope.insert(err_name.clone(), HelheimType::String(e.to_string()));
-                                    }
+                                    self.memory.set_var_native(err_name.clone(), HelheimType::String(e.to_string()));
                                 }
-                                let catch_statements =
-                                    if let CodeTaal::Block { statements } = *catch_block.clone() {
-                                        statements
-                                    } else {
-                                        Vec::new()
-                                    };
-                                // execute catch block
-                                if let Some(ret) = self.execute_ast(catch_statements, ctx.clone()).await? {
+                                // Propagate return from catch block as well
+                                if let Some(ret) = self.propagate_return(&catch_block, ctx.clone()).await? {
                                     return Ok(Some(ret));
                                 }
                             }
@@ -746,7 +720,7 @@ impl Executor {
                         // 1. String Interpolation (Basic: check for $vars)
                         let mut final_payload = clean_payload.to_string();
                         if final_payload.contains('$') {
-                            let store = self.memory.var_store.lock().unwrap_or_else(|e| e.into_inner());
+                            let store = self.memory.local_stack.lock().unwrap_or_else(|e| e.into_inner());
                             for scope in store.iter().rev() {
                                 for (k, v) in scope.iter() {
                                     let key = format!("${}", k);
@@ -757,6 +731,16 @@ impl Executor {
                                         };
                                         final_payload = final_payload.replace(&key, &val_str);
                                     }
+                                }
+                            }
+                            for entry in self.memory.globals.iter() {
+                                let key = format!("${}", entry.key());
+                                if final_payload.contains(&key) {
+                                    let val_str = match entry.value() {
+                                        HelheimType::String(s) => s.clone(),
+                                        _ => entry.value().to_string(),
+                                    };
+                                    final_payload = final_payload.replace(&key, &val_str);
                                 }
                             }
                         }
@@ -821,17 +805,39 @@ impl Executor {
         })
     }
 
+    /// Compact helper for Return propagation within nested scopes (Optie 1 - Fase 1.2).
+    /// Any Return (retourneer/geef_terug/return) deep inside als/zolang/try etc. makes
+    /// execute_ast return Ok(Some(value)). This helper + early returns in control arms
+    /// ensure the function call stack is aborted immediately and we return the value
+    /// to the original caller, while the function wrapper guarantees pop_scope on every path.
+    async fn propagate_return(&self, body: &CodeTaal, ctx: crate::common::context::ExecutionContext) -> Result<Option<String>> {
+        match body {
+            CodeTaal::Block { statements } => self.execute_ast(statements.clone(), ctx).await,
+            other => self.execute_ast(vec![other.clone()], ctx).await,
+        }
+    }
+
     async fn execute_function_call(&self, name: &str, args: Vec<String>, ctx: crate::common::context::ExecutionContext) -> Result<String> {
+        if name == "tekst" && args.len() == 1 {
+            let inner_val = self.memory.resolve_value(&args[0]);
+            return Ok(inner_val.trim_matches('"').to_string());
+        }
+        if name == "nummer" && args.len() == 1 {
+            let inner_val = self.memory.resolve_value(&args[0]);
+            if let Ok(num) = inner_val.parse::<f64>() {
+                return Ok(num.to_string());
+            } else {
+                return Ok("0".to_string());
+            }
+        }
+
         // 1. Try Native System Library
         if let Some(res) = system::SystemManager::try_execute_native(&self.memory, name, &args, &ctx).await? {
             return Ok(res);
         }
 
-        // 2. Try User-Defined AST Function
-        let func_tuple = {
-            let store = self.memory.ast_funcs.lock().unwrap_or_else(|e| e.into_inner());
-            store.get(name).cloned()
-        };
+        // 2. Try User-Defined AST Function (pure CodeTaal general path)
+        let func_tuple = self.memory.ast_funcs.get(name).map(|v| v.value().clone());
 
         if let Some((params, body)) = func_tuple {
             let mut resolved_args = Vec::new();
@@ -843,20 +849,27 @@ impl Executor {
                 }
             }
 
+            // Function-local scope. Pop is guaranteed on success, error and deep return paths.
             self.memory.push_scope();
 
             for (i, param) in params.iter().enumerate() {
                 self.memory.set_var_native(param.clone(), HelheimType::parse(&resolved_args[i]));
             }
 
-            let mut result = "".to_string();
-            if let CodeTaal::Block { statements } = *body
-                && let Some(ret) = self.execute_ast(statements, ctx.clone()).await? {
-                    result = ret;
+            // Robust return propagation:
+            // propagate_return + the early `return Ok(Some(ret))` in If/Loop/ForEach/TryCatch
+            // make a deep `retourneer` from inside geneste als/zolang immediately unwind
+            // all the way out of this function's execute_ast call.
+            let result = match self.propagate_return(&body, ctx.clone()).await {
+                Ok(Some(ret)) => ret,
+                Ok(None) => "".to_string(),
+                Err(e) => {
+                    self.memory.pop_scope();
+                    return Err(e);
                 }
+            };
 
             self.memory.pop_scope();
-
             Ok(result)
         } else {
             println!("[ERR]: Functie '{}' bestaat niet in AST store of Native Library.", name);
@@ -896,27 +909,42 @@ impl Executor {
         );
         false
     }
-    async fn evaluate_ast_condition(&self, cond: &CodeTaal) -> bool {
-        // Evaluate the raw string via the primary logical parser
-        match cond {
-            CodeTaal::VarGet { name } => self.evaluate_condition(name).await,
-            CodeTaal::Op { left, op, right } => {
-                let l = match **left {
-                    CodeTaal::Literal(ref s) => s.to_string(),
-                    CodeTaal::VarGet { ref name } => self.memory.resolve_value(name),
-                    _ => "".to_string(),
-                };
-                let r = match **right {
-                    CodeTaal::Literal(ref s) => s.to_string(),
-                    CodeTaal::VarGet { ref name } => self.memory.resolve_value(name),
-                    _ => "".to_string(),
-                };
-                let expr_str = format!("{} {} {}", l, op, r);
-                self.evaluate_condition(&expr_str).await
+    async fn evaluate_ast_condition(&self, cond: &CodeTaal, ctx: crate::common::context::ExecutionContext) -> bool {
+        let evaluated = self.evaluate_ast_expr(cond, ctx).await.unwrap_or_default();
+        self.evaluate_condition(&evaluated).await
+    }
+
+    pub fn evaluate_ast_expr<'a>(&'a self, expr: &'a CodeTaal, ctx: crate::common::context::ExecutionContext) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>> {
+        Box::pin(async move {
+            match expr {
+                CodeTaal::Literal(l) => Ok(l.to_string().trim_matches('"').to_string()),
+                CodeTaal::VarGet { name } => Ok(self.memory.resolve_value(name)),
+                CodeTaal::Op { left, op, right } => {
+                    let l = self.evaluate_ast_expr(left, ctx.clone()).await?;
+                    let r = self.evaluate_ast_expr(right, ctx.clone()).await?;
+                    
+                    let to_evalexpr_literal = |val: &str| -> String {
+                        if val == "waar" || val == "true" { return "true".to_string(); }
+                        if val == "onwaar" || val == "false" { return "false".to_string(); }
+                        if val.parse::<f64>().is_ok() { return val.to_string(); }
+                        format!("\"{}\"", val.replace("\"", "\\\""))
+                    };
+                    
+                    let l_lit = to_evalexpr_literal(&l);
+                    let r_lit = to_evalexpr_literal(&r);
+                    let expr_str = format!("{} {} {}", l_lit, op, r_lit);
+                    Ok(self.evaluate_expression(&expr_str))
+                }
+                CodeTaal::FunctionCall { name, args } => {
+                    let mut resolved_args = Vec::new();
+                    for a in args {
+                        resolved_args.push(self.evaluate_ast_expr(a, ctx.clone()).await.unwrap_or_default());
+                    }
+                    self.execute_function_call(name, resolved_args, ctx).await
+                }
+                _ => Ok("".to_string()),
             }
-            CodeTaal::Literal(s) => self.evaluate_condition(&s.to_string()).await,
-            _ => false,
-        }
+        })
     }
 
     fn evaluate_expression(&self, expr: &str) -> String {
@@ -1115,9 +1143,10 @@ impl Executor {
         // If it's not a tensor operation, try to evaluate it as a complex math/logic expression
         if !expr_clean.starts_with("tensor(") && !expr_clean.contains("tensor(") {
             use evalexpr::ContextWithMutableVariables;
+            use evalexpr::Context;
             let mut context: evalexpr::HashMapContext = evalexpr::HashMapContext::new();
             {
-                let store = self.memory.var_store.lock().unwrap_or_else(|e| e.into_inner());
+                let store = self.memory.local_stack.lock().unwrap_or_else(|e| e.into_inner());
                 for scope in store.iter().rev() {
                     for (k, v) in scope.iter() {
                         if let HelheimType::Int(num_int) = v {
@@ -1127,7 +1156,25 @@ impl Executor {
                         } else if let HelheimType::Bool(b) = v {
                             let _ = context.set_value(k.clone(), evalexpr::Value::Boolean(*b));
                         } else {
-                            // Only set string if it doesn't conflict (evalexpr treats barewords as identifiers, so string values are fine)
+                            let val_str = match v {
+                                HelheimType::String(s) => s.clone(),
+                                _ => v.to_string(),
+                            };
+                            let _ = context.set_value(k.clone(), val_str.into());
+                        }
+                    }
+                }
+                for entry in self.memory.globals.iter() {
+                    let k = entry.key();
+                    let v = entry.value();
+                    if context.get_value(k).is_none() {
+                        if let HelheimType::Int(num_int) = v {
+                            let _ = context.set_value(k.clone(), evalexpr::Value::Int(*num_int));
+                        } else if let HelheimType::Float(num_float) = v {
+                            let _ = context.set_value(k.clone(), evalexpr::Value::Float(*num_float));
+                        } else if let HelheimType::Bool(b) = v {
+                            let _ = context.set_value(k.clone(), evalexpr::Value::Boolean(*b));
+                        } else {
                             let val_str = match v {
                                 HelheimType::String(s) => s.clone(),
                                 _ => v.to_string(),

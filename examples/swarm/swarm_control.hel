@@ -1,6 +1,6 @@
 functie print_header met versie {
     print "=================================================";
-    print " 👁️  HELHEIM SWARM CONTROL ROOM ";
+    print " HELHEIM SWARM CONTROL ROOM ";
     print " Versie:";
     print versie;
     print "=================================================";
@@ -42,7 +42,7 @@ functie voer_optie_drie_uit met leeg {
         gooi "FATAAL: Timeout op node 999.999.999.999";
         print "Stap 2: Dit mag nooit geprint worden!";
     } vang {
-        print "✅ [VANG-NET ACTIEF]: Error succesvol ingeslikt door Helheim V3. Swarm blijft draaien.";
+        print "[VANG-NET ACTIEF]: Error succesvol ingeslikt door Helheim V3. Swarm blijft draaien.";
     }
 }
 

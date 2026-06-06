@@ -1,7 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::gpu::{TENSOR_STORE, cpu_execute_matmul, gpu_alloc_tensor_empty};
+    use crate::gpu::{cpu_execute_matmul, gpu_alloc_tensor_empty};
 
     #[test]
     fn test_cpu_fallback_speed() {

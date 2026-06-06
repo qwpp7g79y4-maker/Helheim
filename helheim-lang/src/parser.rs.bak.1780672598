@@ -31,41 +31,13 @@ impl std::fmt::Display for Token {
 }
 
 impl HelParser {
-    pub fn format_parse_error(input: &str, token: &Token, msg: &str) -> anyhow::Error {
-        let lines: Vec<&str> = input.lines().collect();
-        let line_content = if token.line > 0 && token.line <= lines.len() {
-            lines[token.line - 1]
-        } else {
-            ""
-        };
-        
-        let mut marker = String::new();
-        if token.column > 1 {
-            for _ in 1..token.column {
-                marker.push(' ');
-            }
-        }
-        marker.push_str("^--- ");
-        marker.push_str(msg);
-
-        anyhow::anyhow!(
-            "Syntax Fout [Regel {}, Kolom {}]: {}\n  |\n{} | {}\n  | {}",
-            token.line,
-            token.column,
-            msg,
-            token.line,
-            line_content,
-            marker
-        )
-    }
-
     pub fn parse(input: &str) -> Result<Vec<CodeTaal>> {
         let tokens = Self::tokenize(input);
         let mut iter = tokens.into_iter().peekable();
         let mut ast = Vec::new();
 
         while iter.peek().is_some() {
-            if let Some(stmt) = Self::parse_statement(input, &mut iter)? {
+            if let Some(stmt) = Self::parse_statement(&mut iter)? {
                 ast.push(stmt);
             }
         }
@@ -73,7 +45,6 @@ impl HelParser {
     }
 
     fn parse_statement(
-        input: &str,
         iter: &mut Peekable<std::vec::IntoIter<Token>>,
     ) -> Result<Option<CodeTaal>> {
         let token = match iter.next() {
@@ -101,15 +72,14 @@ impl HelParser {
                 // zet [naam] = [waarde]
                 let name = iter
                     .next()
-                    .ok_or(Self::format_parse_error(input, &token, "Verwachte variabele naam na 'zet'"))?;
+                    .ok_or(anyhow::anyhow!("Fout op regel {} kolom {}: {}", token.line, token.column, "Verwachte variabele naam na 'zet'"))?;
                 let eq = iter
                     .next()
-                    .ok_or(Self::format_parse_error(input, &token, "Verwachte '=' na variabele"))?;
+                    .ok_or(anyhow::anyhow!("Fout op regel {} kolom {}: {}", token.line, token.column, "Verwachte '=' na variabele"))?;
                 if eq != "=" {
-                    return Err(Self::format_parse_error(
-                        input,
-                        &eq,
-                        &format!("Syntax fout: verwachte '=', gevonden '{}'", eq.value)
+                    return Err(anyhow::anyhow!(
+                        "Syntax fout op regel {} kolom {}: verwachte '=', gevonden '{}'",
+                        token.line, token.column, eq
                     ));
                 }
 
@@ -129,7 +99,7 @@ impl HelParser {
                         }
                         brace_count -= 1;
                     }
-                    val_tokens.push(iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde van het script"))?);
+                    val_tokens.push(iter.next().ok_or_else(|| anyhow::anyhow!("Fout op regel {}: {}", token.line, "Onverwacht einde van het script"))?);
                 }
                 
                 let expr = if val_tokens.is_empty() {
@@ -150,7 +120,7 @@ impl HelParser {
                     }
                 } else {
                     let mut expr_iter = val_tokens.into_iter().peekable();
-                    Box::new(Self::parse_expression(input, &mut expr_iter, 0)?)
+                    Box::new(Self::parse_expression(&mut expr_iter, 0)?)
                 };
 
                 Ok(Some(CodeTaal::VarDef { name: name.value.clone(), value: expr }))
@@ -165,18 +135,18 @@ impl HelParser {
                     if t == "{" {
                         break;
                     }
-                    condition_tokens.push(iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde van het script"))?);
+                    condition_tokens.push(iter.next().ok_or_else(|| anyhow::anyhow!("Fout op regel {}: {}", token.line, "Onverwacht einde van het script"))?);
                 }
                 
                 let cond_ast = if condition_tokens.is_empty() {
-                    return Err(Self::format_parse_error(input, &token, "Verwachte conditie voor 'zolang'"));
+                    return Err(anyhow::anyhow!("Fout op regel {} kolom {}: Verwachte conditie voor 'zolang'", token.line, token.column));
                 } else {
                     let mut expr_iter = condition_tokens.into_iter().peekable();
-                    Box::new(Self::parse_expression(input, &mut expr_iter, 0)?)
+                    Box::new(Self::parse_expression(&mut expr_iter, 0)?)
                 };
 
                 // Parse Block
-                let body_ast = Box::new(Self::parse_block(input, iter)?);
+                let body_ast = Box::new(Self::parse_block(iter)?);
                 Ok(Some(CodeTaal::Loop {
                     condition: cond_ast,
                     body: body_ast,
@@ -186,12 +156,12 @@ impl HelParser {
                 // voor elke [item] in [LIJST] { ... }
                 let elke = iter.next().unwrap_or_default();
                 if elke.value != "elke" && elke.value != "each" {
-                    return Err(Self::format_parse_error(input, &token, "Verwacht 'elke' of 'each' na 'voor'/'for'"));
+                    return Err(anyhow::anyhow!("Fout op regel {}: {}", token.line, "Verwacht 'elke' of 'each' na 'voor'/'for'"));
                 }
 
                 let iterator = iter
                     .next()
-                    .ok_or(Self::format_parse_error(input, &token, "Verwacht variabele na 'voor elke'"))?;
+                    .ok_or(anyhow::anyhow!("Fout op regel {}: {}", token.line, "Verwacht variabele na 'voor elke'"))?;
 
                 let in_kw = iter.next().unwrap_or_default();
                 if in_kw.value != "in" {
@@ -204,11 +174,11 @@ impl HelParser {
                     if t == "{" {
                         break;
                     }
-                    iter_parts.push(iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde van het script"))?.value);
+                    iter_parts.push(iter.next().ok_or_else(|| anyhow::anyhow!("Fout op regel {}: {}", token.line, "Onverwacht einde van het script"))?.value);
                 }
                 let iterable = iter_parts.join(" ");
 
-                let body_ast = Box::new(Self::parse_block(input, iter)?);
+                let body_ast = Box::new(Self::parse_block(iter)?);
                 Ok(Some(CodeTaal::ForEach {
                     iterator: iterator.value.clone(),
                     iterable,
@@ -225,17 +195,17 @@ impl HelParser {
                     if t == "{" {
                         break;
                     } // Fallback if 'dan' is missing
-                    condition_tokens.push(iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde van het script"))?);
+                    condition_tokens.push(iter.next().ok_or_else(|| anyhow::anyhow!("Fout op regel {}: {}", token.line, "Onverwacht einde van het script"))?);
                 }
                 
                 let cond_ast = if condition_tokens.is_empty() {
-                    return Err(Self::format_parse_error(input, &token, "Verwachte conditie voor 'als'"));
+                    return Err(anyhow::anyhow!("Fout op regel {}: Verwachte conditie voor 'als'", token.line));
                 } else {
                     let mut expr_iter = condition_tokens.into_iter().peekable();
-                    Box::new(Self::parse_expression(input, &mut expr_iter, 0)?)
+                    Box::new(Self::parse_expression(&mut expr_iter, 0)?)
                 };
 
-                let body_ast = Box::new(Self::parse_block(input, iter)?);
+                let body_ast = Box::new(Self::parse_block(iter)?);
 
                 // Optioneel 'anders' blok vangen
                 let mut else_block = None;
@@ -243,7 +213,7 @@ impl HelParser {
                     && next_token == "anders" {
                         // Consume 'anders'
                         iter.next();
-                        else_block = Some(Box::new(Self::parse_block(input, iter)?));
+                        else_block = Some(Box::new(Self::parse_block(iter)?));
                     }
 
                 Ok(Some(CodeTaal::If {
@@ -253,7 +223,7 @@ impl HelParser {
                 }))
             }
             "tegelijkertijd" | "concurrent" | "async" => {
-                let block_ast = Box::new(Self::parse_block(input, iter)?);
+                let block_ast = Box::new(Self::parse_block(iter)?);
                 let statements = if let CodeTaal::Block { statements } = *block_ast {
                     statements
                 } else {
@@ -262,25 +232,25 @@ impl HelParser {
                 Ok(Some(CodeTaal::Concurrent { statements }))
             }
             "achtergrond" | "daemon" => {
-                let block_ast = Box::new(Self::parse_block(input, iter)?);
+                let block_ast = Box::new(Self::parse_block(iter)?);
                 Ok(Some(CodeTaal::Daemon { body: block_ast }))
             }
             "probeer" | "try" => {
                 // probeer { ... } vang err { ... }
-                let try_ast = Box::new(Self::parse_block(input, iter)?);
+                let try_ast = Box::new(Self::parse_block(iter)?);
 
                 let vang_token = iter.next().unwrap_or_default();
                 if vang_token.value != "vang" && vang_token.value != "catch" {
-                    return Err(Self::format_parse_error(input, &token, "Verwacht 'vang' of 'catch' na 'probeer'-blok"));
+                    return Err(anyhow::anyhow!("Fout op regel {}: {}", token.line, "Verwacht 'vang' of 'catch' na 'probeer'-blok"));
                 }
 
                 let mut error_var = None;
                 if let Some(t) = iter.peek()
                     && t != "{" {
-                        error_var = Some(iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde van het script"))?.to_string());
+                        error_var = Some(iter.next().ok_or_else(|| anyhow::anyhow!("Fout op regel {}: {}", token.line, "Onverwacht einde van het script"))?.to_string());
                     }
 
-                let catch_ast = Box::new(Self::parse_block(input, iter)?);
+                let catch_ast = Box::new(Self::parse_block(iter)?);
                 Ok(Some(CodeTaal::TryCatch {
                     try_block: try_ast,
                     catch_block: catch_ast,
@@ -302,7 +272,7 @@ impl HelParser {
                             if t == ";" || t == "}" {
                                 break;
                             }
-                            targets.push(iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde van het script"))?.value);
+                            targets.push(iter.next().ok_or_else(|| anyhow::anyhow!("Fout op regel {}: {}", token.line, "Onverwacht einde van het script"))?.value);
                         }
                     }
                 let target_str = targets.join(" ");
@@ -319,13 +289,13 @@ impl HelParser {
                     if t == ";" || t == "}" {
                         break;
                     }
-                    url_tokens.push(iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde van het script"))?);
+                    url_tokens.push(iter.next().ok_or_else(|| anyhow::anyhow!("Fout op regel {}: {}", token.line, "Onverwacht einde van het script"))?);
                 }
                 if url_tokens.is_empty() {
-                    return Err(Self::format_parse_error(input, &token, "Verwachte URL na 'haal' of 'fetch'"));
+                    return Err(anyhow::anyhow!("Fout op regel {}: Verwachte URL na 'haal' of 'fetch'", token.line));
                 }
                 let mut expr_iter = url_tokens.into_iter().peekable();
-                let url_expr = Self::parse_expression(input, &mut expr_iter, 0)?;
+                let url_expr = Self::parse_expression(&mut expr_iter, 0)?;
                 Ok(Some(CodeTaal::HttpOp {
                     method: "GET".to_string(),
                     url: Box::new(url_expr),
@@ -338,13 +308,13 @@ impl HelParser {
                     if t == ";" || t == "}" {
                         break;
                     }
-                    path_tokens.push(iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde van het script"))?);
+                    path_tokens.push(iter.next().ok_or_else(|| anyhow::anyhow!("Fout op regel {}: {}", token.line, "Onverwacht einde van het script"))?);
                 }
                 if path_tokens.is_empty() {
-                    return Err(Self::format_parse_error(input, &token, "Verwacht pad na 'lees' of 'read'"));
+                    return Err(anyhow::anyhow!("Fout op regel {}: Verwacht pad na 'lees' of 'read'", token.line));
                 }
                 let mut expr_iter = path_tokens.into_iter().peekable();
-                let path_expr = Self::parse_expression(input, &mut expr_iter, 0)?;
+                let path_expr = Self::parse_expression(&mut expr_iter, 0)?;
                 Ok(Some(CodeTaal::FileOp {
                     action: "read".to_string(),
                     path: Box::new(path_expr),
@@ -359,10 +329,10 @@ impl HelParser {
                     if t == ";" || t == "}" {
                         break;
                     }
-                    all_tokens.push(iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde van het script"))?);
+                    all_tokens.push(iter.next().ok_or_else(|| anyhow::anyhow!("Fout op regel {}: {}", token.line, "Onverwacht einde van het script"))?);
                 }
                 if all_tokens.is_empty() {
-                    return Err(Self::format_parse_error(input, &token, "Verwacht pad en inhoud na 'schrijf' of 'write'"));
+                    return Err(anyhow::anyhow!("Fout op regel {}: Verwacht pad en inhoud na 'schrijf' of 'write'", token.line));
                 }
                 let mut path_expr: Option<CodeTaal> = None;
                 let mut content_expr: Option<CodeTaal> = None;
@@ -371,23 +341,23 @@ impl HelParser {
                     let path_toks: Vec<_> = all_tokens[pos + 1..].to_vec();
                     if !cont_toks.is_empty() {
                         let mut it = cont_toks.into_iter().peekable();
-                        content_expr = Some(Self::parse_expression(input, &mut it, 0)?);
+                        content_expr = Some(Self::parse_expression(&mut it, 0)?);
                     }
                     if !path_toks.is_empty() {
                         let mut it = path_toks.into_iter().peekable();
-                        path_expr = Some(Self::parse_expression(input, &mut it, 0)?);
+                        path_expr = Some(Self::parse_expression(&mut it, 0)?);
                     }
                 } else if all_tokens.len() >= 2 {
                     // spec-stijl: schrijf pad inhoud
                     let mut pit = vec![all_tokens[0].clone()].into_iter().peekable();
-                    path_expr = Some(Self::parse_expression(input, &mut pit, 0)?);
+                    path_expr = Some(Self::parse_expression(&mut pit, 0)?);
                     let mut cit = all_tokens[1..].to_vec().into_iter().peekable();
-                    content_expr = Some(Self::parse_expression(input, &mut cit, 0)?);
+                    content_expr = Some(Self::parse_expression(&mut cit, 0)?);
                 } else {
                     let mut pit = all_tokens.into_iter().peekable();
-                    path_expr = Some(Self::parse_expression(input, &mut pit, 0)?);
+                    path_expr = Some(Self::parse_expression(&mut pit, 0)?);
                 }
-                let path = path_expr.ok_or_else(|| Self::format_parse_error(input, &token, "schrijf mist pad"))?;
+                let path = path_expr.ok_or_else(|| anyhow::anyhow!("Fout op regel {}: schrijf mist pad", token.line))?;
                 Ok(Some(CodeTaal::FileOp {
                     action: "write".to_string(),
                     path: Box::new(path),
@@ -441,10 +411,10 @@ impl HelParser {
             "matmul" => {
                 let size_str = iter
                     .next()
-                    .ok_or(Self::format_parse_error(input, &token, "Verwachte grootte na 'matmul'"))?;
+                    .ok_or(anyhow::anyhow!("Fout op regel {}: {}", token.line, "Verwachte grootte na 'matmul'"))?;
                 let size: usize = size_str.value
                     .parse()
-                    .map_err(|_| Self::format_parse_error(input, &token, &format!("Ongeldige grootte: {}", size_str.value)))?;
+                    .map_err(|_| anyhow::anyhow!("Fout op regel {}: Ongeldige grootte: {}", token.line, size_str.value))?;
                 Ok(Some(CodeTaal::MatMul {
                     m: size,
                     n: size,
@@ -452,7 +422,7 @@ impl HelParser {
                 }))
             }
             "gpu_kernel" => {
-                let name = iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Verwacht kernel naam"))?.value.clone();
+                let name = iter.next().ok_or_else(|| anyhow::anyhow!("Fout op regel {}: Verwacht kernel naam", token.line))?.value.clone();
                 let mut attributes = Vec::new();
                 
                 // Parse attributes #[...]
@@ -461,7 +431,7 @@ impl HelParser {
                         iter.next(); // Consume '#'
                         let bracket = iter.next().unwrap_or_default();
                         if bracket.value != "[" {
-                            return Err(Self::format_parse_error(input, &token, "Verwacht '[' na '#'"));
+                            return Err(anyhow::anyhow!("Fout: Verwacht '[' na '#'"));
                         }
                         let attr_name = iter.next().unwrap_or_default().value;
                         let open_paren = iter.next().unwrap_or_default();
@@ -515,7 +485,7 @@ impl HelParser {
                     }
                 }
                 
-                let body = Self::parse_block(input, iter)?;
+                let body = Self::parse_block(iter)?;
                 Ok(Some(CodeTaal::GpuKernel(GpuKernelDef {
                     name,
                     attributes,
@@ -525,7 +495,7 @@ impl HelParser {
             }
             "functie" | "func" | "fn" | "function" => {
                 // functie [naam] met [arg1] [arg2] { ... } -> of 'functie [naam] a b {'
-                let name = iter.next().ok_or(Self::format_parse_error(input, &token, "Verwacht functienaam"))?;
+                let name = iter.next().ok_or(anyhow::anyhow!("Fout op regel {}: {}", token.line, "Verwacht functienaam"))?;
                 let mut params = Vec::new();
                 while let Some(t) = iter.peek() {
                     if t == "{" {
@@ -535,9 +505,9 @@ impl HelParser {
                         iter.next();
                         continue;
                     }
-                    params.push(iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde van het script"))?.value);
+                    params.push(iter.next().ok_or_else(|| anyhow::anyhow!("Fout op regel {}: {}", token.line, "Onverwacht einde van het script"))?.value);
                 }
-                let body_ast = Box::new(Self::parse_block(input, iter)?);
+                let body_ast = Box::new(Self::parse_block(iter)?);
                 Ok(Some(CodeTaal::FunctionDef {
                     name: name.value.clone(),
                     params,
@@ -550,13 +520,13 @@ impl HelParser {
                     if t == ";" || t == "}" {
                         break;
                     }
-                    val_tokens.push(iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde van het script"))?);
+                    val_tokens.push(iter.next().ok_or_else(|| anyhow::anyhow!("Fout op regel {}: {}", token.line, "Onverwacht einde van het script"))?);
                 }
                 let value = if val_tokens.is_empty() {
                     None
                 } else {
                     let mut expr_iter = val_tokens.into_iter().peekable();
-                    Some(Box::new(Self::parse_expression(input, &mut expr_iter, 0)?))
+                    Some(Box::new(Self::parse_expression(&mut expr_iter, 0)?))
                 };
                 Ok(Some(CodeTaal::Return { value }))
             }
@@ -564,7 +534,7 @@ impl HelParser {
                 let name = iter.next().unwrap_or_default().to_string();
                 let next_token = iter.next().unwrap_or_default();
                 if next_token.value != "{" {
-                    return Err(Self::format_parse_error(input, &token, "Verwacht '{{' na model naam"));
+                    return Err(anyhow::anyhow!("Fout op regel {}: {}", token.line, "Verwacht '{{' na model naam"));
                 }
                 let mut fields = Vec::new();
                 while let Some(t) = iter.next() {
@@ -584,7 +554,7 @@ impl HelParser {
                     if t == ";" || t == "}" {
                         break;
                     }
-                    val_tokens.push(iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde van het script"))?.value);
+                    val_tokens.push(iter.next().ok_or_else(|| anyhow::anyhow!("Fout op regel {}: {}", token.line, "Onverwacht einde van het script"))?.value);
                 }
                 Ok(Some(CodeTaal::Throw {
                     message: val_tokens.join(" "),
@@ -593,13 +563,13 @@ impl HelParser {
             "voeg_toe" | "append" => {
                 let array_name = iter
                     .next()
-                    .ok_or(Self::format_parse_error(input, &token, "Verwacht array naam na 'voeg_toe'"))?;
+                    .ok_or(anyhow::anyhow!("Fout op regel {}: {}", token.line, "Verwacht array naam na 'voeg_toe'"))?;
                 let mut val_tokens = Vec::new();
                 while let Some(t) = iter.peek() {
                     if t == ";" || t == "}" {
                         break;
                     }
-                    val_tokens.push(iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde van het script"))?.value);
+                    val_tokens.push(iter.next().ok_or_else(|| anyhow::anyhow!("Fout op regel {}: {}", token.line, "Onverwacht einde van het script"))?.value);
                 }
                 let value = val_tokens.join(" ");
                 if value.is_empty() {
@@ -612,13 +582,13 @@ impl HelParser {
             "verwijder" | "remove" => {
                 let array_name = iter
                     .next()
-                    .ok_or(Self::format_parse_error(input, &token, "Verwacht array naam na 'verwijder'"))?;
+                    .ok_or(anyhow::anyhow!("Fout op regel {}: {}", token.line, "Verwacht array naam na 'verwijder'"))?;
                 let mut val_tokens = Vec::new();
                 while let Some(t) = iter.peek() {
                     if t == ";" || t == "}" {
                         break;
                     }
-                    val_tokens.push(iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde van het script"))?.value);
+                    val_tokens.push(iter.next().ok_or_else(|| anyhow::anyhow!("Fout op regel {}: {}", token.line, "Onverwacht einde van het script"))?.value);
                 }
                 let index = val_tokens.join(" ");
                 if index.is_empty() {
@@ -630,27 +600,29 @@ impl HelParser {
             }
             "roep_aan" | "invoke" | "call" => {
                 // roep_aan naam arg1 arg2  (args now full expressions for general CodeTaal)
-                let name_tok = iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Verwacht functienaam na 'roep_aan'"))?;
+                let name_tok = iter.next().ok_or_else(|| anyhow::anyhow!("Fout op regel {}: Verwacht functienaam na 'roep_aan'", token.line))?;
                 let name = name_tok.value.clone();
                 let mut args = Vec::new();
-                                while let Some(t) = iter.peek() {
+                while let Some(t) = iter.peek() {
                     if t == ";" || t == "}" {
                         break;
                     }
-                    let arg = Self::parse_expression(input, iter, 0)?;
+                    let arg = Self::parse_expression(iter, 0)?;
                     args.push(arg);
                     if let Some(c) = iter.peek() {
                         if c == "," { iter.next(); }
                     }
                 }
-                Ok(Some(CodeTaal::FunctionCall { name, args }))            }
+                Ok(Some(CodeTaal::FunctionCall { name, args }))
+            }
+            }
             "rune" => {
                 let mut rune_tokens = vec!["rune".to_string()];
                 while let Some(t) = iter.peek() {
                     if t == ";" || t == "}" {
                         break;
                     }
-                    rune_tokens.push(iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde van het script"))?.value);
+                    rune_tokens.push(iter.next().ok_or_else(|| anyhow::anyhow!("Fout op regel {}: {}", token.line, "Onverwacht einde van het script"))?.value);
                 }
                 let command = rune_tokens.join(" ");
                 Ok(Some(CodeTaal::RuneOp { command }))
@@ -661,7 +633,7 @@ impl HelParser {
                     if t == ";" || t == "}" {
                         break;
                     }
-                    val_tokens.push(iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde van het script"))?.value);
+                    val_tokens.push(iter.next().ok_or_else(|| anyhow::anyhow!("Fout op regel {}: {}", token.line, "Onverwacht einde van het script"))?.value);
                 }
                 Ok(Some(CodeTaal::Print {
                     message: val_tokens.join(" "),
@@ -683,7 +655,7 @@ impl HelParser {
             }
             "{" => {
                 // Genest blok?
-                Ok(Some(Self::parse_block(input, iter)?))
+                Ok(Some(Self::parse_block(iter)?))
             }
             _ => {
                 // Fallback: SysOp / Command pass-through
@@ -693,7 +665,7 @@ impl HelParser {
                     if t == ";" || t == "}" {
                         break;
                     }
-                    args.push(iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde van het script"))?.value);
+                    args.push(iter.next().ok_or_else(|| anyhow::anyhow!("Fout op regel {}: {}", token.line, "Onverwacht einde van het script"))?.value);
                 }
                 let command = args.join(" ");
                 Ok(Some(CodeTaal::SysOp { command }))
@@ -701,13 +673,13 @@ impl HelParser {
         }
     }
 
-    fn parse_block(input: &str, iter: &mut Peekable<std::vec::IntoIter<Token>>) -> Result<CodeTaal> {
+    fn parse_block(iter: &mut Peekable<std::vec::IntoIter<Token>>) -> Result<CodeTaal> {
         // Verwacht dat huidige token '{' al geconsumed is of dat we er voor staan?
         // In parse_statement kijken we met peek.
         // Als we hier aangeroepen worden vanuit 'zolang', staan we VOOR de '{'.
         let start = iter.next().ok_or(anyhow::anyhow!("Fout: Verwacht '{{'"))?;
         if start != "{" {
-            return Err(Self::format_parse_error(input, &start, "Verwacht '{{'"));
+            return Err(anyhow::anyhow!("Fout op regel {}: Verwacht '{{'", start.line));
         }
 
         let mut statements = Vec::new();
@@ -716,7 +688,7 @@ impl HelParser {
                 iter.next(); // Consume '}'
                 return Ok(CodeTaal::Block { statements });
             }
-            if let Some(stmt) = Self::parse_statement(input, iter)? {
+            if let Some(stmt) = Self::parse_statement(iter)? {
                 statements.push(stmt);
             }
         }
@@ -734,8 +706,7 @@ impl HelParser {
         let mut in_comment = false;
         let mut escape_next = false;
         let mut line_number = 1;
-        let mut column_number = 1;
-        let mut token_start_col = 1;
+        let mut column = 1;
         
         let chars: Vec<char> = input.chars().collect();
         let mut i = 0;
@@ -747,134 +718,130 @@ impl HelParser {
                 if c == '\n' {
                     in_comment = false;
                     line_number += 1;
-                    column_number = 1;
+                    column = 1;
                 } else {
-                    column_number += 1;
+                    column += 1;
                 }
                 i += 1;
                 continue;
             }
             
             if escape_next {
-                if current.is_empty() { token_start_col = column_number; }
                 current.push(c);
                 escape_next = false;
-                column_number += 1;
+                column += 1;
                 i += 1;
                 continue;
             }
             
             match c {
                 '\\' => {
-                    if current.is_empty() { token_start_col = column_number; }
                     escape_next = true;
                     current.push(c);
-                    column_number += 1;
+                    column += 1;
                 }
                 '"' => {
-                    if current.is_empty() { token_start_col = column_number; }
                     in_quote = !in_quote;
                     current.push(c);
-                    column_number += 1;
+                    column += 1;
                 }
                 '/' if !in_quote && i + 1 < chars.len() && chars[i + 1] == '/' => {
                     in_comment = true;
-                    column_number += 2;
-                    i += 1; // Skip the second '/'
+                    i += 1;
+                    column += 1;
                 }
                 '=' | '!' | '<' | '>' => {
                     if !in_quote {
                         if !current.trim().is_empty() {
-                            tokens.push(Token { value: current.trim().to_string(), line: line_number, column: token_start_col });
+                            tokens.push(Token { value: current.trim().to_string(), line: line_number, column });
                             current.clear();
                         }
                         if i + 1 < chars.len() && chars[i + 1] == '=' {
-                            tokens.push(Token { value: format!("{}=", c), line: line_number, column: column_number });
-                            column_number += 2;
+                            tokens.push(Token { value: format!("{}=", c), line: line_number, column });
                             i += 1;
+                            column += 1;
                         } else {
-                            tokens.push(Token { value: c.to_string(), line: line_number, column: column_number });
-                            column_number += 1;
+                            tokens.push(Token { value: c.to_string(), line: line_number, column });
                         }
                     } else {
-                        if current.is_empty() { token_start_col = column_number; }
                         current.push(c);
-                        column_number += 1;
                     }
+                    column += 1;
                 }
                 '{' | '}' | ';' | '(' | ')' | '[' | ']' | ',' | ':' | '#' => {
                     if !in_quote {
                         if !current.trim().is_empty() {
-                            tokens.push(Token { value: current.trim().to_string(), line: line_number, column: token_start_col });
+                            tokens.push(Token { value: current.trim().to_string(), line: line_number, column });
                             current.clear();
                         }
-                        tokens.push(Token { value: c.to_string(), line: line_number, column: column_number });
+                        tokens.push(Token { value: c.to_string(), line: line_number, column });
                     } else {
-                        if current.is_empty() { token_start_col = column_number; }
                         current.push(c);
                     }
-                    column_number += 1;
+                    column += 1;
                 }
                 ' ' | '\t' | '\r' => {
                     if in_quote {
-                        if current.is_empty() { token_start_col = column_number; }
                         current.push(c);
                     } else if !current.trim().is_empty() {
-                        tokens.push(Token { value: current.trim().to_string(), line: line_number, column: token_start_col });
+                        tokens.push(Token { value: current.trim().to_string(), line: line_number, column });
                         current.clear();
                     }
-                    column_number += 1;
+                    column += 1;
                 }
                 '\n' => {
                     if in_quote {
-                        if current.is_empty() { token_start_col = column_number; }
                         current.push(c);
                     } else if !current.trim().is_empty() {
-                        tokens.push(Token { value: current.trim().to_string(), line: line_number, column: token_start_col });
+                        tokens.push(Token { value: current.trim().to_string(), line: line_number, column });
                         current.clear();
                     }
                     line_number += 1;
-                    column_number = 1;
+                    column = 1;
                 }
                 _ => {
-                    if current.is_empty() { token_start_col = column_number; }
                     current.push(c);
-                    column_number += 1;
+                    column += 1;
                 }
             }
             i += 1;
         }
         
         if !current.trim().is_empty() {
-            tokens.push(Token { value: current.trim().to_string(), line: line_number, column: token_start_col });
+            tokens.push(Token { value: current.trim().to_string(), line: line_number, column });
         }
         tokens
     }
 
-    fn parse_expression(input: &str, iter: &mut Peekable<std::vec::IntoIter<Token>>, precedence: u8) -> Result<CodeTaal> {
+    fn parse_expression(iter: &mut Peekable<std::vec::IntoIter<Token>>, precedence: u8) -> Result<CodeTaal> {
         // Support I/O as expressions too (e.g. zet x = lees p; zet y = haal url_var)
         if let Some(t) = iter.peek() {
             match t.value.as_str() {
-                "nieuw" | "new" => {
-                    iter.next(); // consume keyword
-                    let mut toks = vec!["nieuw".to_string()];
-                    while let Some(u) = iter.peek() {
-                        if u.value == ";" || u.value == "}" { break; }
-                        toks.push(iter.next().unwrap().value.clone());
-                    }
-                    return Ok(CodeTaal::VarGet { name: toks.join(" ") });
-                }
                 "roep_aan" | "invoke" | "call" => {
                     iter.next(); // consume keyword
-                    let name_tok = iter.next().ok_or_else(|| anyhow::anyhow!("Verwacht functienaam na 'roep_aan'"))?;
-                    let name = name_tok.value.clone();
+                    let mut call_tokens = Vec::new();
+                    while let Some(u) = iter.peek() {
+                        if u == ";" || u == "}" { break; }
+                        call_tokens.push(iter.next().unwrap());
+                    }
+                    let name = if !call_tokens.is_empty() {
+                        call_tokens[0].value.clone()
+                    } else {
+                        "".to_string()
+                    };
                     let mut args = Vec::new();
-                    while let Some(t) = iter.peek() {
-                        if t.value == ";" || t.value == "}" { break; }
-                        let arg = Self::parse_expression(input, iter, 0)?;
-                        args.push(arg);
-                        if let Some(c) = iter.peek() {
-                            if c.value == "," { iter.next(); }
+                    if call_tokens.len() > 1 {
+                        for arg_tok in &call_tokens[1..] {
+                            let expr = if arg_tok.value.parse::<f64>().is_ok() {
+                                CodeTaal::Literal(LiteralValue::Float(arg_tok.value.parse().unwrap()))
+                            } else if arg_tok.value.parse::<i64>().is_ok() {
+                                CodeTaal::Literal(LiteralValue::Int(arg_tok.value.parse().unwrap()))
+                            } else if arg_tok.value.starts_with("\"") {
+                                CodeTaal::Literal(LiteralValue::String(arg_tok.value.trim_matches('"').to_string()))
+                            } else {
+                                CodeTaal::VarGet { name: arg_tok.value.clone() }
+                            };
+                            args.push(expr);
                         }
                     }
                     return Ok(CodeTaal::FunctionCall { name, args });
@@ -890,7 +857,7 @@ impl HelParser {
                         return Err(anyhow::anyhow!("Verwachte URL na 'haal' in expressie"));
                     }
                     let mut eit = url_tokens.into_iter().peekable();
-                    let url = Self::parse_expression(input, &mut eit, 0)?;
+                    let url = Self::parse_expression(&mut eit, 0)?;
                     return Ok(CodeTaal::HttpOp { method: "GET".to_string(), url: Box::new(url) });
                 }
                 "lees" | "read" => {
@@ -904,7 +871,7 @@ impl HelParser {
                         return Err(anyhow::anyhow!("Verwacht pad na 'lees' in expressie"));
                     }
                     let mut eit = path_tokens.into_iter().peekable();
-                    let path = Self::parse_expression(input, &mut eit, 0)?;
+                    let path = Self::parse_expression(&mut eit, 0)?;
                     return Ok(CodeTaal::FileOp { action: "read".to_string(), path: Box::new(path), content: None });
                 }
                 "schrijf" | "write" => {
@@ -920,9 +887,9 @@ impl HelParser {
                         return Err(anyhow::anyhow!("schrijf in expressie verwacht pad + inhoud"));
                     }
                     let mut pit = vec![all[0].clone()].into_iter().peekable();
-                    let path = Self::parse_expression(input, &mut pit, 0)?;
+                    let path = Self::parse_expression(&mut pit, 0)?;
                     let mut cit = all[1..].to_vec().into_iter().peekable();
-                    let content = Self::parse_expression(input, &mut cit, 0)?;
+                    let content = Self::parse_expression(&mut cit, 0)?;
                     return Ok(CodeTaal::FileOp { action: "write".to_string(), path: Box::new(path), content: Some(Box::new(content)) });
                 }
                 _ => {}
@@ -1043,40 +1010,23 @@ impl HelParser {
                                 iter.next();
                                 continue;
                             }
-                            let arg = Self::parse_expression(input, iter, 0)?;
+                            let arg = Self::parse_expression(iter, 0)?;
                             args.push(arg);
                             if let Some(com) = iter.peek() {
                                 if com.value == "," { iter.next(); }
                             }
                         }
-                        let call = if name == "tel_spikes" || name == "popc" || name == "popcount" {
+                        if name == "tel_spikes" || name == "popc" || name == "popcount" {
+                            // special for SNN popcount, return as Op "popc" for lowering
                             if args.len() == 1 {
-                                CodeTaal::Op {
+                                return Ok(CodeTaal::Op {
                                     left: Box::new(args.into_iter().next().unwrap()),
                                     op: "popc".to_string(),
                                     right: Box::new(CodeTaal::Literal(LiteralValue::Int(0))),
-                                }
-                            } else {
-                                CodeTaal::FunctionCall { name, args }
+                                });
                             }
-                        } else {
-                            CodeTaal::FunctionCall { name, args }
-                        };
-                        
-                        let mut left = call;
-                        while let Some(t) = iter.peek() {
-                            if t.value == ";" || t.value == "}" { break; }
-                            let op_prec = Self::get_precedence(&t.value);
-                            if op_prec < precedence || op_prec == 0 { break; }
-                            let op = iter.next().unwrap().value;
-                            let right = Self::parse_expression(input, iter, op_prec + 1)?;
-                            left = CodeTaal::Op {
-                                left: Box::new(left),
-                                op,
-                                right: Box::new(right),
-                            };
                         }
-                        return Ok(left);
+                        return Ok(CodeTaal::FunctionCall { name, args });
                     }
                 }
             }
@@ -1084,17 +1034,7 @@ impl HelParser {
 
         let mut left = match iter.next() {
             Some(t) => {
-                if t.value == "(" {
-                    let expr = Self::parse_expression(input, iter, 0)?;
-                    if let Some(next) = iter.next() {
-                        if next.value != ")" {
-                            return Err(anyhow::anyhow!("Verwacht sluitend haakje ')', gevonden '{}'", next.value));
-                        }
-                    } else {
-                        return Err(anyhow::anyhow!("Verwacht sluitend haakje ')'"));
-                    }
-                    expr
-                } else if t.value.parse::<i64>().is_ok() {
+                if t.value.parse::<i64>().is_ok() {
                     CodeTaal::Literal(LiteralValue::Int(t.value.parse().unwrap()))
                 } else if t.value.parse::<f64>().is_ok() {
                     CodeTaal::Literal(LiteralValue::Float(t.value.parse().unwrap()))
@@ -1102,21 +1042,7 @@ impl HelParser {
                     let s = t.value.trim_matches('"').to_string();
                     CodeTaal::Literal(LiteralValue::String(s))
                 } else {
-                    let mut name = t.value;
-                    if let Some(peek) = iter.peek() {
-                        if peek.value == "[" {
-                            name.push_str(&iter.next().unwrap().value); // "["
-                            while let Some(nt) = iter.peek() {
-                                let val = nt.value.clone();
-                                name.push_str(&val);
-                                iter.next();
-                                if val == "]" {
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    CodeTaal::VarGet { name }
+                    CodeTaal::VarGet { name: t.value }
                 }
             },
             None => return Err(anyhow::anyhow!("Unexpected end of expression")),
@@ -1128,7 +1054,7 @@ impl HelParser {
             if op_prec < precedence || op_prec == 0 { break; }
 
             let op = iter.next().unwrap().value;
-            let right = Self::parse_expression(input, iter, op_prec + 1)?;
+            let right = Self::parse_expression(iter, op_prec + 1)?;
             left = CodeTaal::Op {
                 left: Box::new(left),
                 op,
@@ -1140,8 +1066,6 @@ impl HelParser {
 
     fn get_precedence(op: &str) -> u8 {
         match op {
-            "||" | "of" => 2,
-            "&&" | "en" => 3,
             "==" | "!=" | "<" | ">" | "<=" | ">=" => 5,
             "&" | "|" | "^" => 6,   // bitwise for spikes
             "<<" | ">>" => 7,
@@ -1149,49 +1073,5 @@ impl HelParser {
             "*" | "/" | "%" => 20,
             _ => 0,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parser_diagnostics_line_and_col() {
-        let code2 = "zet = 10;";
-        let res = HelParser::parse(code2);
-        assert!(res.is_err());
-        let err_msg = res.unwrap_err().to_string();
-        println!("{}", err_msg);
-        assert!(err_msg.contains("Syntax Fout [Regel 1, Kolom 7]: Syntax fout: verwachte '=', gevonden '10'"));
-        assert!(err_msg.contains("^---"));
-    }
-
-    #[test]
-    fn test_parser_diagnostics_missing_brace() {
-        let code = "als x == 1 dan\n    druk_af \"hoi\";\nanders\n    druk_af \"doei\";";
-        let res = HelParser::parse(code);
-        assert!(res.is_err());
-        let err_msg = res.unwrap_err().to_string();
-        println!("{}", err_msg); assert!(err_msg.contains("Syntax Fout [Regel 2"));
-    }
-    #[test]
-    fn test_logic_operator_ast() {
-        let code = "zet is_or = x == 5 || y == 20;";
-        let ast = HelParser::parse(code).unwrap();
-        println!("{:#?}", ast);
-    }
-
-    #[test]
-    fn test_daemon_ast() {
-        let script = r#"
-            achtergrond {
-                invoke wacht 0;
-                let daemon_klaar = "ja";
-                invoke bestand.schrijf "daemon_test.txt" daemon_klaar;
-            }
-        "#;
-        let ast = HelParser::parse(script).unwrap();
-        println!("{:#?}", ast);
     }
 }

@@ -13,3 +13,4 @@ anyhow = "1.0.100"
 evalexpr = "13.1.0"
 dirs = "5.0"
 tokio = { version = "1.43", features = ["full"] }
+dashmap = "6.1.0"

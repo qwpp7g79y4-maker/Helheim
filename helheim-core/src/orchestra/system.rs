@@ -53,7 +53,15 @@ impl SystemManager {
                     }
         }
 
-        // --- STD LIB: TEKST ---
+        // --- STD LIB: TEKST EN LIJST ---
+        if name == "lengte" && args.len() == 1 {
+            let val = memory.resolve_value(&args[0]);
+            if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(&val) {
+                return Ok(Some(arr.len().to_string()));
+            } else {
+                return Ok(Some(val.trim_matches('"').len().to_string()));
+            }
+        }
         if name == "tekst.lengte" && args.len() == 1 {
             let s = memory.resolve_value(&args[0]).trim_matches('"').to_string();
             return Ok(Some(s.len().to_string()));
@@ -100,9 +108,10 @@ impl SystemManager {
         if name == "json.ontleden" && args.len() == 1 {
             let mut s = memory.resolve_value(&args[0]);
             if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
-                let unescaped = s[1..s.len() - 1].replace("\\\"", "\"").replace("\\n", "\n");
-                s = unescaped;
+                s = s[1..s.len() - 1].to_string();
             }
+            s = s.replace("\\\"", "\"").replace("\\n", "\n");
+            
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&s) {
                 return Ok(Some(parsed.to_string()));
             } else {

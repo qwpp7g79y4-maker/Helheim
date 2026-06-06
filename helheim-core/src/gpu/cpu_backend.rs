@@ -95,9 +95,7 @@ impl GpuBackend for CpuBackend {
         _context: &std::collections::HashMap<String, LiteralValue>,
     ) -> Result<Option<f32>, GpuError> {
         println!("[CPU Backend] execute_lowered_block: falling back to CPU AST interpretation (pure compute will run on 5950X threads)");
-        // Simple successful stub. Real CPU path for general blocks is already in the main executor.
-        // If we want deep CPU execution of the lowered logic we can extend execute_ast.
-        Ok(None)
+        Err(GpuError::NotAvailable("CPU Backend requires AST interpretation".into()))
     }
 }
 

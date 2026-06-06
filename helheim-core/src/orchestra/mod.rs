@@ -185,52 +185,12 @@ impl Orchestrator {
 
             // --- Phase 9: Persistence (The Void) ---
             if trimmed == "onthoud" {
-                println!("[CACHE]: Bezig met opslaan naar persistent geheugen...");
-
-                // Snapshot memory (Clone) to release lock before async write
-                // This prevents "Future not Send" error because we drop the MutexGuard
-                let (globals, funcs) = {
-                    let g = self.memory.var_store.lock().unwrap_or_else(|e| e.into_inner());
-                    let f = self.memory.func_store.lock().unwrap_or_else(|e| e.into_inner());
-                    let global_scope = if !g.is_empty() {
-                        let mut stringified = std::collections::HashMap::new();
-                        for (k, v) in &g[0] {
-                            stringified.insert(k.clone(), v.to_string());
-                        }
-                        stringified
-                    } else {
-                        std::collections::HashMap::new()
-                    };
-                    (global_scope, f.clone())
-                };
-
-                match persistence::MemoryState::save(&globals, &funcs).await {
-                    Ok(msg) => println!("✅ {}", msg),
-                    Err(e) => println!("❌ Opslaan mislukt: {}", e),
-                }
+                self.memory.persist().await;
                 return Ok(());
             }
 
             if trimmed == "herinner" {
-                println!("[CACHE]: Geheugen opnieuw laden...");
-                match persistence::MemoryState::load().await {
-                    Ok(state) => {
-                        let mut g = self.memory.var_store.lock().unwrap_or_else(|e| e.into_inner());
-                        let mut f = self.memory.func_store.lock().unwrap_or_else(|e| e.into_inner());
-                        let mut typed_globals = std::collections::HashMap::new();
-                        for (k, v) in state.globals {
-                            typed_globals.insert(k, HelheimType::parse(&v));
-                        }
-                        *g = vec![typed_globals];
-                        *f = state.functions;
-                        println!(
-                            "✅ Geheugen hersteld ({} vars, {} funcs)",
-                            g[0].len(),
-                            f.len()
-                        );
-                    }
-                    Err(e) => println!("❌ Laden mislukt: {}", e),
-                }
+                self.memory.recall().await;
                 return Ok(());
             }
 
@@ -727,10 +687,7 @@ impl Orchestrator {
                 }
                 Intent::Unknown => {
                     // Check if it's a function call (Phase 8)
-                    let func_body = {
-                        let funcs = self.memory.func_store.lock().unwrap();
-                        funcs.get(trimmed).cloned()
-                    };
+                    let func_body = self.memory.func_store.get(trimmed).map(|v| v.value().clone());
 
                     if let Some(body) = func_body {
                         println!("[EXECUTION]: Uitvoeren van functie '{}'...", trimmed);
