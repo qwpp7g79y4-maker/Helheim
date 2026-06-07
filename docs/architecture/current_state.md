@@ -17,7 +17,7 @@ This document tracks the immediate state of the Helheim codebase, recent major p
 - **Type Safety:** The parser correctly prioritizes standard integer types (`i64`) over floating-point parameters during standard function invocation, ensuring correct bitwise handling.
 
 ## 3. Immediate Priorities (Phase 3)
-The next development cycle transitions focus from infrastructure hardening to the implementation of applied Spiking Neural Network (SNN) routines.
-- **Goal:** Develop and execute Helheim scripts (`.hel`) that orchestrate SNN computation logic.
+The next development cycle transitions focus from infrastructure hardening to the implementation of applied algorithmic routines.
+- **Goal:** Develop and execute Helheim scripts (`.hel`) that orchestrate advanced computational logic.
 - **Integration:** Bridge dynamically evaluated arrays (e.g., `[waar, onwaar]`) and bitwise data representations to the Dashboard visualization service.
-- **Validation:** Execute motor commands autonomously triggered by specific activation thresholds computed within the AST engine.
+- **Validation:** Execute native commands autonomously triggered by specific activation thresholds computed within the AST engine.
