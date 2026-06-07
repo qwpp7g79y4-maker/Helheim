@@ -527,7 +527,7 @@ impl Executor {
                         iterable,
                         body,
                     } => {
-                        let json_val = self.memory.resolve_value(&iterable);
+                        let json_val = self.evaluate_ast_expr(&iterable, ctx.clone()).await.unwrap_or_default();
                         let mut clone_statements = Vec::new();
                         if let CodeTaal::Block { statements } = *body.clone() {
                             clone_statements = statements;
@@ -536,7 +536,7 @@ impl Executor {
                         // Try parsing JSON list
                         if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(&json_val) {
                             println!(
-                                "[LOOP]: 'voor elke' geactiveerd met {} iteraties over '{}'.",
+                                "[LOOP]: 'voor elke' geactiveerd met {} iteraties over '{:?}'.",
                                 arr.len(),
                                 iterable
                             );
@@ -555,7 +555,7 @@ impl Executor {
                             }
                         } else {
                             println!(
-                                "[ERROR]: Kan '{}' niet itereren. Waarde is geen geldige JSON-lijst.",
+                                "[ERROR]: Kan '{:?}' niet itereren. Waarde is geen geldige JSON-lijst.",
                                 iterable
                             );
                         }

@@ -53,7 +53,7 @@ pub enum CodeTaal {
     },
     ForEach {
         iterator: String,
-        iterable: String,
+        iterable: Box<CodeTaal>,
         body: Box<CodeTaal>,
     },
     If {

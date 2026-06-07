@@ -180,11 +180,7 @@ impl SemanticAnalyzer {
                 Ok(TypeInfo::Void)
             }
             CodeTaal::ForEach { iterator, iterable, body } => {
-                let _iter_ty = if let Some(info) = self.symbols.resolve(iterable) {
-                    info.ty.clone()
-                } else {
-                    return Err(SemanticError::UndefinedVariable(iterable.to_string()));
-                };
+                let _iter_ty = self.visit(iterable)?;
                 
                 self.symbols.enter_scope();
                 // We assume iterable is a collection, iterator gets Unknown or inferred type

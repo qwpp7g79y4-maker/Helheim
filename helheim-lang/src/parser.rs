@@ -222,20 +222,25 @@ impl HelParser {
                     return Err(anyhow::anyhow!("Fout op regel {}: Verwacht 'in' na '{}'", token.line, iterator));
                 }
 
-                // We consume everything till '{' as the iterable string
                 let mut iter_parts = Vec::new();
                 while let Some(t) = iter.peek() {
                     if t == "{" {
                         break;
                     }
-                    iter_parts.push(iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde van het script"))?.value);
+                    iter_parts.push(iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde van het script"))?);
                 }
-                let iterable = iter_parts.join(" ");
+                
+                let iterable_ast = if iter_parts.is_empty() {
+                    return Err(Self::format_parse_error(input, &token, "Verwachte expressie voor iterable in 'voor'"));
+                } else {
+                    let mut expr_iter = iter_parts.into_iter().peekable();
+                    Box::new(Self::parse_expression(input, &mut expr_iter, 0)?)
+                };
 
                 let body_ast = Box::new(Self::parse_block(input, iter)?);
                 Ok(Some(CodeTaal::ForEach {
                     iterator: iterator.value.clone(),
-                    iterable,
+                    iterable: iterable_ast,
                     body: body_ast,
                 }))
             }
@@ -711,15 +716,22 @@ impl HelParser {
             }
             _ => {
                 // Fallback: SysOp / Command pass-through
-                // We verzamelen de rest van de regel tot ;
-                let mut args = vec![token.value.clone()];
+                let mut command = token.value.clone();
+                let mut last_col = token.column + token.value.len();
                 while let Some(t) = iter.peek() {
-                    if t == ";" || t == "}" {
+                    if t.value == ";" || t.value == "}" {
                         break;
                     }
-                    args.push(iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde van het script"))?.value);
+                    let next_tok = iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde van het script"))?;
+                    
+                    if next_tok.column > last_col {
+                        for _ in 0..(next_tok.column - last_col) {
+                            command.push(' ');
+                        }
+                    }
+                    command.push_str(&next_tok.value);
+                    last_col = next_tok.column + next_tok.value.len();
                 }
-                let command = args.join(" ");
                 Ok(Some(CodeTaal::SysOp { command }))
             }
         }
@@ -801,10 +813,43 @@ impl HelParser {
                     current.push(c);
                     column_number += 1;
                 }
-                '/' if !in_quote && i + 1 < chars.len() && chars[i + 1] == '/' => {
-                    in_comment = true;
-                    column_number += 2;
-                    i += 1; // Skip the second '/'
+                '/' => {
+                    if !in_quote && i + 1 < chars.len() && chars[i + 1] == '/' {
+                        in_comment = true;
+                        column_number += 2;
+                        i += 1; // Skip the second '/'
+                    } else if !in_quote {
+                        if !current.trim().is_empty() {
+                            tokens.push(Token { value: current.trim().to_string(), line: line_number, column: token_start_col });
+                            current.clear();
+                        }
+                        tokens.push(Token { value: c.to_string(), line: line_number, column: column_number });
+                        column_number += 1;
+                    } else {
+                        if current.is_empty() { token_start_col = column_number; }
+                        current.push(c);
+                        column_number += 1;
+                    }
+                }
+                '+' | '-' | '*' | '%' | '&' | '|' | '^' => {
+                    if !in_quote {
+                        if !current.trim().is_empty() {
+                            tokens.push(Token { value: current.trim().to_string(), line: line_number, column: token_start_col });
+                            current.clear();
+                        }
+                        if i + 1 < chars.len() && chars[i + 1] == c && (c == '&' || c == '|') {
+                            tokens.push(Token { value: format!("{}{}", c, c), line: line_number, column: column_number });
+                            column_number += 2;
+                            i += 1;
+                        } else {
+                            tokens.push(Token { value: c.to_string(), line: line_number, column: column_number });
+                            column_number += 1;
+                        }
+                    } else {
+                        if current.is_empty() { token_start_col = column_number; }
+                        current.push(c);
+                        column_number += 1;
+                    }
                 }
                 '=' | '!' | '<' | '>' => {
                     if !in_quote {
