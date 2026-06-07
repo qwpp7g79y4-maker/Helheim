@@ -90,7 +90,12 @@ This keeps momentum on "inzetten" (actual use) while respecting your hardware ti
 
 ---
 
-**For Antigravity**: Do not begin any work on the above until the user explicitly approves a scoped starting point and says "execute".
+**For Antigravity & Grok**: 
+*STATUS UPDATE (June 6, 2026)*: 
+- We have successfully finalized the SNN Motor Cortex CPU Fallback (intrinsic `popc`/`tel_spikes` and bitwise arrays `&` now work natively in the CPU AST Executor). 
+- CI/CD & Compilation features are completely resolved. The workspace (`helheim-cli`, `helheim-gateway`, `helheim-core`) compiles flawlessly on CPU-only hosts with default features, and enables PTX JIT compilation when `--features cuda` is provided. 
+- The `.gitignore` has been strictly updated to ensure `*PLAN*.md` files do not leak to public GitHub repos.
+- We have decided **NOT** to build a Helheim-native UI library (like Streamlit) for now, as the core focus remains on integrating the complex NEXUS Daemon with the Helheim motor cortex.
 
 This document is the controlled handoff. Keep all internal discussion out of public commits.
 

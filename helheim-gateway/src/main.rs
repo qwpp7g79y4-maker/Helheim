@@ -87,9 +87,11 @@ async fn execute_handler(
     body: axum::body::Bytes,
 ) -> Result<AxumJson<ExecuteResponse>, (StatusCode, AxumJson<ErrorResponse>)> {
     // Try to interpret as JSON first
-    let script = if let Ok(json_val) = serde_json::from_slice::<serde_json::Value>(&body) {
+    let raw_input = if let Ok(json_val) = serde_json::from_slice::<serde_json::Value>(&body) {
         if let Some(s) = json_val.get("script").and_then(|v| v.as_str()) {
             s.to_string()
+        } else if let Some(payload) = json_val.get("hsp_payload").and_then(|v| v.as_str()) {
+            payload.to_string()
         } else {
             // Fallback: treat the whole body as script (in case someone posts a raw JSON string)
             String::from_utf8_lossy(&body).to_string()
@@ -98,6 +100,45 @@ async fn execute_handler(
         // Raw .hel script body
         String::from_utf8_lossy(&body).to_string()
     };
+
+    // [HSP] Optional Decryption for Secure Network Commands
+    let mut script = raw_input.clone();
+    let mut is_secure = false;
+    
+    if let Ok(decrypted) = helheim_core::shield::HelheimShield::decrypt_packet(&raw_input) {
+        if decrypted != raw_input && !decrypted.is_empty() {
+            info!("HSP Payload successfully decrypted via Chaos-XOR");
+            script = decrypted;
+            is_secure = true;
+        }
+    }
+
+    // Determine Execution Context based on Signatures
+    // For local development on :8080 we currently default to privileged if no signature is present,
+    // but in production we'd default to sandbox. We'll allow privileged for now to not break the UI.
+    let mut ctx = ExecutionContext::default_privileged();
+    if script.starts_with("SIGNED: ") {
+        if let Some((sig_part, script_part)) = script[8..].split_once(" | ") {
+            use base64::Engine;
+            if let Ok(sig_bytes) = base64::engine::general_purpose::STANDARD.decode(sig_part.trim()) {
+                if helheim_core::shield::crypto::HelSigner::verify_update(script_part.as_bytes(), &sig_bytes).is_ok() {
+                    info!("✅ Valid Master Key signature. Elevated Privileges activated via API.");
+                    ctx = ExecutionContext::default_privileged();
+                    script = script_part.to_string();
+                } else {
+                    info!("⚠️ Invalid signature. Fallback to Sandbox.");
+                    ctx = ExecutionContext::sandbox();
+                    script = script_part.to_string();
+                }
+            }
+        }
+    } else {
+        if is_secure {
+            info!("🛡️ Unsigned HSP request. Execution proceeding.");
+        } else {
+            info!("🛡️ Plain text request. Execution proceeding.");
+        }
+    }
 
     if script.trim().is_empty() {
         let err = ErrorResponse {
@@ -109,7 +150,7 @@ async fn execute_handler(
 
     info!("Received /api/execute request (script length: {})", script.len());
 
-    match run_helheim_script_via_core(&script).await {
+    match run_helheim_script_via_core(&script, ctx).await {
         Ok((result, spikes)) => {
             // Publish any SNN spikes to WS subscribers for real-time streaming of firing neurons
             if let Some(ref spike_list) = spikes {
@@ -125,7 +166,7 @@ async fn execute_handler(
                 status: "success".to_string(),
                 result,
                 spikes,
-                message: Some("Script executed via Helheim Motor Cortex (helheim-core lowered blocks + SNN bit-packing)".to_string()),
+                message: Some(if is_secure { "Script executed via HSP Secured Motor Cortex" } else { "Script executed via Plaintext Motor Cortex" }.to_string()),
             };
             Ok(AxumJson(resp))
         }
@@ -143,6 +184,7 @@ async fn execute_handler(
 /// Uses the real Orchestrator + lowered blocks when applicable (for SNN spikes).
 async fn run_helheim_script_via_core(
     script: &str,
+    ctx: ExecutionContext,
 ) -> anyhow::Result<(Option<String>, Option<Vec<String>>)> {
     // Setup discovery (required by Orchestrator)
     let discovery = Arc::new(DiscoveryService::new());
@@ -153,9 +195,6 @@ async fn run_helheim_script_via_core(
     // Parse using the real Helheim-lang parser (supports Dutch keywords + lowered constructs)
     let ast = HelParser::parse(script)
         .map_err(|e| anyhow::anyhow!("HelParser error: {}", e))?;
-
-    // Privileged context: full access to lowered blocks, FileOp, HttpOp, SNN features etc.
-    let ctx = ExecutionContext::default_privileged();
 
     // Execute — this goes through executor which handles lowered blocks for Motor Cortex SNN
     let exec_result = orchestrator

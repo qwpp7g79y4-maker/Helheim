@@ -114,12 +114,29 @@ impl HelParser {
                 }
 
                 // Verbeterde value parser: Lees alles tot ';' of ongebalanceerde '}'
+                // Stop vóór een nieuw top-level statement als we geen open { hebben.
+                // Dit is de key fix voor "diepe returns in functies".
                 let mut val_tokens = Vec::new();
                 let mut brace_count = 0;
                 while let Some(t) = iter.peek() {
                     if t == ";" {
                         break;
                     }
+
+                    if brace_count == 0 && matches!(
+                        t.value.as_str(),
+                        "zolang" | "while" | "repeat" |
+                        "als" | "if" |
+                        "retourneer" | "geef_terug" | "return" |
+                        "zet" | "let" | "set" |
+                        "functie" | "fn" | "func" |
+                        "voor" | "for" |
+                        "probeer" | "try" |
+                        "schrijf" | "print" | "log"
+                    ) {
+                        break;
+                    }
+
                     if t == "{" {
                         brace_count += 1;
                     }
@@ -152,6 +169,13 @@ impl HelParser {
                     let mut expr_iter = val_tokens.into_iter().peekable();
                     Box::new(Self::parse_expression(input, &mut expr_iter, 0)?)
                 };
+
+                // Optioneel ; consumeren
+                if let Some(next) = iter.peek() {
+                    if next == ";" {
+                        iter.next();
+                    }
+                }
 
                 Ok(Some(CodeTaal::VarDef { name: name.value.clone(), value: expr }))
             }

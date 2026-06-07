@@ -1,0 +1,66 @@
+{
+  "name": "helheim-language",
+  "displayName": "Helheim (CodeTaal)",
+  "description": "Syntax highlighting, language configuration and snippets for the Helheim programming language (bilingual CodeTaal).",
+  "version": "0.2.0",
+  "publisher": "helheim",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.70.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "helheim",
+    "codetaal",
+    "hel",
+    "language",
+    "syntax"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onLanguage:helheim"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "helheim",
+        "aliases": [
+          "Helheim",
+          "CodeTaal",
+          "hel"
+        ],
+        "extensions": [
+          ".hel"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "helheim",
+        "scopeName": "source.helheim",
+        "path": "./syntaxes/helheim.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "helheim",
+        "path": "./snippets/helheim.code-snippets"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^18.0.0",
+    "@types/vscode": "^1.70.0",
+    "typescript": "^5.0.0",
+    "@vscode/vsce": "^2.20.0"
+  }
+}

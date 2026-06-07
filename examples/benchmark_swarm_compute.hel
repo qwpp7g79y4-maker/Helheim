@@ -1,0 +1,50 @@
+// benchmark_swarm_compute.hel
+// Dit script demonstreert de core prestaties van de Helheim architectuur:
+// Concurrency, GPU acceleratie en Swarm distributie.
+
+zet welkomst = "--- HELHEIM: HIGH PERFORMANCE COMPUTE NODE ---";
+druk_af welkomst;
+druk_af "Initialiseren van asynchrone thread pool en GPU resources...";
+
+// 1. Gesimuleerde zware reken-taak
+functie zware_berekening met id {
+    zet start = 1;
+    zolang start < 1000 {
+        zet start = start * 2;
+    }
+    druk_af "  -> Worker thread voltooid.";
+    geef_terug start;
+}
+
+// 2. Parallelle Executie (Native Concurrency)
+druk_af " ";
+druk_af "[FASE 1]: Activeren van Asynchrone Worker Threads...";
+probeer {
+    tegelijkertijd {
+        roep_aan zware_berekening 1;
+        roep_aan zware_berekening 2;
+        roep_aan zware_berekening 3;
+        roep_aan zware_berekening 4;
+        roep_aan zware_berekening 5;
+    }
+    druk_af "Alle parallelle CPU threads succesvol afgerond.";
+} vang err {
+    druk_af "Fout opgetreden tijdens executie: ";
+    druk_af err;
+}
+
+// 3. Native GPU Offloading
+druk_af " ";
+druk_af "[FASE 2]: Initiëren van GPU Acceleratie...";
+druk_af "Synthetiseren van PTX Kernel voor 8192x8192 Tensor MatMul...";
+matmul 8192;
+druk_af "GPU Workload Voltooid. Vrijgeven VRAM.";
+
+// 4. Distributed Swarm
+druk_af " ";
+druk_af "[FASE 3]: Helheim Swarm Netwerk Sync...";
+zet payload = "SYNC_REQ: Helheim Compute Node is gereed voor gedistribueerde workloads.";
+stuur payload naar allemaal;
+
+druk_af " ";
+druk_af "--- BENCHMARK VOLTOOID ---";

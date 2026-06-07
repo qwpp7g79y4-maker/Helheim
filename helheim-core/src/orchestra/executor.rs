@@ -849,8 +849,7 @@ impl Executor {
                 }
             }
 
-            // Function-local scope. Pop is guaranteed on success, error and deep return paths.
-            self.memory.push_scope();
+            let _scope_guard = crate::orchestra::memory::ScopeGuard::new(&self.memory);
 
             for (i, param) in params.iter().enumerate() {
                 self.memory.set_var_native(param.clone(), HelheimType::parse(&resolved_args[i]));
@@ -863,13 +862,9 @@ impl Executor {
             let result = match self.propagate_return(&body, ctx.clone()).await {
                 Ok(Some(ret)) => ret,
                 Ok(None) => "".to_string(),
-                Err(e) => {
-                    self.memory.pop_scope();
-                    return Err(e);
-                }
+                Err(e) => return Err(e),
             };
 
-            self.memory.pop_scope();
             Ok(result)
         } else {
             println!("[ERR]: Functie '{}' bestaat niet in AST store of Native Library.", name);
@@ -923,6 +918,43 @@ impl Executor {
                     let l = self.evaluate_ast_expr(left, ctx.clone()).await?;
                     let r = self.evaluate_ast_expr(right, ctx.clone()).await?;
                     
+                    // --- SNN Intrinsics CPU Fallback ---
+                    if op == "popc" {
+                        let mut count = 0;
+                        if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(&l) {
+                            for val in arr {
+                                if let Some(s) = val.as_str() {
+                                    if s == "waar" || s == "true" || s == "1" { count += 1; }
+                                } else if let Some(b) = val.as_bool() {
+                                    if b { count += 1; }
+                                } else if let Some(n) = val.as_i64() {
+                                    if n == 1 { count += 1; }
+                                }
+                            }
+                        } else {
+                            count = l.matches("waar").count() + l.matches("true").count();
+                        }
+                        return Ok(count.to_string());
+                    }
+
+                    if op == "&" {
+                        if l.starts_with('[') && r.starts_with('[') {
+                            if let (Ok(arr_l), Ok(arr_r)) = (
+                                serde_json::from_str::<Vec<serde_json::Value>>(&l),
+                                serde_json::from_str::<Vec<serde_json::Value>>(&r)
+                            ) {
+                                let mut res = Vec::new();
+                                for (vl, vr) in arr_l.iter().zip(arr_r.iter()) {
+                                    let l_is_true = vl.as_str().map(|s| s == "waar" || s == "true").unwrap_or(false) || vl.as_bool().unwrap_or(false) || vl.as_i64().unwrap_or(0) == 1;
+                                    let r_is_true = vr.as_str().map(|s| s == "waar" || s == "true").unwrap_or(false) || vr.as_bool().unwrap_or(false) || vr.as_i64().unwrap_or(0) == 1;
+                                    res.push(if l_is_true && r_is_true { "waar" } else { "onwaar" });
+                                }
+                                return Ok(serde_json::to_string(&res).unwrap_or_default());
+                            }
+                        }
+                    }
+                    // -----------------------------------
+
                     let to_evalexpr_literal = |val: &str| -> String {
                         if val == "waar" || val == "true" { return "true".to_string(); }
                         if val == "onwaar" || val == "false" { return "false".to_string(); }

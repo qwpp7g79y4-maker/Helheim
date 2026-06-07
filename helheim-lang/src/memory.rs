@@ -293,3 +293,36 @@ impl MemoryManager {
         }
     }
 }
+
+/// RAII ScopeGuard.
+/// Garandeert dat een lokale scope (voor een functie-aanroep) altijd wordt gepopt,
+/// ook bij early return, error (`?`), of panic.
+pub struct ScopeGuard<'a> {
+    memory: &'a MemoryManager,
+    active: bool,
+}
+
+impl<'a> ScopeGuard<'a> {
+    /// Pusht direct een nieuwe scope en retourneert een guard die bij drop zal poppen.
+    pub fn new(memory: &'a MemoryManager) -> Self {
+        memory.push_scope();
+        Self { memory, active: true }
+    }
+
+    /// Vroege pop (bijv. als je de guard expliciet wilt opruimen na een return).
+    /// Na deze call doet Drop niets meer.
+    pub fn pop_now(mut self) {
+        if self.active {
+            self.memory.pop_scope();
+            self.active = false;
+        }
+    }
+}
+
+impl Drop for ScopeGuard<'_> {
+    fn drop(&mut self) {
+        if self.active {
+            self.memory.pop_scope();
+        }
+    }
+}

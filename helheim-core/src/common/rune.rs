@@ -189,7 +189,7 @@ impl RuneEngine {
                     std::thread::spawn(|| {
                         let inner_start = std::time::Instant::now();
                         while inner_start.elapsed().as_secs() < 180 {
-                            let _ = crate::gpu::gpu_work_real(1024);
+                            let _ = crate::gpu::gpu_work_real(1024, 0);
                         }
                     });
                 }
@@ -254,11 +254,11 @@ impl RuneEngine {
                     println!("[GPU]: GPU gaat mee in de galop...");
                     std::thread::spawn(|| {
                         let inner_start = std::time::Instant::now();
-                        let mut rng = rand::thread_rng();
+                        let mut rng = rand::rng();
                         while inner_start.elapsed().as_secs() < 120 {
-                            let _ = crate::gpu::gpu_work_real(512);
+                            let _ = crate::gpu::gpu_work_real(512, 0);
                             std::thread::sleep(std::time::Duration::from_millis(
-                                rng.gen_range(100..300),
+                                rng.random_range(100..300),
                             ));
                         }
                     });
@@ -361,13 +361,11 @@ impl RuneEngine {
                 {
                     println!("[GPU]: Compileren van rauwe PTX broncode via NVRTC...");
                     // We gebruiken een specifieke wrapper voor rauwe PTX injectie
-                    match crate::gpu::gpu_execute_raw_ptx(&ptx_src) {
-                        Ok(perf) => {
+                    let rt = tokio::runtime::Runtime::new()?;
+                    match rt.block_on(crate::gpu::gpu_execute_hel_block(&ptx_src)) {
+                        Ok(_) => {
                             println!("[COMPLETED]: Deep-Rune executie succesvol.");
-                            Ok(format!(
-                                "[STATUS]: GPU Kernels geverifieerd. Performance: {:.2} GFLOPS.",
-                                perf
-                            ))
+                            Ok("[STATUS]: GPU Kernels geverifieerd.".to_string())
                         }
                         Err(e) => Err(anyhow::anyhow!("NEL-GPU Fout: {}", e)),
                     }

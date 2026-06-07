@@ -3,6 +3,9 @@ name = "helheim-gateway"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+cuda = ["helheim-core/cuda"]
+
 [dependencies]
 axum = { version = "0.7", features = ["macros", "ws"] }
 tokio = { version = "1.43", features = ["full"] }
@@ -15,3 +18,4 @@ tower-http = { version = "0.5", features = ["cors", "trace", "fs"] }
 
 helheim-core = { path = "../helheim-core", default-features = false }
 helheim-lang = { path = "../helheim-lang" }
+base64 = "0.22"

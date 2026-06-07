@@ -53,6 +53,32 @@ impl SystemManager {
                     }
         }
 
+        if name == "lijst.bevat" && args.len() == 2 {
+            let list_val = memory.resolve_value(&args[0]);
+            let item = memory.resolve_value(&args[1]).trim_matches('"').to_string();
+            
+            if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(&list_val) {
+                for val in arr {
+                    let val_str = val.as_str().unwrap_or("").to_string();
+                    let val_num = val.to_string();
+                    if val_str == item || val_num == item {
+                        return Ok(Some("waar".to_string()));
+                    }
+                }
+                return Ok(Some("onwaar".to_string()));
+            }
+        }
+
+        if name == "lijst.omdraaien" && args.len() == 1 {
+            let list_val = memory.resolve_value(&args[0]);
+
+            if let Ok(mut arr) = serde_json::from_str::<Vec<serde_json::Value>>(&list_val) {
+                arr.reverse();
+                let new_list = serde_json::to_string(&arr).unwrap();
+                return Ok(Some(new_list));
+            }
+        }
+
         // --- STD LIB: TEKST EN LIJST ---
         if name == "lengte" && args.len() == 1 {
             let val = memory.resolve_value(&args[0]);
@@ -83,6 +109,19 @@ impl SystemManager {
             let json_arr = serde_json::to_string(&parts).unwrap_or_else(|_| "[]".to_string());
             return Ok(Some(json_arr));
         }
+        if name == "tekst.bevat" && args.len() == 2 {
+            let s = memory.resolve_value(&args[0]).trim_matches('"').to_string();
+            let zoek = memory.resolve_value(&args[1]).trim_matches('"').to_string();
+            if s.contains(&zoek) {
+                return Ok(Some("waar".to_string()));
+            } else {
+                return Ok(Some("onwaar".to_string()));
+            }
+        }
+        if name == "tekst.kleine_letters" && args.len() == 1 {
+            let s = memory.resolve_value(&args[0]).trim_matches('"').to_string();
+            return Ok(Some(s.to_lowercase()));
+        }
 
         // --- STD LIB: WISKUNDE ---
         if name == "wiskunde.willekeurig" && args.len() == 2 {
@@ -102,6 +141,19 @@ impl SystemManager {
             if let Ok(num) = val.parse::<f64>() {
                 return Ok(Some(num.round().to_string()));
             }
+        }
+        if name == "wiskunde.macht" && args.len() == 2 {
+            let basis = memory.resolve_value(&args[0]).trim_matches('"').parse::<f64>().unwrap_or(0.0);
+            let exponent = memory.resolve_value(&args[1]).trim_matches('"').parse::<f64>().unwrap_or(0.0);
+            return Ok(Some(basis.powf(exponent).to_string()));
+        }
+        if name == "wiskunde.wortel" && args.len() == 1 {
+            let val = memory.resolve_value(&args[0]).trim_matches('"').parse::<f64>().unwrap_or(0.0);
+            return Ok(Some(val.sqrt().to_string()));
+        }
+        if name == "wiskunde.absoluut" && args.len() == 1 {
+            let val = memory.resolve_value(&args[0]).trim_matches('"').parse::<f64>().unwrap_or(0.0);
+            return Ok(Some(val.abs().to_string()));
         }
 
         // --- STD LIB: JSON ---

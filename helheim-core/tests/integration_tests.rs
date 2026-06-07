@@ -205,9 +205,18 @@ async fn test_stdlib() {
         zet l = roep_aan tekst.lengte bron;
         zet vervangen = roep_aan tekst.vervang bron "Wereld" "Matrix";
         zet caps = roep_aan tekst.hoofdletters bron;
+        zet kleine = roep_aan tekst.kleine_letters bron;
+        zet heeft_hallo = roep_aan tekst.bevat bron "Hallo";
         
         zet rnd = roep_aan wiskunde.willekeurig 1 1;
         zet afgerond = roep_aan wiskunde.afronden "3.7";
+        zet macht = roep_aan wiskunde.macht 2 3;
+        zet wortel = roep_aan wiskunde.wortel 16;
+        zet absoluut = roep_aan wiskunde.absoluut "-42.5";
+
+        zet mijn_lijst = [1, 2, 3];
+        zet bevat_twee = roep_aan lijst.bevat mijn_lijst 2;
+        zet mijn_lijst = roep_aan lijst.omdraaien mijn_lijst;
     "#;
     
     let engine = run_helheim_script(script).await;
@@ -215,8 +224,19 @@ async fn test_stdlib() {
     assert_eq!(engine.get_var("l").unwrap(), "20");
     assert_eq!(engine.get_var("vervangen").unwrap(), "Hallo Helheim Matrix");
     assert_eq!(engine.get_var("caps").unwrap(), "HALLO HELHEIM WERELD");
+    assert_eq!(engine.get_var("kleine").unwrap(), "hallo helheim wereld");
+    assert_eq!(engine.get_var("heeft_hallo").unwrap(), "waar");
+    
     assert_eq!(engine.get_var("rnd").unwrap(), "1");
     assert_eq!(engine.get_var("afgerond").unwrap(), "4");
+    assert_eq!(engine.get_var("macht").unwrap(), "8");
+    assert_eq!(engine.get_var("wortel").unwrap(), "4");
+    assert_eq!(engine.get_var("absoluut").unwrap(), "42.5");
+
+    assert_eq!(engine.get_var("bevat_twee").unwrap(), "waar");
+    
+    let list_val = engine.get_var("mijn_lijst").unwrap();
+    assert!(list_val.contains("[3,2,1]") || list_val.contains("3, 2, 1") || list_val.starts_with("[3,2,1]"), "List was not reversed: {}", list_val);
 }
 
 #[tokio::test]
@@ -471,9 +491,25 @@ async fn test_sandbox_shell_blocked() {
 
 #[tokio::test]
 async fn test_snn_cortex_bitwise_and_popc() {
-    // Load and run the SNN test script for coincidence detection and fire/misfire threshold
-    let script = std::fs::read_to_string("./test_snn_cortex.hel")
-        .expect("Failed to read test_snn_cortex.hel");
+    let script = r#"
+        zet input_spikes = [waar, onwaar, waar, waar, onwaar, waar];
+        zet weight_mask  = [waar, waar, onwaar, waar, waar, onwaar];
+        zet drempel = 2;
+
+        functie neuron_vuurt met spikes mask vuurdrempel {
+            zet overlap = spikes & mask;
+            zet count = tel_spikes(overlap);
+            
+            als count >= vuurdrempel dan {
+                retourneer waar;
+            } anders {
+                retourneer onwaar;
+            }
+        }
+
+        zet resultaat = roep_aan neuron_vuurt input_spikes weight_mask drempel;
+        zet vuurt = resultaat;
+    "#;
     let engine = run_helheim_script(&script).await;
     // Check that the input lists were set correctly (packing happened)
     let spikes = engine.get_var("input_spikes").unwrap_or("".to_string());

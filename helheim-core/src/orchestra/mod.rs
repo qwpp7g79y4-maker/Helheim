@@ -7,7 +7,6 @@ use crate::shield::governor::Sentinel;
 use anyhow::Result;
 use colored::*;
 use std::sync::Arc;
-use helheim_lang::memory::HelheimType;
 
 pub use helheim_lang::synthesis;
 pub use helheim_lang::parser;
