@@ -5,8 +5,28 @@ use std::iter::Peekable;
 /// De Helheim Parser: Zet 'Helheim' (Naturel) om in Abstracte Logica (AST).
 pub struct HelParser;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TokenKind {
+    Ident(String),
+    Number { raw: String, is_float: bool },
+    Op(char),
+    LBrace,
+    RBrace,
+    LParen,
+    RParen,
+    Comma,
+    Semicolon,
+    Eof,
+    Legacy(String),
+}
+
+impl Default for TokenKind {
+    fn default() -> Self { TokenKind::Legacy(String::new()) }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Token {
+    pub kind: TokenKind,
     pub value: String,
     pub line: usize,
     pub column: usize,
@@ -763,6 +783,19 @@ impl HelParser {
 }
 
 impl HelParser {
+    fn build_token(value: String, line: usize, column: usize) -> Token {
+        let kind = if value == "{" { TokenKind::LBrace }
+        else if value == "}" { TokenKind::RBrace }
+        else if value == "(" { TokenKind::LParen }
+        else if value == ")" { TokenKind::RParen }
+        else if value == "," { TokenKind::Comma }
+        else if value == ";" { TokenKind::Semicolon }
+        else if value.len() == 1 && "+-*/=><!&|^%".contains(&value) { TokenKind::Op(value.chars().next().unwrap()) }
+        else if value.parse::<f64>().is_ok() { TokenKind::Number { raw: value.clone(), is_float: value.contains('.') } }
+        else { TokenKind::Ident(value.clone()) };
+        Token { kind, value, line, column }
+    }
+
     pub fn tokenize(input: &str) -> Vec<Token> {
         let mut tokens = Vec::new();
         let mut current = String::new();
@@ -820,10 +853,10 @@ impl HelParser {
                         i += 1; // Skip the second '/'
                     } else if !in_quote {
                         if !current.trim().is_empty() {
-                            tokens.push(Token { value: current.trim().to_string(), line: line_number, column: token_start_col });
+                            tokens.push(Self::build_token(current.trim().to_string(), line_number, token_start_col ));
                             current.clear();
                         }
-                        tokens.push(Token { value: c.to_string(), line: line_number, column: column_number });
+                        tokens.push(Self::build_token(c.to_string(), line_number, column_number ));
                         column_number += 1;
                     } else {
                         if current.is_empty() { token_start_col = column_number; }
@@ -834,15 +867,15 @@ impl HelParser {
                 '+' | '-' | '*' | '%' | '&' | '|' | '^' => {
                     if !in_quote {
                         if !current.trim().is_empty() {
-                            tokens.push(Token { value: current.trim().to_string(), line: line_number, column: token_start_col });
+                            tokens.push(Self::build_token(current.trim().to_string(), line_number, token_start_col ));
                             current.clear();
                         }
                         if i + 1 < chars.len() && chars[i + 1] == c && (c == '&' || c == '|') {
-                            tokens.push(Token { value: format!("{}{}", c, c), line: line_number, column: column_number });
+                            tokens.push(Self::build_token(format!("{}{}", c, c), line_number, column_number ));
                             column_number += 2;
                             i += 1;
                         } else {
-                            tokens.push(Token { value: c.to_string(), line: line_number, column: column_number });
+                            tokens.push(Self::build_token(c.to_string(), line_number, column_number ));
                             column_number += 1;
                         }
                     } else {
@@ -854,15 +887,15 @@ impl HelParser {
                 '=' | '!' | '<' | '>' => {
                     if !in_quote {
                         if !current.trim().is_empty() {
-                            tokens.push(Token { value: current.trim().to_string(), line: line_number, column: token_start_col });
+                            tokens.push(Self::build_token(current.trim().to_string(), line_number, token_start_col ));
                             current.clear();
                         }
                         if i + 1 < chars.len() && chars[i + 1] == '=' {
-                            tokens.push(Token { value: format!("{}=", c), line: line_number, column: column_number });
+                            tokens.push(Self::build_token(format!("{}=", c), line_number, column_number ));
                             column_number += 2;
                             i += 1;
                         } else {
-                            tokens.push(Token { value: c.to_string(), line: line_number, column: column_number });
+                            tokens.push(Self::build_token(c.to_string(), line_number, column_number ));
                             column_number += 1;
                         }
                     } else {
@@ -874,10 +907,10 @@ impl HelParser {
                 '{' | '}' | ';' | '(' | ')' | '[' | ']' | ',' | ':' | '#' => {
                     if !in_quote {
                         if !current.trim().is_empty() {
-                            tokens.push(Token { value: current.trim().to_string(), line: line_number, column: token_start_col });
+                            tokens.push(Self::build_token(current.trim().to_string(), line_number, token_start_col ));
                             current.clear();
                         }
-                        tokens.push(Token { value: c.to_string(), line: line_number, column: column_number });
+                        tokens.push(Self::build_token(c.to_string(), line_number, column_number ));
                     } else {
                         if current.is_empty() { token_start_col = column_number; }
                         current.push(c);
@@ -889,7 +922,7 @@ impl HelParser {
                         if current.is_empty() { token_start_col = column_number; }
                         current.push(c);
                     } else if !current.trim().is_empty() {
-                        tokens.push(Token { value: current.trim().to_string(), line: line_number, column: token_start_col });
+                        tokens.push(Self::build_token(current.trim().to_string(), line_number, token_start_col ));
                         current.clear();
                     }
                     column_number += 1;
@@ -899,7 +932,7 @@ impl HelParser {
                         if current.is_empty() { token_start_col = column_number; }
                         current.push(c);
                     } else if !current.trim().is_empty() {
-                        tokens.push(Token { value: current.trim().to_string(), line: line_number, column: token_start_col });
+                        tokens.push(Self::build_token(current.trim().to_string(), line_number, token_start_col ));
                         current.clear();
                     }
                     line_number += 1;
@@ -915,7 +948,7 @@ impl HelParser {
         }
         
         if !current.trim().is_empty() {
-            tokens.push(Token { value: current.trim().to_string(), line: line_number, column: token_start_col });
+            tokens.push(Self::build_token(current.trim().to_string(), line_number, token_start_col ));
         }
         tokens
     }

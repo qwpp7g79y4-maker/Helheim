@@ -5,7 +5,6 @@ use rand::Rng;
 
 pub mod cage;
 pub mod crypto;
-pub mod governor;
 pub mod wire;
 
 /// De kern van de Helheim Shield: Chaos & Bescherming
@@ -71,70 +70,6 @@ impl HelheimShield {
         }
 
         Ok(String::from_utf8(decrypted)?)
-    }
-
-    /// Geavanceerde Honeypot: Genereert extreem frustrerende "poep" data voor bots.
-    pub fn generate_chaos_trap() -> String {
-        let mut rng = rand::rng();
-        let trap_type: u8 = rng.random_range(0..4);
-
-        match trap_type {
-            0 => {
-                let user = format!("admin_{}", rng.random_range(1000..9999));
-                let pass = STANDARD.encode(rng.random::<[u8; 16]>());
-                format!(
-                    "# CONFIG_VERSION: 1.33.7\nDB_USER={}\nDB_PASS={}\nDB_HOST=10.0.0.{} \n# LOGOUT_ON_SUCCESS=false",
-                    user,
-                    pass,
-                    rng.random_range(1..254)
-                )
-            }
-            1 => {
-                let body = STANDARD.encode(rng.random::<[u8; 64]>());
-                format!(
-                    "-----BEGIN RSA PRIVATE KEY-----\n{}\n-----END RSA PRIVATE KEY-----",
-                    body
-                )
-            }
-            2 => {
-                let mut data = "HELHEIM_INTERNAL_CORE_DUMP_0x00FF".to_string();
-                for _ in 0..3 {
-                    data = STANDARD.encode(data);
-                }
-                format!("[RECURSIVE_ENCRYPTED_STREAM]: {}", data)
-            }
-            _ => {
-                let trash: String = (0..128).map(|_| rng.random::<char>()).collect();
-                format!("[FATAL_KERNEL_ERROR]: {}", STANDARD.encode(trash))
-            }
-        }
-    }
-
-    /// De "Eliminator": genereert een oneindige stroom data die nooit stopt.
-    pub fn infinite_stream_trap() -> impl Iterator<Item = String> {
-        std::iter::repeat_with(|| {
-            let mut rng = rand::rng();
-            let chunk: String = (0..512).map(|_| rng.random::<char>()).collect();
-            STANDARD.encode(chunk)
-        })
-    }
-
-    /// Herken verdachte patronen
-    pub fn is_suspicious(input: &str) -> bool {
-        let input_lc = input.to_lowercase();
-        let patterns = [
-            "admin", "root", "password", "config", "passwd", "../", "eval", "sh ", "exec",
-            "system", "sql", "select", "insert", "drop", "delete", "sudo",
-        ];
-        patterns.iter().any(|&p| input_lc.contains(p))
-    }
-
-    /// Dynamische Blacklist manager
-    pub fn trigger_blacklist(identity: &str) {
-        println!(
-            "🚫 [ELIMINATIE]: Identiteit {} op de zwarte lijst gezet.",
-            identity
-        );
     }
 }
 

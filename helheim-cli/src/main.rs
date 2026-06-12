@@ -10,8 +10,7 @@ use helheim_core::cli::{Cli, Commands};
 use helheim_core::common::probe::HelProbe;
 use helheim_core::network::DiscoveryService;
 use helheim_core::orchestra::Orchestrator;
-use helheim_core::network::swarm::SwarmEngine;
-
+use helheim_core::network::hsp_node::SwarmEngine;
 #[tokio::main]
 async fn main() -> Result<()> {
     // 1. Initialize Telemetry (Flight Recorder)

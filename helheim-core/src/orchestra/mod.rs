@@ -3,7 +3,6 @@ use crate::network::DiscoveryService;
 use helheim_lang::ast::CodeTaal;
 use helheim_lang::synthesis::KernelSynthesisEngine; // Phase 8 Refactor
 use crate::shield::HelheimLock;
-use crate::shield::governor::Sentinel;
 use anyhow::Result;
 use colored::*;
 use std::sync::Arc;
@@ -16,7 +15,7 @@ pub use helheim_lang::semantic;
 use crate::cli::intent::{Intent, IntentParser};
 use std::pin::Pin;
 
-pub mod swarm;
+// orchestra/swarm.rs verwijderd — ConsciousWorker/CleanerWorker hoort in helheim-web (sorteerlaag), niet in helheim-core
 pub mod system;
 pub mod executor;
 
@@ -81,10 +80,7 @@ impl Orchestrator {
                 return Ok(());
             }
 
-            // Sentinel Anti-Abuse Check (Phase 7)
-            if Sentinel::check_abuse(trimmed) {
-                return Ok(());
-            }
+
 
             // --- Phase 8: Variables pre-processing is REMOVED ---
             // The AST Engine (helheim-lang) now natively handles variable resolution.
@@ -313,7 +309,7 @@ impl Orchestrator {
                         let payload = format!("inferno work {}", chunk_size);
                         dispatch_tasks.push(tokio::spawn(async move {
                             println!("🚀 Dispatching workload to {}...", ip);
-                            match crate::network::swarm::SwarmEngine::dispatch(&ip, 9003, &payload)
+                            match crate::network::hsp_node::SwarmEngine::dispatch(&ip, 9003, &payload)
                                 .await
                             {
                                 Ok(res) => println!("✅ [HIVE]: Node {} gereed: {}", ip, res),
@@ -470,7 +466,7 @@ impl Orchestrator {
 
                     for clean_ip in final_targets {
                         print!("  -> {}: ", clean_ip);
-                        match crate::network::swarm::SwarmEngine::dispatch(
+                        match crate::network::hsp_node::SwarmEngine::dispatch(
                             &clean_ip,
                             9003,
                             clean_payload,

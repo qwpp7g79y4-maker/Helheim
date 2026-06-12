@@ -246,15 +246,9 @@ impl Executor {
                                 match gpu_backend.execute_lowered_block(&*value, &context) {
                                     Ok(Some(val)) => {
                                         println!("[EXECUTOR]: Op evaluated on GPU via PTX JIT path. Result: {}", val);
-                                        let mask = val.to_bits() as u32;
-                                        let mut spike_list = vec![];
-                                        for i in 0..32 {
-                                            let b = (mask & (1u32 << i)) != 0;
-                                            spike_list.push(if b { "waar" } else { "onwaar" });
-                                        }
-                                        let unpacked = format!("[{}]", spike_list.join(", "));
-                                        self.memory.set_var_native(name.clone(), HelheimType::parse(&unpacked));
-                                        unpacked
+                                        let result_str = val.to_string();
+                                        self.memory.set_var_native(name.clone(), HelheimType::parse(&result_str));
+                                        result_str
                                     }
                                     _ => {
                                         // Let evaluate_ast_expr handle it cleanly so that nested Ops and logic work
@@ -377,18 +371,9 @@ impl Executor {
                                 match gpu_backend.execute_lowered_block(&*value, &context) {
                                     Ok(Some(val)) => {
                                         println!("[EXECUTOR]: Expression Block evaluated on GPU via PTX JIT path. Result: {}", val);
-                                        // SNN host unpacking: if lowered returned packed bits (via b32 store in f32 pool), unpack to list string
-                                        // Adapted for 2D: larger mask support (up to 32 for demo 2D matrices flattened or per-row)
-                                        let mask = val.to_bits() as u32;
-                                        let mut spike_list = vec![];
-                                        for i in 0..32 {  // support larger 1D or flattened 2D spike tensors
-                                            let b = (mask & (1u32 << i)) != 0;
-                                            spike_list.push(if b { "waar" } else { "onwaar" });
-                                        }
-                                        let unpacked = format!("[{}]", spike_list.join(", "));
-                                        // set nicely as list in memory too
-                                        self.memory.set_var_native(name.clone(), HelheimType::parse(&unpacked));
-                                        unpacked
+                                        let result_str = val.to_string();
+                                        self.memory.set_var_native(name.clone(), HelheimType::parse(&result_str));
+                                        result_str
                                     }
                                     _ => {
                                         // Fallback to CPU interpreter
@@ -475,7 +460,9 @@ impl Executor {
                                     let mut json_map = serde_json::Map::new();
                                     for (i, field) in fields.iter().enumerate() {
                                         let val_str: &str = &args[i];
-                                        let json_val = if let Ok(num) = val_str.parse::<f64>() {
+                                        let json_val = if let Ok(num) = val_str.parse::<i64>() {
+                                            serde_json::json!(num)
+                                        } else if let Ok(num) = val_str.parse::<f64>() {
                                             serde_json::json!(num)
                                         } else if val_str == "waar" || val_str == "true" {
                                             serde_json::json!(true)
@@ -761,7 +748,7 @@ impl Executor {
 
                         // 3. Dispatch
                         for t in final_targets {
-                            let _ = crate::network::swarm::SwarmEngine::dispatch(
+                            let _ = crate::network::hsp_node::SwarmEngine::dispatch(
                                 &t,
                                 9003,
                                 &final_payload,

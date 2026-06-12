@@ -1,5 +1,6 @@
 pub mod backend;
 pub mod cpu_backend;
+pub mod cann_tt;
 
 #[cfg(feature = "cuda")]
 pub mod ptx_backend;

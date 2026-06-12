@@ -52,7 +52,7 @@ Priority order (do in sequence, one at a time, with explicit go between):
    - **Owner**: Grok implements. Antigravity: tests, docs update.
    - **Done when**: Errors are clear and include line+column; no more raw "Fout op regel".
 
-2. **Functions — Make them complete for general use**
+2. **Functions — Make them complete for general use** - [COMPLETED]
    - Ensure FunctionDef/Call/Return work end-to-end in general (non-SNN) lowering and CPU path.
    - Proper return values, scoping in pure language programs.
    - Add language-specific tests and examples (pure CodeTaal functions, not SNN).

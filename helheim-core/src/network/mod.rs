@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream, UdpSocket};
 use std::sync::{Arc, Mutex};
-pub mod swarm;
+pub mod hsp_node;
 use crate::common::probe::NodeCapabilities;
 use crate::shield::HelheimShield;
 use anyhow::Result;

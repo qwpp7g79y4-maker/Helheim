@@ -12,6 +12,7 @@ pub enum TypeInfo {
     List, // for 1D/2D spike matrices/tensors
     Void,
     Unknown,
+    Function { arity: usize },
 }
 
 impl fmt::Display for TypeInfo {
@@ -25,6 +26,7 @@ impl fmt::Display for TypeInfo {
             TypeInfo::List => write!(f, "Lijst (spike matrix/tensor)"),
             TypeInfo::Void => write!(f, "Niets (Void)"),
             TypeInfo::Unknown => write!(f, "Onbekend"),
+            TypeInfo::Function { arity } => write!(f, "Functie ({} argumenten)", arity),
         }
     }
 }
@@ -35,6 +37,7 @@ pub enum SemanticError {
     VariableAlreadyDefined(String),
     TypeMismatch { expected: String, found: String },
     UnsupportedOperation { op: String, ty: String },
+    ArityMismatch { name: String, expected: usize, found: usize },
 }
 
 impl fmt::Display for SemanticError {
@@ -51,6 +54,9 @@ impl fmt::Display for SemanticError {
             }
             SemanticError::UnsupportedOperation { op, ty } => {
                 write!(f, "Type Fout: Operatie '{}' wordt niet ondersteund voor type '{}'.", op, ty)
+            }
+            SemanticError::ArityMismatch { name, expected, found } => {
+                write!(f, "Semantische Fout: Functie '{}' verwacht {} argumenten, maar kreeg er {}.", name, expected, found)
             }
         }
     }
@@ -190,7 +196,7 @@ impl SemanticAnalyzer {
                 Ok(TypeInfo::Void)
             }
             CodeTaal::FunctionDef { name, params, body } => {
-                self.symbols.define(name, TypeInfo::Unknown)?;
+                self.symbols.define(name, TypeInfo::Function { arity: params.len() })?;
                 
                 self.symbols.enter_scope();
                 for param in params {
@@ -200,9 +206,16 @@ impl SemanticAnalyzer {
                 self.symbols.exit_scope();
                 Ok(TypeInfo::Void)
             }
-            CodeTaal::FunctionCall { name: _, args } => {
+            CodeTaal::FunctionCall { name, args } => {
                 for arg in args {
                     self.visit(arg)?;
+                }
+                if let Some(info) = self.symbols.resolve(name) {
+                    if let TypeInfo::Function { arity } = info.ty {
+                        if args.len() != arity {
+                            return Err(SemanticError::ArityMismatch { name: name.clone(), expected: arity, found: args.len() });
+                        }
+                    }
                 }
                 Ok(TypeInfo::Unknown)
             }

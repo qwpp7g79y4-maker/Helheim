@@ -46,7 +46,7 @@ CodeTaal blocks are lowered directly to PTX instructions for Nvidia GPUs, with n
 Scripts are executed from the terminal. The orchestrator dynamically evaluates the AST or JIT-compiles to PTX.
 
 ```bash
-helheim run examples/snn/03_snn_cortex.hel
+helheim script examples/snn/03_snn_cortex.hel
 ```
 
 ## Usage
