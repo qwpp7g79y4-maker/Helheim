@@ -28,7 +28,7 @@
 - [x] **Fase 2** — General lowering fidelity — `GeneralPtxGenerator` gebouwd, `test_fase2.ptx` bewijs aanwezig
 - [x] **Fase 3** — Taal-specifieke tests (`cargo test -p helheim-lang` voor pure CodeTaal, niet SNN) — pure CodeTaal tests toegevoegd, geen SNN afhankelijkheden
 - [x] **Fase 4** — LANGUAGE_SPEC.md bijwerken (taal-eerst, SNN als voorbeeld-laag, niet kern) — *Voltooid door C1*
-- [ ] **Fase 5** — Swarm verificatie (HSP werkt nog na alle wijzigingen?)
+- [x] **Fase 5** — Swarm verificatie (HSP werkt nog na alle wijzigingen?) — Distributed `Concurrent` blocks werkend over Swarm via `ast_json:`
 - [ ] **Fase 6** — Integratie testen CLI/daemon (repl, service, script modus)
 
 ---
@@ -43,4 +43,4 @@
 
 ## Volgende stap
 
-**Fase 5** — Swarm verificatie. Controleren of HSP (Helheim Swarm Protocol) networking nog correct werkt na de ingrijpende wijzigingen en opschoningsacties.
+**Fase 6** — Integratie testen CLI/daemon. De twee legacy-tests (`test_import_module` en `test_models`) oplossen en de daemon flows verifiëren.

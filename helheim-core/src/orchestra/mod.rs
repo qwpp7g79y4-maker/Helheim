@@ -87,6 +87,24 @@ impl Orchestrator {
             // The AST Engine (helheim-lang) now natively handles variable resolution.
             let trimmed = input.trim();
 
+            if trimmed.starts_with("ast_json:") {
+                let json = &trimmed["ast_json:".len()..];
+                match serde_json::from_str::<Vec<CodeTaal>>(json) {
+                    Ok(ast_vec) => {
+                        println!(
+                            "[SWARM RECEIVER]: ast_json ontvangen ({} statements). Directe AST-executie (geen string-parser).",
+                            ast_vec.len()
+                        );
+                        let _ = self.execute_ast(ast_vec, ctx.clone()).await;
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        eprintln!("[SWARM RECEIVER ERROR]: ast_json deserialisatie mislukt: {}", e);
+                        return Ok(());
+                    }
+                }
+            }
+
             // Professional log (Flight Recorder)
             tracing::info!(target: "orchestrator", command = ?trimmed, "Verwerken van instructie.");
             println!("[EXECUTION]: Verwerken van instructie: '{}'", trimmed);

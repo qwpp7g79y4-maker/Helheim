@@ -9,6 +9,12 @@ use helheim_lang::ast::CodeTaal;
 use crate::orchestra::memory::{MemoryManager, HelheimType};
 use crate::orchestra::system;
 
+use futures::future;
+use serde_json;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static SCHEDULER_INDEX: AtomicUsize = AtomicUsize::new(0);
+
 #[derive(Clone)]
 pub struct Executor {
     pub memory: Arc<MemoryManager>,
@@ -18,6 +24,38 @@ pub struct Executor {
 impl Executor {
     pub fn new(memory: Arc<MemoryManager>, discovery: Arc<crate::network::DiscoveryService>) -> Self {
         Self { memory, discovery }
+    }
+
+    fn schedule_statement(&self, stmt: &CodeTaal) -> Option<(String, u16)> {
+        let peers = match self.discovery.peers.lock() {
+            Ok(p) => p.clone(),
+            Err(_) => return None,
+        };
+        if peers.is_empty() {
+            return None;
+        }
+
+        let is_gpu = matches!(stmt, CodeTaal::GpuKernel(_) | CodeTaal::MatMul { .. });
+
+        let candidates: Vec<String> = if is_gpu {
+            peers
+                .iter()
+                .filter(|(_, caps)| caps.gpu_count > 0)
+                .map(|(ip, _)| ip.clone())
+                .collect()
+        } else {
+            peers.keys().cloned().collect()
+        };
+
+        let list = if candidates.is_empty() {
+            peers.keys().cloned().collect()
+        } else {
+            candidates
+        };
+
+        let idx = SCHEDULER_INDEX.fetch_add(1, Ordering::Relaxed) % list.len();
+        let ip = list[idx].clone();
+        Some((ip, 9003))
     }
 
     pub fn execute_ast(
@@ -557,20 +595,70 @@ impl Executor {
                     }
                     CodeTaal::Concurrent { statements } => {
                         println!(
-                            "[AST]: Activeren van parallelle uitvoering ({} taken)...",
+                            "[AST]: Activeren van distributed parallelle uitvoering ({} taken)...",
                             statements.len()
                         );
-                        let mut futures_list = Vec::new();
-                        for concurrent_stmt in statements {
-                            // Execute each statement in its own context
-                            futures_list.push(self.execute_ast(vec![concurrent_stmt.clone()], ctx.clone()));
+
+                        let peers = match self.discovery.peers.lock() {
+                            Ok(p) => p.clone(),
+                            Err(_) => std::collections::HashMap::new(),
+                        };
+
+                        if peers.is_empty() {
+                            // Lokale fallback (exact zoals huidige implementatie)
+                            let mut futures_list = Vec::new();
+                            for concurrent_stmt in statements {
+                                futures_list.push(self.execute_ast(vec![concurrent_stmt.clone()], ctx.clone()));
+                            }
+                            let results = futures::future::join_all(futures_list).await;
+                            for res in results {
+                                if let Err(e) = res {
+                                    println!("[ERROR]: Fout in parallelle taak: {}", e);
+                                }
+                            }
+                            continue;
                         }
 
-                        // Await all of them simultaneously
-                        let results = futures::future::join_all(futures_list).await;
+                        // Distributed pad
+                        let executor = self.clone();
+                        let mut dispatch_futures = Vec::new();
+
+                        for stmt in statements {
+                            let stmt = stmt.clone();
+                            let ctx = ctx.clone();
+                            let exec = executor.clone();
+
+                            dispatch_futures.push(async move {
+                                if let Some((ip, port)) = exec.schedule_statement(&stmt) {
+                                    let json = match serde_json::to_string(&vec![stmt.clone()]) {
+                                        Ok(j) => j,
+                                        Err(e) => {
+                                            eprintln!("[SWARM SERIALIZE ERROR]: {}", e);
+                                            return exec.execute_ast(vec![stmt], ctx).await.map(|_| ());
+                                        }
+                                    };
+                                    let cmd = format!("ast_json:{}", json);
+
+                                    match crate::network::hsp_node::SwarmEngine::dispatch(&ip, port, &cmd).await {
+                                        Ok(res) => {
+                                            println!("[SWARM]: Result from {}: {}", ip, res);
+                                            Ok(())
+                                        }
+                                        Err(e) => {
+                                            println!("[SWARM ERROR]: Dispatch failed ({}), fallback local", e);
+                                            exec.execute_ast(vec![stmt], ctx).await.map(|_| ())
+                                        }
+                                    }
+                                } else {
+                                    exec.execute_ast(vec![stmt], ctx).await.map(|_| ())
+                                }
+                            });
+                        }
+
+                        let results = futures::future::join_all(dispatch_futures).await;
                         for res in results {
                             if let Err(e) = res {
-                                println!("[ERROR]: Fout in parallelle taak: {}", e);
+                                println!("[ERROR]: Distributed taak error: {}", e);
                             }
                         }
                     }
