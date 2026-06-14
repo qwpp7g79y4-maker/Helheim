@@ -82,7 +82,7 @@ impl KernelSynthesisEngine {
                 format!("// WARNING: Unexpanded IMPORT -> {} (Linker skipped?)", path)
             }
             b @ CodeTaal::Block { .. } | b @ CodeTaal::FunctionDef { .. } => {
-                println!("[SYNTHESIS]: General Block/FunctionDef -> forcing PtxGenerator lowering (Phase 3 bare metal path)");
+                println!("[SYNTHESIS]: General Block/FunctionDef -> forcing PtxGenerator lowering (bare metal path)");
                 let mut ptx_gen = PtxGenerator::new();
                 match ptx_gen.lower_general(&b) {
                     Ok(ptx) => ptx,
@@ -416,13 +416,12 @@ impl PtxGenerator {
         ptx.push("    ld.param.u64 %rd1, [result_ptr];");
 
         // Load context inputs into registers and register them for VarGet.
-        // For spike/boolean packed data (Int from bitmask) or native bools, use .b32 + integer %r regs.
-        // Floats stay f32.
+        // Int and Bool → .b32 integer registers. Floats → f32.
         for name in &input_params {
             let val = context.get(name).unwrap();
             match val {
                 LiteralValue::Int(_) => {
-                    // bit-packed spikes or integers -> use b32 integer register for bitwise
+                    // integers → b32 register
                     let reg = self.reg_alloc.alloc_b32_fragment(1)[0].clone();
                     ptx.push(&format!("    ld.param.b32 {}, [input_{}];", reg, name));
                     self.variables.insert(name.clone(), reg);
@@ -433,17 +432,17 @@ impl PtxGenerator {
                     self.variables.insert(name.clone(), reg);
                 }
                 LiteralValue::Bool(b) => {
-                    // native boolean -> treat as b32 0/1 for bitwise/spike compat
+                    // bool → b32 0/1
                     let reg = self.reg_alloc.alloc_b32_fragment(1)[0].clone();
                     ptx.push(&format!("    ld.param.b32 {}, [input_{}];", reg, name));
                     ptx.push(&format!("    // bool {} loaded as b32 mask bit", if *b {1} else {0}));
                     self.variables.insert(name.clone(), reg);
                 }
                 LiteralValue::List(_) => {
-                    // 2D/1D spike tensor - for now pass as 0, real packing happens in executor before lowering for context
+                    // list/matrix → passed as packed b32 by executor before lowering
                     let reg = self.reg_alloc.alloc_b32_fragment(1)[0].clone();
                     ptx.push(&format!("    ld.param.b32 {}, [input_{}];", reg, name));
-                    ptx.push(&format!("    // list/matrix (2D spike tensor) loaded as b32 (packed upstream)"));
+                    ptx.push(&format!("    // list/matrix loaded as b32 (packed upstream)"));
                     self.variables.insert(name.clone(), reg);
                 }
                 _ => {
@@ -483,8 +482,7 @@ impl PtxGenerator {
                 if let Some(val) = value {
                     let out_reg = self.translate_expression(ptx, val)?;
                     if out_reg.starts_with("%r") {
-                        // Integer register (e.g. bit-packed spike mask) -> untyped b32 store into the f32 buffer (bit-cast hack)
-                        // Reuse existing f32 result pool without new allocs. CPU side will reinterpret bits.
+                        // Integer register → b32 store into f32 buffer (bit-cast). CPU reinterprets bits.
                         ptx.push(&format!("    st.global.b32 [%rd1], {};", out_reg));
                     } else {
                         ptx.push(&format!("    st.global.f32 [%rd1], {};", out_reg));
@@ -531,11 +529,11 @@ impl PtxGenerator {
         // Type-aware lowering (plan B): Int -> u32/s32 on %r, Float -> f32 on %f
         match op {
             CodeTaal::MatrixLiteral { rows } => {
-                // 2D spike tensor support - for lowered PTX, the matrix is packed into b32 masks by executor context before lowering
+                // 2D matrix → packed by executor before lowering
                 let out_reg = self.reg_alloc.alloc_b32_fragment(1)[0].clone();
                 let r = rows.len();
                 let c = rows.first().map_or(0, |row| row.len());
-                ptx.push(&format!("    // MatrixLiteral 2D spikes ({}x{}) - use packed context input or global mem", r, c));
+                ptx.push(&format!("    // MatrixLiteral ({}x{}) - use packed context input or global mem", r, c));
                 Ok(out_reg)
             }
             CodeTaal::Literal(val) => {
@@ -564,9 +562,9 @@ impl PtxGenerator {
                         Ok(out_reg)
                     }
                     LiteralValue::List(_) => {
-                        // 2D spike matrix or 1D list literal - not directly in PTX scalar reg for compute, treat host-side for now
+                        // list/matrix literal — host-side, not directly in PTX scalar reg
                         let out_reg = self.reg_alloc.alloc_b32_fragment(1)[0].clone();
-                        ptx.push(&format!("    // list/matrix literal (2D spike tensor) - host/packed side {}", val));
+                        ptx.push(&format!("    // list/matrix literal - host/packed side {}", val));
                         Ok(out_reg)
                     }
                 }
@@ -614,7 +612,7 @@ impl PtxGenerator {
                         }
                     }
                     "&" | "|" | "^" => {
-                        // Bitwise for SNN spikes (packed in u32/b32). Only on int regs.
+                        // Bitwise ops on b32 integer registers only.
                         if is_int_math {
                             let out_reg = self.reg_alloc.alloc_b32_fragment(1)[0].clone();
                             let ptx_op = match op_str.as_str() {
@@ -627,7 +625,7 @@ impl PtxGenerator {
                             Ok(out_reg)
                         } else {
                             // fallback or error
-                            Err(anyhow::anyhow!("Bitwise ops only supported on integer/spike registers"))
+                            Err(anyhow::anyhow!("Bitwise ops only supported on integer registers"))
                         }
                     }
                     "<<" | ">>" => {
@@ -641,13 +639,13 @@ impl PtxGenerator {
                         }
                     }
                     "popc" => {
-                        // SNN popcount for fire threshold: popc.b32 on the int reg (spike mask)
+                        // Population count: popc.b32 on integer register
                         if l_reg.starts_with("%r") {
                             let out_reg = self.reg_alloc.alloc_b32_fragment(1)[0].clone();
                             ptx.push(&format!("    popc.b32 {}, {};", out_reg, l_reg));
                             Ok(out_reg)
                         } else {
-                            Err(anyhow::anyhow!("popc only on integer/spike register"))
+                            Err(anyhow::anyhow!("popc only on integer register"))
                         }
                     }
                     "==" | "!=" | "<" | ">" | "<=" | ">=" => {
@@ -920,7 +918,7 @@ impl PtxModule {
 }
 
 // ============================================================================
-// GeneralPtxGenerator (Target B - Fase 1, Stap 3)
+// GeneralPtxGenerator — bare metal lowering for general CodeTaal
 // Grok Blueprint for clean native PTX generation of standard language constructs.
 // ============================================================================
 pub struct GeneralPtxGenerator {

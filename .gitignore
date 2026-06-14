@@ -29,6 +29,8 @@ LANGUAGE_COMPLETION_CHECKLIST.md
 ARTISJOK_REMOVAL_LOG.md
 last_actions.md
 task.md
+docs/MOTOR_CORTEX.md
+*.snn_backup
 .codegraph/
 experiments/
 vscode-helheim/
