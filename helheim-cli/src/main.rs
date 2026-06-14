@@ -152,17 +152,31 @@ async fn main() -> Result<()> {
 
         Commands::Script { path } => {
             println!("[SCRIPT]: Executing '{}' via Native AST Engine...", path);
-            let content = tokio::fs::read_to_string(path).await?;
+            let content = tokio::fs::read_to_string(path.clone()).await?;
             use helheim_core::orchestra::parser::HelParser;
             match HelParser::parse(&content) {
-                Ok(mut ast) => {
-                    if let Err(e) = helheim_core::orchestra::semantic::SemanticAnalyzer::analyze(&mut ast) {
-                        println!("{}", e);
-                        return Ok(());
-                    }
-                    let ctx = helheim_core::common::context::ExecutionContext::default_privileged();
-                    if let Err(e) = orchestrator.execute_ast(ast, ctx).await {
-                        println!("[ERROR]: Runtime Error: {}", e);
+                Ok(ast) => {
+                    let std_lib = dirs::home_dir()
+                        .unwrap_or_default()
+                        .join(".helheim")
+                        .join("lib");
+                    let entry_path = std::path::Path::new(&path);
+                    let mut linker = helheim_core::orchestra::resolver::ModuleLinker::with_std_lib(
+                        entry_path.parent().unwrap_or(std::path::Path::new(".")).to_path_buf(),
+                        std_lib,
+                    );
+                    match linker.link(ast, entry_path) {
+                        Ok(mut linked_ast) => {
+                            if let Err(e) = helheim_core::orchestra::semantic::SemanticAnalyzer::analyze(&mut linked_ast) {
+                                println!("{}", e);
+                                return Ok(());
+                            }
+                            let ctx = helheim_core::common::context::ExecutionContext::default_privileged();
+                            if let Err(e) = orchestrator.execute_ast(linked_ast, ctx).await {
+                                println!("[ERROR]: Runtime Error: {}", e);
+                            }
+                        },
+                        Err(e) => println!("[ERROR]: Linker Error: {}", e),
                     }
                 },
                 Err(e) => println!("[ERROR]: Parse Error: {}", e),
@@ -173,6 +187,48 @@ async fn main() -> Result<()> {
              // Direct command execution
              let ctx = helheim_core::common::context::ExecutionContext::default_privileged();
              orchestrator.process_command(&input, ctx).await?;
+        }
+
+        Commands::Build { path } => {
+            println!("{}", format!("[BUILD]: Compiling '{}' to Native PTX...", path).yellow().bold());
+            let content = tokio::fs::read_to_string(path.clone()).await?;
+            use helheim_core::orchestra::parser::HelParser;
+            match HelParser::parse(&content) {
+                Ok(ast) => {
+                    let std_lib = dirs::home_dir().unwrap_or_default().join(".helheim").join("lib");
+                    let entry_path = std::path::Path::new(&path);
+                    let mut linker = helheim_core::orchestra::resolver::ModuleLinker::with_std_lib(
+                        entry_path.parent().unwrap_or(std::path::Path::new(".")).to_path_buf(),
+                        std_lib,
+                    );
+                    match linker.link(ast, entry_path) {
+                        Ok(mut linked_ast) => {
+                            if let Err(e) = helheim_core::orchestra::semantic::SemanticAnalyzer::analyze(&mut linked_ast) {
+                                println!("{}", format!("[COMPILER ERROR]: Semantic Analysis Failed: {}", e).red().bold());
+                                return Ok(());
+                            }
+                            
+                            // PTX Lowering
+                            println!("[BUILD]: Semantic Analysis OK. Lowering to PTX (Target B)...");
+                            let mut ptx_gen = helheim_lang::synthesis::GeneralPtxGenerator::new();
+                            let main_block = helheim_lang::ast::CodeTaal::Block { statements: linked_ast };
+                            
+                            match ptx_gen.lower_general(&main_block) {
+                                Ok(ptx_code) => {
+                                    let out_path = entry_path.with_extension("ptx");
+                                    tokio::fs::write(&out_path, &ptx_code).await?;
+                                    println!("{}", format!("✅ [SUCCESS]: Native NVIDIA PTX compiled to {}", out_path.display()).green().bold());
+                                }
+                                Err(e) => {
+                                    println!("{}", format!("❌ [LOWERING ERROR]: {}", e).red().bold());
+                                }
+                            }
+                        },
+                        Err(e) => println!("{}", format!("❌ [LINKER ERROR]: {}", e).red().bold()),
+                    }
+                },
+                Err(e) => println!("{}", format!("❌ [PARSE ERROR]: {}", e).red().bold()),
+            }
         }
 
         Commands::Upgrade { url } => {

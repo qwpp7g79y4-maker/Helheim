@@ -65,7 +65,7 @@ Priority order (do in sequence, one at a time, with explicit go between):
    - **Owner**: Grok. Antigravity: verification with non-SNN scripts.
    - **Done when**: A pure general CodeTaal program lowers and runs reliably via PTX/CPU without heavy SNN code paths.
 
-4. **Modules (`gebruik` / use)**
+4. **Modules (`gebruik` / use)** - [COMPLETED]
    - Make import system work for general language programs (file loading, basic namespacing).
    - **Owner**: Grok. Antigravity: tests + docs.
    - **Done when**: Can cleanly import and use code from other .hel files in general programs.
@@ -83,7 +83,7 @@ Priority order (do in sequence, one at a time, with explicit go between):
    - **Owner**: Antigravity (professional writing + updates). Grok: technical accuracy.
    - **Done when**: Spec is complete, professional, language-primary.
 
-7. **Tooling (VS Code for the language)**
+7. **Tooling (VS Code for the language)** - [COMPLETED]
    - Complete syntax highlighting, basic support for CodeTaal.
    - **Owner**: Antigravity (if language priority). Grok: provides grammar if needed.
    - **Done when**: Usable in VS Code for writing language code.

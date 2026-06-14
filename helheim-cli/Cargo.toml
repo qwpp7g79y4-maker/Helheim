@@ -38,3 +38,4 @@ regex = "1.10"
 dashmap = "6.2.1"
 evalexpr = "13.1.0"
 helheim-core = { path = "../helheim-core" }
+helheim-lang = { path = "../helheim-lang" }

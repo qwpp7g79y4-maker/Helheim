@@ -97,37 +97,19 @@ impl HelheimLock {
     }
 
     pub fn unlock(key: &str) -> bool {
-        // De 'Master Hash' berekend met onze hel_hash
-        let target_hash: u64 = Self::hel_hash("HELL-MASTER-2026");
-
-        if Self::hel_hash(key) == target_hash {
-            // Persistent unlock via file token
-            if let Ok(mut file) = std::fs::File::create("/tmp/helheim.token") {
-                use std::io::Write;
-                let _ = file.write_all(key.as_bytes());
-            }
-            IS_UNLOCKED.store(true, std::sync::atomic::Ordering::SeqCst);
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn is_authorized() -> bool {
-        // Check memory first
-        if IS_UNLOCKED.load(std::sync::atomic::Ordering::SeqCst) {
-            return true;
-        }
-
-        // Check persistent file token
-        if let Ok(content) = std::fs::read_to_string("/tmp/helheim.token") {
-            let target_hash: u64 = Self::hel_hash("HELL-MASTER-2026");
-            if Self::hel_hash(content.trim()) == target_hash {
+        use crate::shield::crypto::HelSigner;
+        if let Ok(sig_bytes) = base64::engine::general_purpose::STANDARD.decode(key.trim()) {
+            if HelSigner::verify_update(b"UNLOCK_COMMAND", &sig_bytes).is_ok() {
                 IS_UNLOCKED.store(true, std::sync::atomic::Ordering::SeqCst);
                 return true;
             }
         }
         false
+    }
+
+    pub fn is_authorized() -> bool {
+        // Check memory only (Fix for K3: removed world-readable /tmp token file)
+        IS_UNLOCKED.load(std::sync::atomic::Ordering::SeqCst)
     }
 }
 

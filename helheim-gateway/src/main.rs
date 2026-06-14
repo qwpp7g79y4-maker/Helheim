@@ -114,9 +114,8 @@ async fn execute_handler(
     }
 
     // Determine Execution Context based on Signatures
-    // For local development on :8080 we currently default to privileged if no signature is present,
-    // but in production we'd default to sandbox. We'll allow privileged for now to not break the UI.
-    let mut ctx = ExecutionContext::default_privileged();
+    // For local development on :8080 we default to sandbox for safety.
+    let mut ctx = ExecutionContext::sandbox();
     if script.starts_with("SIGNED: ") {
         if let Some((sig_part, script_part)) = script[8..].split_once(" | ") {
             use base64::Engine;

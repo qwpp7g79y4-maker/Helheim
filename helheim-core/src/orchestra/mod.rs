@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 pub use helheim_lang::synthesis;
 pub use helheim_lang::parser;
+pub use helheim_lang::resolver;
 pub use helheim_lang::persistence;
 pub use helheim_lang::memory;
 pub use helheim_lang::semantic;
@@ -252,8 +253,14 @@ impl Orchestrator {
                 // Bare Metal guarantee / Fallback if discovery is empty
                 if node_weights.is_empty() {
                     println!("{}", "[WARN]: Discovery Service leeg. Vooringestelde Swarm Nodes inladen (Equal weights)...".yellow());
-                    node_weights.insert("192.168.69.161".to_string(), 10.0);
-                    node_weights.insert("213.132.219.149".to_string(), 10.0);
+                    if let Ok(env_nodes) = std::env::var("HELHEIM_NODES") {
+                        for ip in env_nodes.split(',') {
+                            node_weights.insert(ip.trim().to_string(), 10.0);
+                        }
+                    } else {
+                        // Fallback to local only to prevent leaking public IPs
+                        node_weights.insert("127.0.0.1".to_string(), 10.0);
+                    }
                 }
 
                 // 2. Calculate Local Weight (Master Node)

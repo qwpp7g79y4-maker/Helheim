@@ -1196,10 +1196,12 @@ impl HelParser {
                         return Err(anyhow::anyhow!("Verwacht sluitend haakje ')'"));
                     }
                     expr
-                } else if t.value.parse::<i64>().is_ok() {
-                    CodeTaal::Literal(LiteralValue::Int(t.value.parse().unwrap()))
-                } else if t.value.parse::<f64>().is_ok() {
-                    CodeTaal::Literal(LiteralValue::Float(t.value.parse().unwrap()))
+                } else if let TokenKind::Number { raw, is_float } = &t.kind {
+                    if *is_float {
+                        CodeTaal::Literal(LiteralValue::Float(raw.parse().unwrap_or(0.0)))
+                    } else {
+                        CodeTaal::Literal(LiteralValue::Int(raw.parse().unwrap_or(0)))
+                    }
                 } else if t.value.starts_with("\"") {
                     let s = t.value.trim_matches('"').to_string();
                     CodeTaal::Literal(LiteralValue::String(s))

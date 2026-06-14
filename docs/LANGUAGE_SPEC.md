@@ -37,7 +37,26 @@ Helheim natively supports the following types:
 - **Tensor**: Native multidimensional allocations for Matrix Math.
 
 ## 3. Operations & Expressions
-Helheim supports standard arithmetic (`+`, `-`, `*`, `/`) and logical operators (`==`, `!=`, `<`, `>`, `<=`, `>=`, `&&`, `||`).
+Helheim utilizes a **Top-Down Operator Precedence Parser (Pratt Parser)** for evaluating mathematical and logical expressions. This ensures expressions are evaluated securely and correctly according to standard mathematical laws without explicit parentheses.
+
+### Operator Precedence Table
+Operators with higher precedence are evaluated first.
+
+| Precedence Level | Operators | Description | Associativity |
+|---|---|---|---|
+| **20** | `*`, `/`, `%` | Multiplication, Division, Modulo | Left |
+| **10** | `+`, `-` | Addition, Subtraction | Left |
+| **7** | `<<`, `>>` | Bitwise Shift Left/Right | Left |
+| **6** | `&`, `\|`, `^` | Bitwise AND, OR, XOR (SNN Spikes) | Left |
+| **5** | `==`, `!=`, `<`, `>`, `<=`, `>=` | Comparison / Equality | Left |
+| **3** | `&&` / `en` | Logical AND | Left |
+| **2** | `\|\|` / `of` | Logical OR | Left |
+
+*Example:* 
+`zet x = 10 + 5 * 2 > 15;`
+1. Evaluates `5 * 2` (10) due to Precedence 20.
+2. Evaluates `10 + 10` (20) due to Precedence 10.
+3. Evaluates `20 > 15` (waar) due to Precedence 5.
 
 ### Bitwise Operators (SNN Focused)
 For neural network thresholding, Helheim supports bitwise operators on `Bool` lists (packed into `u32` integers natively):

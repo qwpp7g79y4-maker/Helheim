@@ -19,6 +19,8 @@ pub enum Commands {
     Repl,
     /// Voer een Helheim script (.hel) uit
     Script { path: String },
+    /// Compileer een Helheim script naar native PTX machinecode
+    Build { path: String },
     /// Start de Helheim Node listener (Antigravity Cluster)
     Listen {
         #[arg(short, long, default_value_t = 8080)]

@@ -151,24 +151,9 @@ impl Executor {
                         let _ = self.execute_function_call(&name, resolved_args, ctx.clone()).await?;
                     }
                     CodeTaal::Gebruik { path } => {
-                        println!("[AST]: Laden van module: '{}'", path);
-                        match tokio::fs::read_to_string(&path).await {
-                            Ok(content) => {
-                                match crate::orchestra::parser::HelParser::parse(&content) {
-                                    Ok(module_ast) => {
-                                        if let Err(e) = Box::pin(self.execute_ast(module_ast, ctx.clone())).await
-                                        {
-                                            println!("[ERROR]: Fout in module '{}': {}", path, e);
-                                        }
-                                    }
-                                    Err(e) => println!(
-                                        "[ERROR]: Kan module '{}' niet parsen: {}",
-                                        path, e
-                                    ),
-                                }
-                            }
-                            Err(e) => println!("[ERROR]: Module '{}' niet gevonden: {}", path, e),
-                        }
+                        // Thanks to the ModuleLinker, Gebruik should be fully expanded at compile-time.
+                        // If it reaches the executor, it means the linker missed it or it was executed without linking.
+                        println!("[EXECUTOR]: Warning: CodeTaal::Gebruik for '{}' reached runtime. Expected compile-time expansion.", path);
                     }
                     CodeTaal::FunctionDef { name, params, body } => {
                         self.memory.ast_funcs.insert(name.clone(), (params.clone(), body.clone()));
