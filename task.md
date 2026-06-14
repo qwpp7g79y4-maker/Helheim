@@ -26,7 +26,7 @@
 ## Open
 
 - [x] **Fase 2** — General lowering fidelity — `GeneralPtxGenerator` gebouwd, `test_fase2.ptx` bewijs aanwezig
-- [ ] **Fase 3** — Taal-specifieke tests (`cargo test -p helheim-lang` voor pure CodeTaal, niet SNN)
+- [x] **Fase 3** — Taal-specifieke tests (`cargo test -p helheim-lang` voor pure CodeTaal, niet SNN) — pure CodeTaal tests toegevoegd, geen SNN afhankelijkheden
 - [ ] **Fase 4** — LANGUAGE_SPEC.md bijwerken (taal-eerst, SNN als voorbeeld-laag, niet kern)
 - [ ] **Fase 5** — Swarm verificatie (HSP werkt nog na alle wijzigingen?)
 - [ ] **Fase 6** — Integratie testen CLI/daemon (repl, service, script modus)
@@ -43,4 +43,4 @@
 
 ## Volgende stap
 
-**Fase 3** — Taal-specifieke tests (`cargo test -p helheim-lang` voor pure CodeTaal, niet SNN). Alle bestaande tests controleren en de taal garanderen.
+**Fase 4** — LANGUAGE_SPEC.md bijwerken (taal-eerst, SNN als voorbeeld-laag, niet kern). Documenteer de werkelijke state van CodeTaal.
