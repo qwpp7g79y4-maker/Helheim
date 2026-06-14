@@ -3,6 +3,7 @@ use std::time::Instant;
 #[derive(Clone, Debug)]
 pub struct ExecutionContext {
     pub is_privileged: bool,
+    pub is_distributed: bool,
     pub start_time: Instant,
 }
 
@@ -10,6 +11,7 @@ impl ExecutionContext {
     pub fn default_privileged() -> Self {
         Self {
             is_privileged: true,
+            is_distributed: false,
             start_time: Instant::now(),
         }
     }
@@ -17,6 +19,7 @@ impl ExecutionContext {
     pub fn sandbox() -> Self {
         Self {
             is_privileged: false,
+            is_distributed: false,
             start_time: Instant::now(),
         }
     }

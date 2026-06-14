@@ -32,7 +32,8 @@ pub struct Orchestrator {
 impl Orchestrator {
     pub fn new(discovery: Arc<DiscoveryService>) -> Self {
         let memory = Arc::new(memory::MemoryManager::new());
-        let distributed = Arc::new(distributed::DistributedMemory::new("local".to_string()));
+        let node_id = std::env::var("HELHEIM_NODE_ID").unwrap_or_else(|_| hostname::get().map(|h| h.to_string_lossy().into_owned()).unwrap_or("node-0".to_string()));
+        let distributed = Arc::new(distributed::DistributedMemory::new(node_id));
         Self {
             executor: executor::Executor::new(memory.clone(), discovery.clone(), distributed.clone()),
             memory,
@@ -99,7 +100,9 @@ impl Orchestrator {
                             "[SWARM RECEIVER]: ast_json ontvangen ({} statements). Directe AST-executie (geen string-parser).",
                             ast_vec.len()
                         );
-                        let _ = self.execute_ast(ast_vec, ctx.clone()).await;
+                        let mut dist_ctx = ctx.clone();
+                        dist_ctx.is_distributed = true;
+                        let _ = self.execute_ast(ast_vec, dist_ctx).await;
                         return Ok(());
                     }
                     Err(e) => {

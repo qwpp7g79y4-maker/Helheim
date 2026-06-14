@@ -1,6 +1,6 @@
 use crossbeam_queue::SegQueue;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::collections::HashMap;
+use dashmap::DashMap;
 use serde::{Serialize, Deserialize};
 
 // Workaround for LiteralValue parsing. We store string representations 
@@ -17,7 +17,7 @@ pub struct StateDelta {
 
 /// Globale shared state met Lamport + lock-free delta queue
 pub struct DistributedMemory {
-    pub globals: std::sync::RwLock<HashMap<String, (String, u64)>>,   // value + lamport
+    pub globals: DashMap<String, (String, u64)>,   // value + lamport
     pub clock: AtomicU64,
     pub pending_deltas: SegQueue<StateDelta>,            // lock-free outbound
     pub node_id: String,
@@ -26,7 +26,7 @@ pub struct DistributedMemory {
 impl DistributedMemory {
     pub fn new(node_id: String) -> Self {
         Self {
-            globals: std::sync::RwLock::new(HashMap::new()),
+            globals: DashMap::new(),
             clock: AtomicU64::new(0),
             pending_deltas: SegQueue::new(),
             node_id,
@@ -46,9 +46,7 @@ impl DistributedMemory {
     /// Lokale mutatie (hot path)
     pub fn set_global(&self, name: &str, value: String) {
         let ts = self.bump();
-        if let Ok(mut g) = self.globals.write() {
-            g.insert(name.to_string(), (value.clone(), ts));
-        }
+        self.globals.insert(name.to_string(), (value.clone(), ts));
 
         // Enqueue delta voor latere broadcast (na Concurrent of expliciet)
         self.pending_deltas.push(StateDelta {
@@ -61,27 +59,21 @@ impl DistributedMemory {
 
     /// Pas inkomende delta toe (read path)
     pub fn apply_delta(&self, delta: StateDelta) {
-        let current = {
-            if let Ok(g) = self.globals.read() {
-                g.get(&delta.name).map(|(_, ts)| *ts).unwrap_or(0)
-            } else {
-                0
-            }
-        };
-
-        if delta.lamport > current {
-            if let Ok(mut g) = self.globals.write() {
-                // LWW - Last Writer Wins
-                g.insert(delta.name.clone(), (delta.value, delta.lamport));
-            }
-            
-            // Update lokale clock
-            let mut c = self.clock.load(Ordering::Relaxed);
-            while delta.lamport > c {
-                match self.clock.compare_exchange_weak(c, delta.lamport, Ordering::Relaxed, Ordering::Relaxed) {
-                    Ok(_) => break,
-                    Err(actual) => c = actual,
+        self.globals.entry(delta.name.clone())
+            .and_modify(|(v, ts)| {
+                if delta.lamport > *ts {
+                    *v = delta.value.clone();
+                    *ts = delta.lamport;
                 }
+            })
+            .or_insert((delta.value.clone(), delta.lamport));
+            
+        // Update lokale clock
+        let mut c = self.clock.load(Ordering::Relaxed);
+        while delta.lamport > c {
+            match self.clock.compare_exchange_weak(c, delta.lamport, Ordering::Relaxed, Ordering::Relaxed) {
+                Ok(_) => break,
+                Err(actual) => c = actual,
             }
         }
     }

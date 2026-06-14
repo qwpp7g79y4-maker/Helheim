@@ -151,6 +151,7 @@ impl Executor {
                                     Ok(data) => {
                                         println!("[FS READ]: {} ({} bytes)", path_str, data.len());
                                         self.memory.set_var_native("__last_read".to_string(), crate::orchestra::memory::HelheimType::String(data.clone()));
+                                        if ctx.is_distributed { self.distributed.set_global("__last_read", data.clone()); }
                                     }
                                     Err(e) => println!("[FS READ ERROR]: {} : {}", path_str, e),
                                 }
@@ -174,7 +175,8 @@ impl Executor {
                                 Ok(mut resp) => {
                                     let body = resp.body_mut().read_to_string().unwrap_or_default();
                                     println!("[HTTP GET]: {} -> {} bytes", url_str, body.len());
-                                    self.memory.set_var_native("__last_http".to_string(), crate::orchestra::memory::HelheimType::String(body));
+                                    self.memory.set_var_native("__last_http".to_string(), crate::orchestra::memory::HelheimType::String(body.clone()));
+                                    if ctx.is_distributed { self.distributed.set_global("__last_http", body.clone()); }
                                 }
                                 Err(e) => println!("[HTTP ERROR]: {} : {}", url_str, e),
                             }
@@ -272,6 +274,7 @@ impl Executor {
                                         println!("[EXECUTOR]: Op evaluated on GPU via PTX JIT path. Result: {}", val);
                                         let result_str = val.to_string();
                                         self.memory.set_var_native(name.clone(), HelheimType::parse(&result_str));
+                                        if ctx.is_distributed { self.distributed.set_global(name.as_str(), result_str.clone()); }
                                         result_str
                                     }
                                     _ => {
@@ -314,7 +317,8 @@ impl Executor {
                                         serde_json::json!(sub.iter().map(|x| x.to_string()).collect::<Vec<_>>())
                                     },
                                 }).collect();
-                                self.memory.set_var_native(name.clone(), HelheimType::List(json_items));
+                                self.memory.set_var_native(name.clone(), HelheimType::List(json_items.clone()));
+                                if ctx.is_distributed { self.distributed.set_global(&name, serde_json::to_string(&json_items).unwrap_or_default()); }
                                 format!("[{}]", string_items.join(", "))
                             }
                             CodeTaal::MatrixLiteral { ref rows } => {
@@ -336,7 +340,8 @@ impl Executor {
                                         flat.push(v);
                                     }
                                 }
-                                self.memory.set_var_native(name.clone(), HelheimType::List(flat));
+                                self.memory.set_var_native(name.clone(), HelheimType::List(flat.clone()));
+                                if ctx.is_distributed { self.distributed.set_global(&name, serde_json::to_string(&flat).unwrap_or_default()); }
                                 format!("[{}]", string_items.join(", "))
                             }
                             CodeTaal::Block { .. } => {
@@ -397,6 +402,7 @@ impl Executor {
                                         println!("[EXECUTOR]: Expression Block evaluated on GPU via PTX JIT path. Result: {}", val);
                                         let result_str = val.to_string();
                                         self.memory.set_var_native(name.clone(), HelheimType::parse(&result_str));
+                                        if ctx.is_distributed { self.distributed.set_global(name.as_str(), result_str.clone()); }
                                         result_str
                                     }
                                     _ => {
@@ -508,7 +514,8 @@ impl Executor {
                         }
                         let evaluated_value = self.memory.resolve_value(&evaluated_value);
                         println!("[MEM]: {} = {}", name, evaluated_value);
-                        self.memory.set_var_native(name, HelheimType::parse(&evaluated_value));
+                        self.memory.set_var_native(name.clone(), HelheimType::parse(&evaluated_value));
+                        if ctx.is_distributed { self.distributed.set_global(&name, evaluated_value.clone()); }
                     }
                     CodeTaal::VarGet { name } => {
                         if let Some(val) = self.memory.get_var_native(&name) {
@@ -558,6 +565,7 @@ impl Executor {
                                     v.to_string()
                                 };
                                 self.memory.set_var_native(iterator.clone(), HelheimType::parse(&item_str));
+                                if ctx.is_distributed { self.distributed.set_global(&iterator, item_str.clone()); }
                                 // Use propagate helper for return from for-each body
                                 let body_block = CodeTaal::Block { statements: clone_statements.clone() };
                                 if let Some(ret) = self.propagate_return(&body_block, ctx.clone()).await? {
@@ -609,7 +617,9 @@ impl Executor {
                             // Lokale fallback (exact zoals huidige implementatie)
                             let mut futures_list = Vec::new();
                             for concurrent_stmt in statements {
-                                futures_list.push(self.execute_ast(vec![concurrent_stmt.clone()], ctx.clone()));
+                                let mut dist_ctx = ctx.clone();
+                                dist_ctx.is_distributed = true;
+                                futures_list.push(self.execute_ast(vec![concurrent_stmt.clone()], dist_ctx));
                             }
                             let results = futures::future::join_all(futures_list).await;
                             for res in results {
@@ -795,6 +805,7 @@ impl Executor {
                                 println!("[VANG]: Fout afgevangen: {}", e);
                                 if let Some(err_name) = error_var {
                                     self.memory.set_var_native(err_name.clone(), HelheimType::String(e.to_string()));
+                                    if ctx.is_distributed { self.distributed.set_global(&err_name, e.to_string()); }
                                 }
                                 // Propagate return from catch block as well
                                 if let Some(ret) = self.propagate_return(&catch_block, ctx.clone()).await? {
@@ -942,6 +953,7 @@ impl Executor {
 
             for (i, param) in params.iter().enumerate() {
                 self.memory.set_var_native(param.clone(), HelheimType::parse(&resolved_args[i]));
+                if ctx.is_distributed { self.distributed.set_global(&param, resolved_args[i].clone()); }
             }
 
             // Robust return propagation:
