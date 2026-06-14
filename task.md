@@ -43,4 +43,4 @@
 
 ## Volgende stap
 
-**Fase 2** — General lowering fidelity. Schrijf een puur CodeTaal script (geen SNN) en kijk waar het misloopt.
+**Fase 3** — Taal-specifieke tests (`cargo test -p helheim-lang` voor pure CodeTaal, niet SNN). Alle bestaande tests controleren en de taal garanderen.
