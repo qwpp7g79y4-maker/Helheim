@@ -33,7 +33,7 @@ impl SwarmEngine {
                         println!("⚡ Persistente Swarm Verbinding geaccepteerd: {}", addr);
                         let orchestrator_clone = orchestrator.clone();
                         tokio::spawn(async move {
-                            let mut buf = [0; 4096];
+                            let mut buf = vec![0; 1024 * 1024]; // 1MB buffer
 
                             loop {
                                 // 1. Read Payload
@@ -160,7 +160,7 @@ impl SwarmEngine {
         }
 
         // Await ACK/Response
-        let mut buf = [0; 4096];
+        let mut buf = vec![0; 1024 * 1024]; // 1MB buffer
         let n = stream.read(&mut buf).await?;
         let raw_response = String::from_utf8_lossy(&buf[..n]);
 

@@ -142,7 +142,7 @@ impl Orchestrator {
                         .bold()
                 );
 
-                let start_idx = trimmed.find('{').unwrap() + 1;
+                let start_idx = trimmed.find('{').ok_or_else(|| anyhow::anyhow!("Ontbrekende '{{' in Hel-block"))? + 1;
                 let end_idx = trimmed.rfind('}').unwrap_or(trimmed.len());
                 let _raw_code = trimmed[start_idx..end_idx].trim();
 
@@ -161,17 +161,26 @@ impl Orchestrator {
                 let script_content = trimmed[7..].trim();
                 println!("[LANG]: Helheim Script Modus geactiveerd.");
                 match parser::HelParser::parse(script_content) {
-                    Ok(mut ast) => {
+                    Ok(ast) => {
                         println!(
-                            "[LANG]: AST Gegenereerd ({} statements). Validating...",
+                            "[LANG]: AST Gegenereerd ({} statements). Linking modules...",
                             ast.len()
                         );
-                        if let Err(e) = helheim_lang::semantic::SemanticAnalyzer::analyze(&mut ast) {
-                            println!("{}", e);
-                            return Ok(());
+                        let mut linker = resolver::ModuleLinker::with_std_lib(
+                            std::path::PathBuf::from("."),
+                            std::path::PathBuf::from(".")
+                        );
+                        match linker.link(ast, std::path::Path::new(".")) {
+                            Ok(mut linked_ast) => {
+                                if let Err(e) = helheim_lang::semantic::SemanticAnalyzer::analyze(&mut linked_ast) {
+                                    println!("{}", e);
+                                    return Ok(());
+                                }
+                                println!("[LANG]: Semantic check OK. Uitvoeren...");
+                                self.execute_ast(linked_ast, ctx.clone()).await?;
+                            }
+                            Err(e) => println!("[ERROR]: Module Linker Fout: {}", e),
                         }
-                        println!("[LANG]: Semantic check OK. Uitvoeren...");
-                        self.execute_ast(ast, ctx.clone()).await?;
                     }
                     Err(e) => println!("[ERROR]: Script Parsing Fout: {}", e),
                 }
@@ -180,18 +189,27 @@ impl Orchestrator {
 
             // --- Phase 8: AST Execution ---
             // Attempt to parse standard language constructs natively using helheim-lang
-            if let Ok(mut ast) = parser::HelParser::parse(trimmed) {
+            if let Ok(ast) = parser::HelParser::parse(trimmed) {
                 let is_just_sysop = ast.len() == 1 && matches!(ast[0], CodeTaal::SysOp { .. });
                 let is_meta_keyword = trimmed == "onthoud" || trimmed == "herinner" || trimmed == "nodes" || trimmed.starts_with("unlock ") || trimmed.starts_with("rune ") || trimmed.starts_with("inferno work ") || trimmed.starts_with("hive work ") || trimmed.starts_with("gpu work ") || trimmed.starts_with("gpu infer ") || trimmed.starts_with("shield encrypt ") || trimmed.starts_with("stuur ");
 
                 if !ast.is_empty() && (!is_just_sysop || !is_meta_keyword) {
-                    if let Err(e) = helheim_lang::semantic::SemanticAnalyzer::analyze(&mut ast) {
-                        println!("{}", e); // SemanticError already formats nicely
-                        return Ok(());
-                    }
+                    let mut linker = resolver::ModuleLinker::with_std_lib(
+                        std::path::PathBuf::from("."),
+                        std::path::PathBuf::from(".")
+                    );
+                    match linker.link(ast, std::path::Path::new(".")) {
+                        Ok(mut linked_ast) => {
+                            if let Err(e) = helheim_lang::semantic::SemanticAnalyzer::analyze(&mut linked_ast) {
+                                println!("{}", e); 
+                                return Ok(());
+                            }
 
-                    if let Err(e) = self.execute_ast(ast, ctx.clone()).await {
-                        println!("[ERROR]: {}", e);
+                            if let Err(e) = self.execute_ast(linked_ast, ctx.clone()).await {
+                                println!("[ERROR]: {}", e);
+                            }
+                        }
+                        Err(e) => println!("[ERROR]: Module Linker Fout: {}", e),
                     }
                     return Ok(());
                 }
