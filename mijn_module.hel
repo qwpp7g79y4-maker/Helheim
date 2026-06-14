@@ -1,0 +1,4 @@
+functie hallo naam {
+    druk_af "Hallo, " + naam;
+}
+zet module_versie = 1;

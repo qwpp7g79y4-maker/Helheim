@@ -9,7 +9,7 @@ use helheim_lang::ast::CodeTaal;
 use crate::orchestra::memory::{MemoryManager, HelheimType};
 use crate::orchestra::system;
 
-use futures::future;
+// use futures::future;  // was for distributed Concurrent, kept for now
 use serde_json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -783,7 +783,7 @@ impl Executor {
                             }
                         });
                     }
-                    CodeTaal::HelBlock { raw_code } => {
+                    CodeTaal::HelBlock { raw_code: _ } => {
                         if !ctx.is_privileged {
                             return Err(anyhow::anyhow!("[SECURITY]: Native Hel-blocks vereisen Elevated Privileges."));
                         }

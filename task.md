@@ -44,3 +44,8 @@
 ## Volgende stap
 
 **Taal In Gebruik Nemen** — Test de Leibniz π-approximatie (1000 iteraties) om te bewijzen dat loops, floats, en integer math correct samenwerken. Daarna: bouwen met de taal!
+
+## Fase 6 verificatie (handmatig)
+- REPL: start, basis berekeningen (x=20), exit → OK
+- Service: start op poort, "Daemon Operational", Ctrl+C shutdown → OK
+- Script: test_fase6.hel + Leibniz 1000 iteraties via CLI → OK (geen crash, correcte executie)
