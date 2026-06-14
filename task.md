@@ -29,7 +29,7 @@
 - [x] **Fase 3** — Taal-specifieke tests (`cargo test -p helheim-lang` voor pure CodeTaal, niet SNN) — pure CodeTaal tests toegevoegd, geen SNN afhankelijkheden
 - [x] **Fase 4** — LANGUAGE_SPEC.md bijwerken (taal-eerst, SNN als voorbeeld-laag, niet kern) — *Voltooid door C1*
 - [x] **Fase 5** — Swarm verificatie (HSP werkt nog na alle wijzigingen?) — Distributed `Concurrent` blocks werkend over Swarm via `ast_json:`
-- [ ] **Fase 6** — Integratie testen CLI/daemon (repl, service, script modus)
+- [x] **Fase 6** — Integratie testen CLI/daemon (repl, service, script modus) — Module resolver fixes, 'waar'/'onwaar' bool logic, en pure float precisie fix voor Leibniz-sommen.
 
 ---
 
@@ -43,4 +43,4 @@
 
 ## Volgende stap
 
-**Fase 6** — Integratie testen CLI/daemon. De twee legacy-tests (`test_import_module` en `test_models`) oplossen en de daemon flows verifiëren.
+**Taal In Gebruik Nemen** — Test de Leibniz π-approximatie (1000 iteraties) om te bewijzen dat loops, floats, en integer math correct samenwerken. Daarna: bouwen met de taal!

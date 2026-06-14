@@ -1100,6 +1100,13 @@ impl Executor {
     fn evaluate_expression(&self, expr: &str) -> String {
         let expr_clean = expr.trim();
 
+        // Pure string literal — return content without re-processing (prevents "en"→"&&" corruption)
+        if expr_clean.starts_with('"') && expr_clean.ends_with('"') && expr_clean.len() >= 2
+            && expr_clean.chars().filter(|&c| c == '"').count() == 2
+        {
+            return expr_clean[1..expr_clean.len() - 1].to_string();
+        }
+
         // Native STD LIB: lengte(Lijst)
         if expr_clean.starts_with("lengte(") && expr_clean.ends_with(")") {
             let inner = expr_clean[7..expr_clean.len() - 1].trim();
