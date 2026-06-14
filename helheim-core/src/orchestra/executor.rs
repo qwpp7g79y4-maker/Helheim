@@ -945,6 +945,14 @@ impl Executor {
 
 
     pub async fn evaluate_condition(&self, condition: &str) -> bool {
+        let condition = condition.trim();
+        if condition == "waar" || condition == "true" {
+            return true;
+        }
+        if condition == "onwaar" || condition == "false" {
+            return false;
+        }
+
         if condition.starts_with("bestand_bestaat ") {
             let path = condition[16..].trim().trim_matches('"');
             return tokio::fs::try_exists(path).await.unwrap_or(false);
@@ -1276,6 +1284,9 @@ impl Executor {
                     }
                 }
             }
+
+            let _ = context.set_value("waar".to_string(), evalexpr::Value::Boolean(true));
+            let _ = context.set_value("onwaar".to_string(), evalexpr::Value::Boolean(false));
 
             let eval_str = expr_clean
                 .replace(" en ", " && ")
