@@ -56,3 +56,6 @@ test_*.hel
 *.tmp
 *.bak
 .audit-junk/
+
+# Lokale conceptbestanden (niet voor publieke repo)
+CONCEPTS/
