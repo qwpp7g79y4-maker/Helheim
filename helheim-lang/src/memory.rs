@@ -20,7 +20,13 @@ impl std::fmt::Display for HelheimType {
         match self {
             HelheimType::String(s) => write!(f, "{}", s),
             HelheimType::Int(i) => write!(f, "{}", i),
-            HelheimType::Float(fl) => write!(f, "{}", fl),
+            HelheimType::Float(fl) => {
+                if fl.fract() == 0.0 {
+                    write!(f, "{}.0", fl)
+                } else {
+                    write!(f, "{}", fl)
+                }
+            },
             HelheimType::Bool(b) => write!(f, "{}", if *b { "waar" } else { "onwaar" }),
             HelheimType::Dict(d) => write!(f, "{}", serde_json::to_string(d).unwrap_or_else(|_| "{}".to_string())),
             HelheimType::List(l) => write!(f, "{}", serde_json::to_string(l).unwrap_or_else(|_| "[]".to_string())),

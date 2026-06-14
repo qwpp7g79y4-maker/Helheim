@@ -175,12 +175,12 @@ async fn test_import_module() {
     // Check if the variable and function from the imported module are available
     assert_eq!(
         engine.get_var("wiskunde_versie").unwrap(),
-        "1",
+        "1.0",
         "Variabele uit module niet ingeladen"
     );
     assert_eq!(
         engine.get_var("inclusief_btw").unwrap(),
-        "121",
+        "121.0",
         "Functie uit module faalde"
     );
 }

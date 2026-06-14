@@ -19,7 +19,13 @@ impl std::fmt::Display for LiteralValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             LiteralValue::Int(i) => write!(f, "{}", i),
-            LiteralValue::Float(fl) => write!(f, "{}", fl),
+            LiteralValue::Float(fl) => {
+                if fl.fract() == 0.0 {
+                    write!(f, "{}.0", fl)
+                } else {
+                    write!(f, "{}", fl)
+                }
+            },
             LiteralValue::String(s) => write!(f, "{}", s),
             LiteralValue::Bool(b) => write!(f, "{}", if *b { "waar" } else { "onwaar" }),
             LiteralValue::List(items) => {

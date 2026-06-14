@@ -1297,7 +1297,13 @@ impl Executor {
                 Ok(result) => {
                     match result {
                         evalexpr::Value::Int(i) => return format!("{}", i),
-                        evalexpr::Value::Float(f) => return format!("{}", f),
+                        evalexpr::Value::Float(f) => {
+                            if f.fract() == 0.0 {
+                                return format!("{}.0", f);
+                            } else {
+                                return format!("{}", f);
+                            }
+                        },
                         evalexpr::Value::Boolean(b) => {
                             return (if b { "waar" } else { "onwaar" }).to_string();
                         }
