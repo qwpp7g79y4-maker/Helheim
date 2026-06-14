@@ -782,7 +782,7 @@ impl Executor {
                             }
                         });
                     }
-                    CodeTaal::HelBlock { raw_code: _ } => {
+                    CodeTaal::HelBlock { raw_code } => {
                         if !ctx.is_privileged {
                             return Err(anyhow::anyhow!("[SECURITY]: Native Hel-blocks vereisen Elevated Privileges."));
                         }
