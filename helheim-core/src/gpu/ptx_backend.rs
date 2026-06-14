@@ -16,7 +16,7 @@ pub struct PtxBackend {
 
     // VRAM Memory Pool / Ringbuffer for lowered block result buffers (and future input buffers).
     // This replaces per-launch alloc_zeros::<f32>(1) to eliminate VRAM allocation overhead
-    // during high-frequency SNN / Motor Cortex evaluation loops.
+    // during high-frequency evaluation loops.
     result_pool: Mutex<Vec<CudaSlice<f32>>>,
     result_pool_index: AtomicUsize,
     result_pool_size: usize,
@@ -28,8 +28,7 @@ impl PtxBackend {
         let stream = context.default_stream();
 
         // Pre-allocate a ringbuffer of result buffers for lowered PTX launches.
-        // Adapted for 2D Matrices (Tensors) of Spikes: each slot now 1024 f32 (supports e.g. 32x32 spike results, packed bit matrices, or larger 2D SNN layer outputs).
-        // This avoids per-launch alloc_zeros overhead for high-frequency SNN while supporting 2D data via bitcast/multiple stores in PTX.
+        // Each slot is 1024 f32 to support 2D matrix output and bit-packed results via multiple PTX stores.
         let result_pool_size = 512;
         let mut pool_vec = Vec::with_capacity(result_pool_size);
         for _ in 0..result_pool_size {

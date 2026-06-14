@@ -302,7 +302,7 @@ impl Executor {
                                 self.memory.resolve_value("__last_read")
                             }
                             CodeTaal::ListLiteral { ref items } => {
-                                // Set list in memory for SNN spikes etc.
+                                // Set list in memory for tensors etc.
                                 let mut string_items = Vec::new();
                                 let json_items: Vec<serde_json::Value> = items.iter().map(|l| match l {
                                     helheim_lang::ast::LiteralValue::Bool(b) => {
@@ -331,7 +331,7 @@ impl Executor {
                                 format!("[{}]", string_items.join(", "))
                             }
                             CodeTaal::MatrixLiteral { ref rows } => {
-                                // 2D spike tensor support
+                                // 2D matrix
                                 let mut flat: Vec<serde_json::Value> = Vec::new();
                                 let mut string_items = Vec::new();
                                 for row in rows {
@@ -354,7 +354,7 @@ impl Executor {
                                 format!("[{}]", string_items.join(", "))
                             }
                             CodeTaal::Block { .. } => {
-                                // Context binding + Spike Packing (Host-to-Device for SNN)
+                                // Context binding + tensor packing (Host-to-Device)
                                 // If a free var is a List of bools, pack on CPU into u32 bitmask and pass as Int.
                                 let free_vars = helheim_lang::synthesis::collect_free_variables(&*value);
                                 let mut context: std::collections::HashMap<String, helheim_lang::ast::LiteralValue> = std::collections::HashMap::new();
@@ -379,7 +379,7 @@ impl Executor {
                                                 }
                                                 context.insert(name, helheim_lang::ast::LiteralValue::Int(mask as i64));
                                             }
-                                            // 2D matrix of spikes: pack rows into multiple masks if needed (simple for small 2D)
+                                            // 2D matrix of values: pack rows into multiple masks if needed (simple for small 2D)
                                             // For demo, pack first row or flatten bits
                                             // (full 2D support would allocate device tensor buffer)
                                             HelheimType::Int(i) => {
@@ -698,7 +698,7 @@ impl Executor {
                         }
                     }
                     CodeTaal::Block { statements: _ } => {
-                        // Context binding + Spike Packing (Host-to-Device for SNN)
+                        // Context binding: resolve host variables for lowered PTX block
                         let free_vars = helheim_lang::synthesis::collect_free_variables(&stmt);
                         let mut context: std::collections::HashMap<String, helheim_lang::ast::LiteralValue> = std::collections::HashMap::new();
                         for name in free_vars {
@@ -748,15 +748,14 @@ impl Executor {
                         match gpu_backend.execute_lowered_block(&stmt, &context) {
                             Ok(Some(val)) => {
                                 println!("[EXECUTOR]: Lowered block executed on real GPU via PTX JIT path. Return: {}", val);
-                                // SNN unpacking for direct block return
-                                // Adapted for 2D matrices: support larger flattened spike results (32 bits demo for  e.g. 4x8 or 8x4 2D spike tensors)
+                                // Tensor unpacking for direct block return
                                 let mask = val.to_bits() as u32;
-                                let mut spike_list = vec![];
+                                let mut bool_list = vec![];
                                 for i in 0..32 {
                                     let b = (mask & (1u32 << i)) != 0;
-                                    spike_list.push(if b { "waar" } else { "onwaar" });
+                                    bool_list.push(if b { "waar" } else { "onwaar" });
                                 }
-                                let unpacked = format!("[{}]", spike_list.join(", "));
+                                let unpacked = format!("[{}]", bool_list.join(", "));
                                 return Ok(Some(unpacked));
                             }
                             Ok(None) => {
@@ -914,7 +913,7 @@ impl Executor {
         })
     }
 
-    /// Compact helper for Return propagation within nested scopes (Optie 1 - Fase 1.2).
+    /// Compact helper for Return propagation within nested scopes.
     /// Any Return (retourneer/geef_terug/return) deep inside als/zolang/try etc. makes
     /// execute_ast return Ok(Some(value)). This helper + early returns in control arms
     /// ensure the function call stack is aborted immediately and we return the value
@@ -1036,7 +1035,7 @@ impl Executor {
                     let l = self.evaluate_ast_expr(left, ctx.clone()).await?;
                     let r = self.evaluate_ast_expr(right, ctx.clone()).await?;
                     
-                    // --- SNN Intrinsics CPU Fallback ---
+                    // --- Popcount / bit intrinsics CPU Fallback ---
                     if op == "popc" {
                         let mut count = 0;
                         if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(&l) {
@@ -1118,7 +1117,7 @@ impl Executor {
             }
         }
 
-        // Tensor Allocation Intercept (Phase 6)
+        // Tensor Allocation Intercept
         if expr_clean.starts_with("tensor(")
             && expr_clean.ends_with(")")
             && !expr_clean.contains("id=")
@@ -1296,7 +1295,7 @@ impl Executor {
             }
         }
 
-        // --- PHASE 7: ROBUST EXPRESSION EVALUATOR (evalexpr) ---
+        // Robust expression evaluator (evalexpr)
         // If it's not a tensor operation, try to evaluate it as a complex math/logic expression
         if !expr_clean.starts_with("tensor(") && !expr_clean.contains("tensor(") {
             use evalexpr::ContextWithMutableVariables;

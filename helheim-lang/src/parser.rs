@@ -1054,7 +1054,7 @@ impl HelParser {
             }
         }
 
-        // Support list literals for spikes/booleans: [waar, onwaar, ...] (1D) and [[..],[..]] (2D matrices for tensors)
+        // List literals: [waar, onwaar, ...] (1D) and [[..],[..]] (2D matrices)
         if let Some(t) = iter.peek() {
             if t.value == "[" {
                 iter.next(); // consume [
@@ -1143,7 +1143,7 @@ impl HelParser {
             }
         }
 
-        // Support simple function calls for intrinsics like tel_spikes(overlap) or popc(x) for SNN popcount
+        // Function call in expression context: naam(arg1, arg2, ...)
         if let Some(t) = iter.peek() {
             if !t.value.starts_with("\"") && t.value != "[" && t.value != "{" && !t.value.parse::<f64>().is_ok() && t.value != "waar" && t.value != "onwaar" {
                 // potential id
@@ -1174,7 +1174,7 @@ impl HelParser {
                                 if com.value == "," { iter.next(); }
                             }
                         }
-                        let call = if name == "tel_spikes" || name == "popc" || name == "popcount" {
+                        let call = if name == "popc" || name == "popcount" {
                             if args.len() == 1 {
                                 CodeTaal::Op {
                                     left: Box::new(args.into_iter().next().unwrap()),
@@ -1270,7 +1270,7 @@ impl HelParser {
             "||" | "of" => 2,
             "&&" | "en" => 3,
             "==" | "!=" | "<" | ">" | "<=" | ">=" => 5,
-            "&" | "|" | "^" => 6,   // bitwise for spikes
+            "&" | "|" | "^" => 6,
             "<<" | ">>" => 7,
             "+" | "-" => 10,
             "*" | "/" | "%" => 20,

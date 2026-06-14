@@ -9,7 +9,7 @@ pub enum TypeInfo {
     String,
     Bool,
     Tensor,
-    List, // for 1D/2D spike matrices/tensors
+    List,
     Void,
     Unknown,
     Function { arity: usize },
@@ -23,7 +23,7 @@ impl fmt::Display for TypeInfo {
             TypeInfo::String => write!(f, "Tekst (String)"),
             TypeInfo::Bool => write!(f, "Waarheid (Bool)"),
             TypeInfo::Tensor => write!(f, "Tensor"),
-            TypeInfo::List => write!(f, "Lijst (spike matrix/tensor)"),
+            TypeInfo::List => write!(f, "Lijst"),
             TypeInfo::Void => write!(f, "Niets (Void)"),
             TypeInfo::Unknown => write!(f, "Onbekend"),
             TypeInfo::Function { arity } => write!(f, "Functie ({} argumenten)", arity),
@@ -132,7 +132,7 @@ impl SemanticAnalyzer {
                     crate::ast::LiteralValue::Float(_) => Ok(TypeInfo::Float),
                     crate::ast::LiteralValue::String(_) => Ok(TypeInfo::String),
                     crate::ast::LiteralValue::Bool(_) => Ok(TypeInfo::Bool),
-                    crate::ast::LiteralValue::List(_) => Ok(TypeInfo::List), // 2D spike tensors supported as lists
+                    crate::ast::LiteralValue::List(_) => Ok(TypeInfo::List),
                 }
             }
             CodeTaal::VarDef { name, value } => {
