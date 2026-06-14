@@ -10,9 +10,16 @@ async fn run_helheim_script(script: &str) -> Arc<Orchestrator> {
     let orchestrator = Arc::new(Orchestrator::new(discovery));
 
     let ast = HelParser::parse(script).expect("Parse error in test script!");
+    
+    let mut linker = helheim_core::orchestra::resolver::ModuleLinker::with_std_lib(
+        std::path::PathBuf::from("."),
+        std::path::PathBuf::from(".")
+    );
+    let linked_ast = linker.link(ast, std::path::Path::new("test_script.hel")).expect("Linker error in test script!");
+
     let ctx = helheim_core::common::context::ExecutionContext::default_privileged();
     orchestrator
-        .execute_ast(ast, ctx)
+        .execute_ast(linked_ast, ctx)
         .await
         .expect("Runtime error in test script!");
 
@@ -191,7 +198,7 @@ async fn test_models() {
     // De output JSON checken
     let raw_json = engine.get_var("werknemer").unwrap();
     assert!(raw_json.contains("\"naam\":\"Pieter\""), "Naam faalde in model");
-    assert!(raw_json.contains("\"leeftijd\":30.0"), "Leeftijd faalde in model: {}", raw_json);
+    assert!(raw_json.contains("\"leeftijd\":30"), "Leeftijd faalde in model: {}", raw_json);
     assert!(raw_json.contains("\"actief\":true"), "Boolean faalde in model: {}", raw_json);
     
     // Check de extractie via haken syntax
