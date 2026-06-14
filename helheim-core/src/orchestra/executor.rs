@@ -748,6 +748,19 @@ impl Executor {
                             }
                         });
                     }
+                    CodeTaal::HelBlock { raw_code } => {
+                        if !ctx.is_privileged {
+                            return Err(anyhow::anyhow!("[SECURITY]: Native Hel-blocks vereisen Elevated Privileges."));
+                        }
+                        #[cfg(feature = "cuda")]
+                        {
+                            crate::gpu::gpu_execute_hel_block(&raw_code).await?;
+                        }
+                        #[cfg(not(feature = "cuda"))]
+                        {
+                            return Err(anyhow::anyhow!("Hel-block execution requires 'cuda' feature"));
+                        }
+                    }
                     CodeTaal::TryCatch {
                         try_block,
                         catch_block,

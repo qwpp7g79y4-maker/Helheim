@@ -314,6 +314,29 @@ impl HelParser {
                 let block_ast = Box::new(Self::parse_block(input, iter)?);
                 Ok(Some(CodeTaal::Daemon { body: block_ast }))
             }
+            "hel" => {
+                let open_brace = iter.next().unwrap_or_default();
+                if open_brace.value != "{" {
+                    return Err(Self::format_parse_error(input, &token, "Verwacht '{' na 'hel'"));
+                }
+                
+                let mut brace_count = 1;
+                let mut raw_code_tokens = Vec::new();
+                while let Some(t) = iter.next() {
+                    if t == "{" {
+                        brace_count += 1;
+                    } else if t == "}" {
+                        brace_count -= 1;
+                        if brace_count == 0 {
+                            break;
+                        }
+                    }
+                    raw_code_tokens.push(t.value);
+                }
+                
+                let raw_code = raw_code_tokens.join(" ");
+                Ok(Some(CodeTaal::HelBlock { raw_code }))
+            }
             "probeer" | "try" => {
                 // probeer { ... } vang err { ... }
                 let try_ast = Box::new(Self::parse_block(input, iter)?);
