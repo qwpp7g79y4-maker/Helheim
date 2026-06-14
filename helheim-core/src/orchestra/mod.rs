@@ -18,6 +18,7 @@ use std::pin::Pin;
 
 // orchestra/swarm.rs verwijderd — ConsciousWorker/CleanerWorker hoort in helheim-web (sorteerlaag), niet in helheim-core
 pub mod system;
+pub mod distributed;
 pub mod executor;
 
 #[derive(Clone)]
@@ -25,15 +26,18 @@ pub struct Orchestrator {
     pub executor: executor::Executor,
     pub memory: Arc<memory::MemoryManager>,
     pub discovery: Arc<crate::network::DiscoveryService>,
+    pub distributed: Arc<distributed::DistributedMemory>,
 }
 
 impl Orchestrator {
     pub fn new(discovery: Arc<DiscoveryService>) -> Self {
         let memory = Arc::new(memory::MemoryManager::new());
+        let distributed = Arc::new(distributed::DistributedMemory::new("local".to_string()));
         Self {
-            executor: executor::Executor::new(memory.clone(), discovery.clone()),
+            executor: executor::Executor::new(memory.clone(), discovery.clone(), distributed.clone()),
             memory,
             discovery,
+            distributed,
         }
     }
 
@@ -100,6 +104,21 @@ impl Orchestrator {
                     }
                     Err(e) => {
                         eprintln!("[SWARM RECEIVER ERROR]: ast_json deserialisatie mislukt: {}", e);
+                        return Ok(());
+                    }
+                }
+            }
+
+            if trimmed.starts_with("state_delta:") {
+                let json = &trimmed["state_delta:".len()..];
+                match serde_json::from_str::<crate::orchestra::distributed::StateDelta>(json) {
+                    Ok(delta) => {
+                        println!("[SWARM RECEIVER]: state_delta ontvangen van {}", delta.source_node);
+                        self.distributed.apply_delta(delta);
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        eprintln!("[SWARM RECEIVER ERROR]: state_delta deserialisatie mislukt: {}", e);
                         return Ok(());
                     }
                 }

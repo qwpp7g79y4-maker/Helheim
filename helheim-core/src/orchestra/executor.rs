@@ -19,11 +19,12 @@ static SCHEDULER_INDEX: AtomicUsize = AtomicUsize::new(0);
 pub struct Executor {
     pub memory: Arc<MemoryManager>,
     pub discovery: Arc<crate::network::DiscoveryService>,
+    pub distributed: Arc<crate::orchestra::distributed::DistributedMemory>,
 }
 
 impl Executor {
-    pub fn new(memory: Arc<MemoryManager>, discovery: Arc<crate::network::DiscoveryService>) -> Self {
-        Self { memory, discovery }
+    pub fn new(memory: Arc<MemoryManager>, discovery: Arc<crate::network::DiscoveryService>, distributed: Arc<crate::orchestra::distributed::DistributedMemory>) -> Self {
+        Self { memory, discovery, distributed }
     }
 
     fn schedule_statement(&self, stmt: &CodeTaal) -> Option<(String, u16)> {
@@ -659,6 +660,21 @@ impl Executor {
                         for res in results {
                             if let Err(e) = res {
                                 println!("[ERROR]: Distributed taak error: {}", e);
+                            }
+                        }
+
+                        // Flush deltas
+                        let deltas = self.distributed.flush_deltas();
+                        for delta in deltas {
+                            if let Ok(json) = serde_json::to_string(&delta) {
+                                let cmd = format!("state_delta:{}", json);
+                                let peers = match self.discovery.peers.lock() {
+                                    Ok(p) => p.clone(),
+                                    Err(_) => std::collections::HashMap::new(),
+                                };
+                                for ip in peers.keys() {
+                                    let _ = crate::network::hsp_node::SwarmEngine::dispatch(ip, 9003, &cmd).await;
+                                }
                             }
                         }
                     }
