@@ -142,6 +142,9 @@ impl Executor {
                         println!("{}", clean_val);
                     }
                     CodeTaal::FileOp { action, path, content } => {
+                        if !ctx.is_privileged {
+                            return Err(anyhow::anyhow!("[SECURITY]: Bestandstoegang vereist Elevated Privileges."));
+                        }
                         // Perform the I/O (beveiligde std bib)
                         // Resolve exprs to strings where possible (sync for paths)
                         let path_str = self.code_taal_to_string_sync(&path);
@@ -170,6 +173,12 @@ impl Executor {
                     }
                     CodeTaal::HttpOp { method, url } => {
                         let url_str = self.code_taal_to_string_sync(&url);
+                        if !ctx.is_privileged {
+                            let blocked = ["localhost", "127.", "169.254.", "10.", "192.168.", "::1"];
+                            if blocked.iter().any(|b| url_str.contains(b)) {
+                                return Err(anyhow::anyhow!("[SECURITY]: SSRF geblokkeerd — interne URL niet toegestaan in sandbox."));
+                            }
+                        }
                         if method.to_uppercase() == "GET" {
                             match ureq::get(&url_str).call() {
                                 Ok(mut resp) => {

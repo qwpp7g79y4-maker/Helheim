@@ -59,3 +59,9 @@ test_*.hel
 
 # Lokale conceptbestanden (niet voor publieke repo)
 CONCEPTS/
+
+# Backup bestanden
+*.bak
+*.bak.*
+*.orig
+*.old
