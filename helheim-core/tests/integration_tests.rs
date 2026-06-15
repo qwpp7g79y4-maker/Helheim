@@ -565,7 +565,7 @@ async fn test_general_pure_functions() {
 
 #[tokio::test]
 async fn test_general_pure_functions_deep_return() {
-    // Dedicated test for Fase 1.2 return propagation:
+    // Dedicated test for return propagation:
     // return deep inside zolang + als must abort the loop + function immediately,
     // propagate the value to the caller, and not leak function scope.
     let script = r#"

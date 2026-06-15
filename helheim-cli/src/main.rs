@@ -209,7 +209,7 @@ async fn main() -> Result<()> {
                             }
                             
                             // PTX Lowering
-                            println!("[BUILD]: Semantic Analysis OK. Lowering to PTX (Target B)...");
+                            println!("[BUILD]: Semantic Analysis OK. Lowering to PTX...");
                             let mut ptx_gen = helheim_lang::synthesis::GeneralPtxGenerator::new();
                             let main_block = helheim_lang::ast::CodeTaal::Block { statements: linked_ast };
                             

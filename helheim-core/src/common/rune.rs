@@ -367,15 +367,15 @@ impl RuneEngine {
                             println!("[COMPLETED]: Deep-Rune executie succesvol.");
                             Ok("[STATUS]: GPU Kernels geverifieerd.".to_string())
                         }
-                        Err(e) => Err(anyhow::anyhow!("NEL-GPU Fout: {}", e)),
+                        Err(e) => Err(anyhow::anyhow!("GPU Fout: {}", e)),
                     }
                 }
                 #[cfg(not(feature = "cuda"))]
                 {
-                    Err(anyhow::anyhow!("NEL-GPU vereist CUDA ondersteuning."))
+                    Err(anyhow::anyhow!("GPU vereist CUDA ondersteuning."))
                 }
             }
-            _ => Err(anyhow::anyhow!("Onbekende LLK Instructie: {}", parts[0])),
+            _ => Err(anyhow::anyhow!("Onbekende native instructie: {}", parts[0])),
         }
     }
 }

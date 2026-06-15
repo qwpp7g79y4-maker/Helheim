@@ -1,7 +1,7 @@
 use crate::common::rune::RuneEngine;
 use crate::network::DiscoveryService;
 use helheim_lang::ast::CodeTaal;
-use helheim_lang::synthesis::KernelSynthesisEngine; // Phase 8 Refactor
+use helheim_lang::synthesis::KernelSynthesisEngine;
 use crate::shield::HelheimLock;
 use anyhow::Result;
 use colored::*;
@@ -70,7 +70,7 @@ impl Orchestrator {
                 return Ok(());
             }
 
-            // --- Phase 8: Multi-Command Support (Separated by ' ; ') ---
+            // Multi-command support (separated by ' ; ')
             // Note: We use " ; " (with spaces) to avoid splitting inside strings blindly
             // This allows: "cmd1 ; cmd2"
             // CRITICAL: Do NOT split if it's a control block (contains braced logic)
@@ -88,7 +88,7 @@ impl Orchestrator {
 
 
 
-            // --- Phase 8: Variables pre-processing is REMOVED ---
+            // Variables pre-processing removed (now handled in AST)
             // The AST Engine (helheim-lang) now natively handles variable resolution.
             let trimmed = input.trim();
 
@@ -133,7 +133,7 @@ impl Orchestrator {
 
             // --- We delegate 'zet' entirely to the AST Parser so it can evaluate expressions ---
 
-            // --- Phase 4: Hel-modus (Bare-Metal C++/PTX Blocks) ---
+            // Hel-modus (bare-metal C++/PTX blocks)
             if trimmed.starts_with("hel {") || trimmed.starts_with("unsafe {") {
                 if !ctx.is_privileged {
                     return Err(anyhow::anyhow!("[SECURITY]: Hel-modus vereist Elevated Privileges."));
@@ -209,11 +209,11 @@ impl Orchestrator {
                 return Ok(());
             }
 
-            // --- Phase 8: AST Execution ---
+            // AST execution
             // Attempt to parse standard language constructs natively using helheim-lang
             if let Ok(ast) = parser::HelParser::parse(trimmed) {
                 let is_just_sysop = ast.len() == 1 && matches!(ast[0], CodeTaal::SysOp { .. });
-                let is_meta_keyword = trimmed == "onthoud" || trimmed == "herinner" || trimmed == "nodes" || trimmed.starts_with("unlock ") || trimmed.starts_with("rune ") || trimmed.starts_with("inferno work ") || trimmed.starts_with("hive work ") || trimmed.starts_with("gpu work ") || trimmed.starts_with("gpu infer ") || trimmed.starts_with("shield encrypt ") || trimmed.starts_with("stuur ");
+                let is_meta_keyword = trimmed == "nodes" || trimmed.starts_with("unlock ") || trimmed.starts_with("rune ") || trimmed.starts_with("heavy_work ") || trimmed.starts_with("swarm_work ") || trimmed.starts_with("gpu work ") || trimmed.starts_with("gpu infer ") || trimmed.starts_with("shield encrypt ") || trimmed.starts_with("stuur ");
 
                 if !ast.is_empty() && (!is_just_sysop || !is_meta_keyword) {
                     let mut linker = resolver::ModuleLinker::with_std_lib(
@@ -237,16 +237,8 @@ impl Orchestrator {
                 }
             }
 
-            // --- Phase 9: Persistence (The Void) ---
-            if trimmed == "onthoud" {
-                self.memory.persist().await;
-                return Ok(());
-            }
-
-            if trimmed == "herinner" {
-                self.memory.recall().await;
-                return Ok(());
-            }
+            // --- Persistence ---
+            // Legacy string-based persistence removed. Now handled via AST Onthoud/Herinner nodes (see executor and resolver).
 
             if trimmed == "nodes" {
                 self.list_nodes();
@@ -256,7 +248,7 @@ impl Orchestrator {
             if trimmed.starts_with("unlock ") {
                 let key = trimmed[7..].trim();
                 if HelheimLock::unlock(key) {
-                    println!("[SECURITY]: Toegang tot Native Execution Layer (NEL) geautoriseerd.");
+                    println!("[SECURITY]: Toegang tot native execution geautoriseerd.");
                 } else {
                     println!("[SECURITY]: Autorisatie mislukt. Onjuiste Master Key.");
                 }
@@ -271,24 +263,24 @@ impl Orchestrator {
                 return Ok(());
             }
 
-            // --- Industrial Extensions (Bare Metal) ---
-            if trimmed.starts_with("inferno work ") {
+            // Low-level extensions
+            if trimmed.starts_with("heavy_work ") {
                 if !ctx.is_privileged {
-                    return Err(anyhow::anyhow!("[SECURITY]: Inferno Work vereist Elevated Privileges."));
+                    return Err(anyhow::anyhow!("[SECURITY]: Heavy compute work requires elevated privileges."));
                 }
                 let size = trimmed[13..].trim().parse::<usize>().unwrap_or(8192);
                 println!(
-                    "[INFERNO]: Maximizing thermal output! CPU + GPU parallel execution (Size: {})...",
+                    "[HEAVY]: Parallel heavy compute (CPU + GPU) (Size: {})...",
                     size
                 );
                 match crate::gpu::inferno_work_real(size, 0) {
-                    Ok(_) => println!("[INFERNO]: ☢️ Core meltdown averted. Workload complete."),
-                    Err(e) => println!("[ERROR]: Inferno Fout: {}", e),
+                    Ok(_) => println!("[HEAVY]: Workload complete."),
+                    Err(e) => println!("[ERROR]: Heavy compute error: {}", e),
                 }
                 return Ok(());
             }
 
-            if trimmed.starts_with("hive work ") {
+            if trimmed.starts_with("swarm_work ") {
                 let size_str = trimmed[10..].trim();
                 let size = size_str.parse::<usize>().unwrap_or(15000);
 
@@ -333,13 +325,10 @@ impl Orchestrator {
                 let total_swarm_weight: f64 = node_weights.values().sum();
 
                 println!(
-                    "{}",
-                    "[HIVE MIND]: Architecting Asymmetric Load-Balanced Swarm Compute...".to_string()
-                        .magenta()
-                        .bold()
+                    "[SWARM]: Architecting load-balanced swarm compute..."
                 );
                 println!(
-                    "[HIVE MIND]: Total Workload: {} | Active Compute Nodes: {} | Global Pool Weight: {:.1}",
+                    "[SWARM]: Total Workload: {} | Active Compute Nodes: {} | Global Pool Weight: {:.1}",
                     size,
                     node_weights.len(),
                     total_swarm_weight
@@ -371,7 +360,7 @@ impl Orchestrator {
                             chunk_size,
                             node_share_percentage * 100.0
                         );
-                        let payload = format!("inferno work {}", chunk_size);
+                        let payload = format!("heavy_work {}", chunk_size);
                         dispatch_tasks.push(tokio::spawn(async move {
                             println!("🚀 Dispatching workload to {}...", ip);
                             match crate::network::hsp_node::SwarmEngine::dispatch(&ip, 9003, &payload)
@@ -391,7 +380,7 @@ impl Orchestrator {
                         local_chunk
                     );
                     if let Err(e) = self
-                        .process_command(&format!("inferno work {}", local_chunk), ctx.clone())
+                        .process_command(&format!("heavy_work {}", local_chunk), ctx.clone())
                         .await
                     {
                         println!("[ERROR]: Master Node failed: {}", e);
@@ -405,7 +394,7 @@ impl Orchestrator {
 
                 println!(
                     "{}",
-                    "🧠 [HIVE MIND]: Global Grid Compute Complete. All Nodes Cooled Down."
+                    "[SWARM]: Global compute complete."
                         .green()
                         .bold()
                 );
@@ -569,7 +558,7 @@ impl Orchestrator {
                         println!("--- BEGIN PTX SNAPSHOT ---");
                         println!("{}", ptx.trim());
                         println!("--- END PTX SNAPSHOT ---");
-                        println!("[SYNTHESIS]: Klaar voor injectie in NEL.");
+                        println!("[SYNTHESIS]: Klaar voor native lowering.");
                     }
                     Err(e) => println!("[ERROR]: Synthesis Fout: {}", e),
                 }
@@ -655,7 +644,7 @@ impl Orchestrator {
                 return Ok(());
             }
 
-            // --- Phase 10: System Extensions (Sleep) ---
+            // System extensions (sleep)
             if trimmed.starts_with("wacht ") {
                 let seconds_str = trimmed[6..].trim();
                 if let Ok(seconds) = seconds_str.parse::<u64>() {
@@ -667,7 +656,7 @@ impl Orchestrator {
                 return Ok(());
             }
 
-            // --- Phase 10: Auto-Installer (The Builder) ---
+            // Package installer
             if trimmed.starts_with("installeer ") {
                 let package = trimmed[11..].trim().trim_matches('"');
                 use crate::std::pkg::PackageManager;
@@ -700,7 +689,7 @@ impl Orchestrator {
                     return Ok(());
                 }
                 Intent::MatMul { size } => {
-                    println!("[INTENT]: Gedetecteerd: MATRIX KERNEL (Size: {})", size);
+                    println!("[INTENT]: Detected matrix kernel (size: {})", size);
                     let ast = vec![CodeTaal::MatMul {
                         m: size,
                         n: size,
@@ -724,8 +713,8 @@ impl Orchestrator {
                     return Ok(());
                 }
                 Intent::Speed => {
-                    println!("[INTENT]: Je wilt meer snelheid. Activeren van 'Infernal Mode'...");
-                    println!("🚀 Overclock profiel ingeladen. Snelheid verhoogd.");
+                    println!("[INTENT]: Overclock profile loaded. Speed increased.");
+
                     return Ok(());
                 }
                 Intent::Update => {
@@ -739,14 +728,14 @@ impl Orchestrator {
                 Intent::Research => {
                     println!("[INTENT]: Diepgaande analyse gestart ('Deep Dive')...");
                     println!("[LOGS]: Scannen van systeemlogboeken (laatste 24u)...");
-                    println!("[LOGS]: Geen onregelmatigheden gevonden in kernel-ringbuffer.");
+                    println!("[LOGS]: No irregularities found in kernel ringbuffer.");
                     println!(
                         "[ANALYSE]: Conclusie: Het probleem zit waarschijnlijk tussen toetsenbord en stoel. 😉"
                     );
                     return Ok(());
                 }
                 Intent::Unknown => {
-                    // Check if it's a function call (Phase 8)
+                    // Check if it's a function call
                     let func_body = self.memory.func_store.get(trimmed).map(|v| v.value().clone());
 
                     if let Some(body) = func_body {
@@ -755,7 +744,7 @@ impl Orchestrator {
                         return Ok(());
                     }
 
-                    // Fallback: Native Execution Layer (Rune / Low-Level)
+                    // Fallback: native execution (raw / low-level)
                     self.execute_native(trimmed)?;
                 }
             }
@@ -782,15 +771,15 @@ impl Orchestrator {
 
     fn execute_native(&self, cmd: &str) -> Result<()> {
         if !HelheimLock::is_authorized() {
-            println!("[ALERT]: Native Execution Layer is vergrendeld. Autorisatie vereist.");
+            println!("[ALERT]: Native execution is locked. Authorization required.");
             return Ok(());
         }
 
-        println!("[NATIVE]: Voorbereiden van LLK (Low-Level Kernel) instructie...");
+        println!("[NATIVE]: Low-level instruction...");
         unsafe {
             match RuneEngine::execute_raw_rune(cmd) {
                 Ok(res) => println!("{}", res),
-                Err(e) => println!("[ERROR]: LLK uitvoeringsfout: {}", e),
+                Err(e) => println!("[ERROR]: Low-level kernel execution error: {}", e),
             }
         }
         Ok(())

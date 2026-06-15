@@ -234,7 +234,7 @@ pub fn gpu_execute_raw_ptx(ptx_src: &str) -> Result<f64> {
 }
 
 pub fn inferno_work_real(size: usize, _device_id: usize) -> Result<()> {
-    println!("{}", "[INFERNO PROTOCOL]: ASYMMETRIC LOCAL LOAD BALANCING (DUAL-GPU)".red().bold());
+    println!("{}", "[HEAVY]: Multi-GPU load balancing...".yellow());
     
     // Check available GPUs via Native OS Layer
     let gpu_count = match std::process::Command::new("nvidia-smi").arg("-L").output() {
@@ -243,11 +243,11 @@ pub fn inferno_work_real(size: usize, _device_id: usize) -> Result<()> {
     };
     
     if gpu_count == 0 {
-        println!("{}", "[FALLBACK]: Geen GPU's gevonden voor Inferno. Terugvallen op CPU.".yellow());
+        println!("{}", "[HEAVY]: No GPUs, falling back to CPU.".yellow());
         return gpu_work_real(size, 0); // gpu_work_real triggers CPU math ifnvidia-smi fails
     }
 
-    println!("[INFERNO]: {} actieve CudaDevice(s) op de Master Node. Splitsen van werklast...", gpu_count);
+    println!("[HEAVY]: {} active CUDA device(s). Splitting workload...", gpu_count);
     
     // Split the node's payload evenly across all local GPUs (3060 and 5060 simultaneously)
     let per_gpu_size = size / (gpu_count as usize);
@@ -270,17 +270,17 @@ pub fn inferno_work_real(size: usize, _device_id: usize) -> Result<()> {
     }
 
     if had_error {
-        return Err(anyhow::anyhow!("Een of meerdere GPU threads crashte tijdens Inferno execution."));
+        return Err(anyhow::anyhow!("One or more GPU threads crashed during heavy execution."));
     }
 
     let duration = start_inferno.elapsed();
-    println!("{}", format!("[INFERNO]: Lokale Multi-GPU Compute Complete!").green().bold());
-    println!("[INFERNO]: Totale Parallelle Rekentijd: {:.2?}", duration);
+    println!("{}", format!("[HEAVY]: Local multi-GPU compute complete!").green());
+    println!("[HEAVY]: Total parallel time: {:.2?}", duration);
     
     // Calculate final GFLOPS (All GPU's combined payload)
     let m = per_gpu_size; let n = m; let k = m;
     let gflops = ((2.0 * m as f64 * n as f64 * k as f64 * (gpu_count as f64)) / duration.as_secs_f64()) / 1e9;
-    println!("[INFERNO]: Lokale Prestatie: {:.2} GFLOPS", gflops);
+    println!("[HEAVY]: Local performance: {:.2} GFLOPS", gflops);
     
     Ok(())
 }

@@ -1,0 +1,10 @@
+// MAX CPU BURN
+druk_af "=== 🚀 MAX CPU BURN INITIATED 🚀 ===";
+
+zet i = 0;
+zolang i < 1000 {
+    matmul 4096;
+    zet i = i + 1;
+}
+
+druk_af "=== 🛑 BURN COMPLETE ===";

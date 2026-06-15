@@ -128,7 +128,7 @@ impl NodeRelay {
 
                     // Decodeer de obfuscated payload
                     println!("🔓 Payload ontvangen. Beveiliging wordt gecontroleerd...");
-                    // In fase 4: base64 decode + shield unscramble
+                    // base64 decode + shield unscramble
                     // Voor nu printen we de ruwe input om te zien of het aankomt
                     println!("Inhoud: {}", received);
 

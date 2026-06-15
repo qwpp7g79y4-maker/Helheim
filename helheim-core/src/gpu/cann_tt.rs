@@ -8,7 +8,7 @@ pub struct GridCoord {
     pub y: f32,
 }
 
-/// A single Tensor Train (MPS / MPO) core for the Phase 8/9 Hilbert Curve mapping.
+/// A single Tensor Train (MPS / MPO) core for Hilbert Curve mapping.
 /// It contains a row-major flattening of the 4D tensor `[chi_l][r_in][r_out][chi_r]`.
 #[repr(C)]
 #[derive(Debug, Clone)]

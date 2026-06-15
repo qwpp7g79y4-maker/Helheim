@@ -1,0 +1,20 @@
+// EXTREME GPU MATMUL + THERMAL SOAK
+druk_af "=====================================";
+druk_af "🔥 HELHEIM EXTREME GPU BENCHMARK 🔥";
+druk_af "=====================================";
+
+druk_af "1. Single 8192x8192 Run (voor de GFLOPS vergelijking met Python)...";
+matmul 8192;
+
+druk_af "";
+druk_af "2. NU STARTEN WE DE MOTOREN (THERMAL SOAK - 2000 Ronden 8192x8192)...";
+druk_af "De fans moeten zometeen gaan krijsen.";
+
+zet i = 0;
+zolang i < 2000 {
+    // 2000 * 8192x8192 = 2.2 PetaFLOPs aan wiskunde.
+    matmul 8192;
+    zet i = i + 1;
+}
+
+druk_af "=== 🛑 BURN COMPLETE ===";

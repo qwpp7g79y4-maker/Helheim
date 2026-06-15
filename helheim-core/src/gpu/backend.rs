@@ -64,7 +64,7 @@ pub trait GpuBackend: Send + Sync {
     fn synchronize(&self) -> Result<(), GpuError>;
     fn free_tensor(&self, ptr: GpuPtr) -> Result<(), GpuError>;
 
-    /// New for Phase 3 execution pipeline: launch a general lowered block (from Block/FunctionDef)
+    /// Launch a general lowered block (from Block/FunctionDef)
     /// that was turned into PTX via PtxGenerator::lower_general (entry "hel_lowered").
     /// This closes the full loop: Script -> AST -> PTX -> CUDA launch.
     fn execute_lowered_block(

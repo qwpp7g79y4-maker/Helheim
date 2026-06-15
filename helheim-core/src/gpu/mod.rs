@@ -553,17 +553,19 @@ pub async fn gpu_execute_hel_block(raw_source: &str) -> Result<()> {
 
     println!(
         "{}",
-        "[HEL-MODUS]: Lanceren van custom kernel (Block: 256, Grid: 1)..."
+        "[HEL-MODUS]: Lanceren van custom kernel (Grid: 4096, Block: 1024, Threads: 4M)..."
             .red()
             .bold()
     );
     let stream = dev.default_stream();
 
-    let mut dev_data = stream.alloc_zeros::<f32>(1024)?;
+    // Fill the GPU: 4096 blocks × 1024 threads = 4M threads
+    let n_threads: usize = 4096 * 1024;
+    let mut dev_data = stream.alloc_zeros::<f32>(n_threads)?;
 
     let cfg = LaunchConfig {
-        grid_dim: (1, 1, 1),
-        block_dim: (256, 1, 1),
+        grid_dim: (4096, 1, 1),
+        block_dim: (1024, 1, 1),
         shared_mem_bytes: 0,
     };
 
@@ -874,12 +876,7 @@ fn cpu_matmul_tiled(size: usize) -> f64 {
 }
 
 pub fn inferno_work_real(size: usize, _device_id: usize) -> Result<()> {
-    println!(
-        "{}",
-        "[INFERNO PROTOCOL]: ASYMMETRIC LOCAL LOAD BALANCING (GPU + CPU)"
-            .red()
-            .bold()
-    );
+    println!("{}", "[HEAVY]: Asymmetric load balancing (GPU + CPU)".yellow());
 
     let gpu_count = match std::process::Command::new("nvidia-smi").arg("-L").output() {
         Ok(out) => String::from_utf8_lossy(&out.stdout).lines().count(),
@@ -888,7 +885,7 @@ pub fn inferno_work_real(size: usize, _device_id: usize) -> Result<()> {
 
     let cpu_threads = rayon::current_num_threads();
     println!(
-        "[INFERNO]: {} GPU(s) + {} CPU threads op de Master Node.",
+        "[HEAVY]: {} GPU(s) + {} CPU threads on master node.",
         gpu_count, cpu_threads
     );
 
@@ -949,18 +946,13 @@ pub fn inferno_work_real(size: usize, _device_id: usize) -> Result<()> {
 
     if had_error {
         return Err(anyhow::anyhow!(
-            "Een of meerdere workers crashten tijdens Inferno execution."
+            "One or more workers crashed during heavy execution."
         ));
     }
 
     let duration = start_inferno.elapsed();
-    println!(
-        "{}",
-        "[INFERNO]: Lokale Multi-Device Compute Complete!"
-            .green()
-            .bold()
-    );
-    println!("[INFERNO]: Totale Parallelle Rekentijd: {:.2?}", duration);
+    println!("{}", "[HEAVY]: Local multi-device compute complete!".green());
+    println!("[HEAVY]: Total parallel time: {:.2?}", duration);
 
     let gpu_flops = if gpu_count > 0 {
         (2.0 * per_gpu_size as f64 * per_gpu_size as f64 * per_gpu_size as f64 * gpu_count as f64)
@@ -971,7 +963,7 @@ pub fn inferno_work_real(size: usize, _device_id: usize) -> Result<()> {
     let cpu_flops = (2.0 * cpu_size as f64 * cpu_size as f64 * cpu_size as f64) / 1e9;
     let total_gflops = (gpu_flops + cpu_flops) / duration.as_secs_f64();
     println!(
-        "[INFERNO]: Gecombineerde Prestatie: {:.2} GFLOPS (GPU + CPU)",
+        "[HEAVY]: Combined performance: {:.2} GFLOPS (GPU + CPU)",
         total_gflops
     );
 
