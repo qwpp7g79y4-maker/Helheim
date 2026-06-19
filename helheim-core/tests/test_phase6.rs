@@ -396,4 +396,31 @@ async fn test_continuation_local_vars_invariant() {
     assert_eq!(result_str, "L=43,G=11", "Verwachtte L=43 en G=11, maar kreeg: {}", result_str);
 }
 
+#[tokio::test]
+async fn test_gas_exhaustion_infinite_loop() {
+    let _lock = TEST_MUTEX.lock().await;
+
+    // A script with an infinite loop.
+    let script = r#"
+        zet i = 0;
+        zolang waar {
+            zet i = i + 1;
+        }
+    "#;
+
+    let discovery = Arc::new(DiscoveryService::new());
+    let orchestrator = Arc::new(Orchestrator::new(discovery));
+    let ast = HelParser::parse(script).expect("Parse error in test script!");
+    
+    let mut ctx = helheim_core::common::context::ExecutionContext::sandbox();
+    ctx.gas_limit = Some(100);
+    
+    // It should hit the gas limit and return an error gracefully
+    let result = orchestrator.execute_ast(ast, ctx).await;
+    
+    assert!(result.is_err(), "Verwachtte dat de infinite loop stukloopt op gas limit, maar hij eindigde succesvol!");
+    let err_msg = result.unwrap_err().to_string();
+    assert!(err_msg.contains("OUT_OF_GAS") || err_msg.contains("gas limit"), "Foute error message: {}", err_msg);
+}
+
 

@@ -142,6 +142,11 @@ impl Executor {
                     continue;
                 }
                 
+                // Phase 2: Consume Gas for every executed statement
+                if let Err(e) = ctx.consume_gas(1) {
+                    return Err(e);
+                }
+                
                 // Vraag 6: Delimited Continuations. Sla de rest van het block op zodat perform het kan vangen.
                 let remaining = ast[i + 1..].to_vec();
                 crate::orchestra::continuation::set_rest_ast(&self.memory, &remaining);
@@ -813,8 +818,6 @@ impl Executor {
                         }
                     }
                     CodeTaal::Loop { condition, body } => {
-                        // Very simple infinite loop guard
-                        let mut iterations = 0;
                         loop {
                             if let Err(e) = ctx.check_timeout() {
                                 return Err(e);
@@ -823,15 +826,12 @@ impl Executor {
                             if !should_run {
                                 break;
                             }
-                            if iterations > 1_000_000 {
-                                return Err(anyhow::anyhow!("Loop exceeded maximum iterations (1,000,000)"));
-                            }
 
-                            // Propagate return from body (zolang containing als/retourneer etc.)
+                            // Gas limits will naturally catch infinite loops via propagate_return (which calls execute_ast_internal)
+                            // or via evaluate_ast_condition. No more arbitrary iteration limits.
                             if let Some(ret) = self.propagate_return(&body, ctx.clone()).await? {
                                 return Ok(Some(ret));
                             }
-                            iterations += 1;
                         }
                     }
                     CodeTaal::ForEach {
