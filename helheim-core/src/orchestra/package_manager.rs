@@ -15,7 +15,7 @@ use anyhow::{Context, Result};
 use dashmap::DashMap;
 use tokio::fs;
 
-use crate::ffi::NativeModuleLoader;
+use crate::ffi::WasmModuleLoader;
 use crate::orchestra::distributed::DistributedMemory;
 use crate::shield::crypto::HelSigner;
 
@@ -26,7 +26,7 @@ pub struct VerifiedModule {
     pub version: String,
     pub data: Vec<u8>,           // the raw .so bytes (or .hel for pure)
     pub signature: Vec<u8>,
-    pub is_native: bool,         // true = .so FFI, false = pure .hel
+    pub is_native: bool,         // true = .wasm FFI, false = pure .hel
 }
 
 /// Package manifest (embedded or sidecar).
@@ -34,23 +34,23 @@ pub struct VerifiedModule {
 pub struct PackageManifest {
     pub name: String,
     pub version: String,
-    pub kind: String,            // "ffi" or "hel"
+    pub kind: String,            // "wasm" or "hel"
     pub description: Option<String>,
 }
 
 /// The PackageManager.
-/// Owns a cache of verified modules and wraps the NativeModuleLoader.
+/// Owns a cache of verified modules and wraps the WasmModuleLoader.
 #[derive(Clone)]
 pub struct PackageManager {
     verified_cache: Arc<DashMap<String, VerifiedModule>>,
-    loader: Arc<tokio::sync::Mutex<NativeModuleLoader>>,
+    loader: Arc<tokio::sync::Mutex<WasmModuleLoader>>,
 }
 
 impl PackageManager {
     pub fn new(search_paths: Vec<PathBuf>) -> Self {
         Self {
             verified_cache: Arc::new(DashMap::new()),
-            loader: Arc::new(tokio::sync::Mutex::new(NativeModuleLoader::new(search_paths))),
+            loader: Arc::new(tokio::sync::Mutex::new(WasmModuleLoader::new(search_paths))),
         }
     }
 
@@ -119,7 +119,7 @@ impl PackageManager {
             let manifest = self.try_parse_manifest(&data).unwrap_or_else(|| PackageManifest {
                 name: path.file_stem().unwrap().to_string_lossy().to_string(),
                 version: "0.0.0".into(),
-                kind: if path.extension().map_or(false, |e| e == "so") { "ffi".into() } else { "hel".into() },
+                kind: if path.extension().map_or(false, |e| e == "wasm") { "wasm".into() } else { "hel".into() },
                 description: None,
             });
             Ok((data, manifest, sig))
@@ -210,13 +210,13 @@ impl PackageManager {
             version: manifest.version,
             data,
             signature,
-            is_native: manifest.kind == "ffi",
+            is_native: manifest.kind == "wasm" || manifest.kind == "ffi", // keep ffi for back compat during tests if needed
         };
 
         self.verified_cache.insert(name.to_string(), verified.clone());
 
-        // If it's a native FFI module, we can eagerly load it into the NativeModuleLoader
-        // (verification already passed). The loader will keep the .so alive.
+        // If it's a native Wasm module, we can eagerly load it into the WasmModuleLoader
+        // (verification already passed).
         if verified.is_native {
             let mut loader = self.loader.lock().await;
             // We pass a dummy user_data; real callers will provide the real HelFFIContext later.
@@ -234,12 +234,12 @@ impl PackageManager {
     }
 
     /// Convenience: load a verified native module into the FFI layer.
-    /// This is the safe gateway that the rest of the system should use instead of raw NativeModuleLoader.
+    /// This is the safe gateway that the rest of the system should use instead of raw WasmModuleLoader.
     pub async fn load_verified_native(
         &self,
         name: &str,
         user_data: *mut std::ffi::c_void,
-    ) -> Result<Arc<crate::ffi::LoadedNativeModule>> {
+    ) -> Result<Arc<crate::ffi::LoadedWasmModule>> {
         if self.verified_cache.get(name).is_none() {
             anyhow::bail!("Package '{}' has not been imported and verified yet. Use installeer_ondertekend first.", name);
         }

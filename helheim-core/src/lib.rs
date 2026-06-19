@@ -17,7 +17,7 @@ pub use ffi::{
     create_ffi_context, marshal_helheimtype_to_helvalue, report_error,
     unmarshal_helvalue_to_helheimtype, HelFFIContext, HelFunctionCall, HelFunctionDesc,
     HelFunctionTable, HelList, HelResourceHandle, HelString, HelValue, HelValueData,
-    HelValueTag, LoadedNativeModule, NativeModuleLoader, HEL_ABI_VERSION, HEL_ERR_OK,
+    HelValueTag, LoadedWasmModule, WasmModuleLoader, HEL_ABI_VERSION, HEL_ERR_OK,
     HEL_ERR_GENERIC, HEL_ERR_INVALID_ARG, HEL_ERR_OUT_OF_MEMORY,
 };
 

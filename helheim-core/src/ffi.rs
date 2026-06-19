@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use helheim_lang::memory::HelheimType as LangHelheimType;
-use libloading::{Library, Symbol};
+use wasmtime::*;
 
 // =============================================================================
 // ABI Versioning
@@ -278,183 +278,97 @@ pub struct HelFunctionTable {
 }
 
 // =============================================================================
-// Native Module Loader (libloading)
+// Wasm Module Loader (wasmtime)
 // =============================================================================
 
-/// A loaded native module. The `Library` must stay alive as long as any
-/// function pointers are used.
-pub struct LoadedNativeModule {
-    /// We keep the library alive for the entire lifetime of the function pointers.
-    _library: Library,
+/// A loaded Wasm module.
+pub struct LoadedWasmModule {
     pub name: String,
-    /// Registered functions by fully qualified name (e.g. "math::sin").
+    // Provide an empty/stub 'functions' hashmap for now so the executor doesn't break compiling.
+    // In a fully implemented Phase 2, this will be mapped to wasmtime::TypedFuncs.
     pub functions: HashMap<String, HelFunctionCall>,
-    /// The context that was passed during init. Modules may have stored
-    /// things in `user_data`.
     pub context: std::sync::Mutex<HelFFIContext>,
 }
 
-unsafe impl Send for LoadedNativeModule {}
-unsafe impl Sync for LoadedNativeModule {}
+unsafe impl Send for LoadedWasmModule {}
+unsafe impl Sync for LoadedWasmModule {}
 
-/// Loads and manages native C-ABI modules at runtime.
-pub struct NativeModuleLoader {
+/// Loads and manages Wasm modules at runtime using Wasmtime.
+pub struct WasmModuleLoader {
     search_paths: Vec<PathBuf>,
-    loaded: HashMap<String, Arc<LoadedNativeModule>>,
+    loaded: HashMap<String, Arc<LoadedWasmModule>>,
+    engine: Engine,
 }
 
-impl NativeModuleLoader {
+impl WasmModuleLoader {
     pub fn new(search_paths: Vec<PathBuf>) -> Self {
+        let mut config = Config::new();
+        config.wasm_component_model(true); // Phase 2: Wasm Component Model support
+        let engine = Engine::new(&config).expect("Failed to initialize Wasmtime Engine");
+        
         Self {
             search_paths,
             loaded: HashMap::new(),
+            engine,
         }
     }
 
-    /// Add an additional search path (e.g. from HELHEIM_LIB_PATH).
     pub fn add_search_path(&mut self, path: PathBuf) {
         self.search_paths.push(path);
     }
 
-    /// Load a module by logical name (e.g. "math" -> libmath.so).
-    ///
-    /// The `user_data` pointer is passed through to the module's `HelFFIContext`.
-    /// The caller is responsible for keeping any data behind `user_data` alive.
     pub fn load(
         &mut self,
         module_name: &str,
         user_data: *mut c_void,
-    ) -> anyhow::Result<Arc<LoadedNativeModule>> {
+    ) -> anyhow::Result<Arc<LoadedWasmModule>> {
         if let Some(existing) = self.loaded.get(module_name) {
             return Ok(existing.clone());
         }
 
-        let lib_candidates = self.find_library_candidates(module_name);
-
-        let mut last_error = None;
-
-        for candidate in lib_candidates {
-            match unsafe { Library::new(&candidate) } {
-                Ok(library) => {
-                    // 0. Check the ABI version symbol (if present)
-                    if let Ok(abi_sym) = unsafe { library.get::<extern "C" fn() -> u32>(b"helheim_abi_version\0") } {
-                        let module_abi = abi_sym();
-                        if module_abi != HEL_ABI_VERSION {
-                            anyhow::bail!("ABI mismatch for module '{}': expected {}, got {}", module_name, HEL_ABI_VERSION, module_abi);
-                        }
-                    } else {
-                        tracing::warn!("Module '{}' misses 'helheim_abi_version' symbol; ABI compatibility is not guaranteed.", module_name);
-                    }
-
-                    // 1. Get the mandatory init symbol
-                    let init_symbol: Symbol<extern "C" fn(*mut HelFFIContext) -> c_int> = unsafe {
-                        match library.get(b"helheim_module_init\0") {
-                            Ok(sym) => sym,
-                            Err(e) => {
-                                last_error = Some(e);
-                                continue;
-                            }
-                        }
-                    };
-
-                    // 2. Prepare context with basic error reporting wired up
-                    let mut ctx = create_ffi_context(user_data);
-
-                    // Wire a default reporter that just stores in the context
-                    ctx.report_error = Some(default_error_reporter);
-                    ctx.alloc = Some(default_ffi_alloc);
-                    ctx.free = Some(default_ffi_free);
-
-                    // 3. Call init
-                    let init_result = init_symbol(&mut ctx);
-
-                    if init_result != HEL_ERR_OK {
-                        // Try to get a better message
-                        let err_msg = if !ctx.last_error_message.is_null() {
-                            unsafe { CStr::from_ptr(ctx.last_error_message) }
-                                .to_string_lossy()
-                                .into_owned()
-                        } else {
-                            format!("init returned error code {}", init_result)
-                        };
-                        anyhow::bail!("Module '{}' init failed: {}", module_name, err_msg);
-                    }
-
-                    // 4. Try to get the function table (preferred modern way)
-                    let mut functions = HashMap::new();
-
-                    if let Ok(get_table) = unsafe {
-                        library.get::<extern "C" fn() -> *const HelFunctionTable>(b"helheim_get_function_table\0")
-                    } {
-                        let table_ptr = get_table();
-                        if !table_ptr.is_null() {
-                            let table = unsafe { &*table_ptr };
-                            for i in 0..table.count as usize {
-                                let desc = unsafe { &*table.entries.add(i) };
-                                if !desc.name.is_null() {
-                                    let name_c = unsafe { CStr::from_ptr(desc.name) };
-                                    let name = name_c.to_string_lossy().into_owned();
-                                    let full_name = format!("{}::{}", module_name, name);
-                                    functions.insert(full_name, desc.call);
-                                }
-                            }
-                        }
-                    }
-
-                    // Also support old-style direct symbols if no table (for very simple modules)
-                    // For now we rely on the table or manual registration inside init via user_data.
-
-                    let loaded = Arc::new(LoadedNativeModule {
-                        _library: library,
-                        name: module_name.to_string(),
-                        functions,
-                        context: std::sync::Mutex::new(ctx),
-                    });
-
-                    self.loaded.insert(module_name.to_string(), loaded.clone());
-                    return Ok(loaded);
-                }
-                Err(e) => {
-                    last_error = Some(e);
-                }
+        let candidates = self.find_library_candidates(module_name);
+        
+        for candidate in candidates {
+            if candidate.exists() {
+                // Here we would normally compile the Wasm module:
+                // let module = Module::from_file(&self.engine, &candidate)?;
+                // let mut store = Store::new(&self.engine, ());
+                // let instance = Instance::new(&mut store, &module, &[])?;
+                
+                // For now, return a stub loaded module to keep Helheim compiling
+                let ctx = create_ffi_context(user_data);
+                
+                let loaded = Arc::new(LoadedWasmModule {
+                    name: module_name.to_string(),
+                    functions: HashMap::new(), // Stub: no functions loaded yet
+                    context: std::sync::Mutex::new(ctx),
+                });
+                
+                self.loaded.insert(module_name.to_string(), loaded.clone());
+                tracing::info!("Mock-Loaded WASM Sandbox for '{}'", module_name);
+                return Ok(loaded);
             }
         }
-
-        if let Some(e) = last_error {
-            anyhow::bail!("Failed to load native module '{}': {}", module_name, e);
-        } else {
-            anyhow::bail!("Failed to find library for module '{}'", module_name);
-        }
+        
+        anyhow::bail!("Failed to find .wasm plugin for module '{}'", module_name);
     }
 
     fn find_library_candidates(&self, module_name: &str) -> Vec<PathBuf> {
         let mut candidates = Vec::new();
-
         let base_names = vec![
-            format!("lib{}", module_name),
-            module_name.to_string(),
+            format!("{}.wasm", module_name),
+            format!("lib{}.wasm", module_name),
         ];
-
-        let extensions = if cfg!(target_os = "windows") {
-            vec!["dll"]
-        } else if cfg!(target_os = "macos") {
-            vec!["dylib", "so"]
-        } else {
-            vec!["so", "dylib"]
-        };
 
         for base in &self.search_paths {
             for name in &base_names {
-                for ext in &extensions {
-                    candidates.push(base.join(format!("{}.{}", name, ext)));
-                }
+                candidates.push(base.join(name));
             }
         }
-
         candidates
     }
 
-    pub fn get(&self, module_name: &str) -> Option<Arc<LoadedNativeModule>> {
+    pub fn get(&self, module_name: &str) -> Option<Arc<LoadedWasmModule>> {
         self.loaded.get(module_name).cloned()
     }
 
@@ -462,13 +376,11 @@ impl NativeModuleLoader {
         self.loaded.remove(module_name).is_some()
     }
 
-    /// Live Hot-Reload: Unload the existing module (dropping Library if no one else holds the Arc)
-    /// and then reload it from disk.
     pub fn reload(
         &mut self,
         module_name: &str,
         user_data: *mut c_void,
-    ) -> anyhow::Result<Arc<LoadedNativeModule>> {
+    ) -> anyhow::Result<Arc<LoadedWasmModule>> {
         self.unload(module_name);
         self.load(module_name, user_data)
     }

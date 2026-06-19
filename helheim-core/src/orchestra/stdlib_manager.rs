@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use dashmap::DashMap;
 
-use crate::ffi::NativeModuleLoader;
+use crate::ffi::WasmModuleLoader;
 use helheim_lang::ast::CodeTaal;
 use helheim_lang::parser::HelParser;
 
@@ -14,14 +14,14 @@ pub struct PureModule {
 
 pub struct StdLibManager {
     pub pure_modules: DashMap<String, PureModule>,
-    pub native_modules: Arc<tokio::sync::Mutex<NativeModuleLoader>>,
+    pub native_modules: Arc<tokio::sync::Mutex<WasmModuleLoader>>,
 }
 
 impl StdLibManager {
     pub fn new() -> Self {
         Self {
             pure_modules: DashMap::new(),
-            native_modules: Arc::new(tokio::sync::Mutex::new(NativeModuleLoader::new(vec![
+            native_modules: Arc::new(tokio::sync::Mutex::new(WasmModuleLoader::new(vec![
                 PathBuf::from("stdlib/lib"),
                 PathBuf::from("test_plugins"),
             ]))),
@@ -78,14 +78,14 @@ impl StdLibManager {
                 let entry = entry?;
                 let path = entry.path();
                 let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
-                if ext == "so" || ext == "dll" || ext == "dylib" {
+                if ext == "wasm" {
                     if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                         let lib_name = stem
                             .strip_prefix("libhelheim_").unwrap_or_else(||
                                 stem.strip_prefix("lib").unwrap_or(stem)
                             );
                         
-                        // Let NativeModuleLoader handle the full load
+                        // Let WasmModuleLoader handle the full load
                         match loader.load(&lib_name, std::ptr::null_mut()) {
                             Ok(_) => {
                                 // Loader already prints the success message
