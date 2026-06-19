@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  body { background: #000; color: #fff; font-family: 'Courier New', monospace; margin: 0; padding: 20px; display: flex; gap: 20px; height: 100vh; box-sizing: border-box; }
+  .term { flex: 1; background: #1e1e1e; border-radius: 8px; padding: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); overflow: hidden; position: relative; border: 1px solid #333; }
+  .header { display: flex; gap: 8px; margin-bottom: 15px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; }
+  .red { background: #ff5f56; } .yellow { background: #ffbd2e; } .green { background: #27c93f; }
+  .content { font-size: 16px; line-height: 1.5; }
+  .green-text { color: #27c93f; }
+  .blue-text { color: #5fb4f4; }
+  .dim { color: #888; }
+  .blink { animation: blinker 1s linear infinite; }
+  @keyframes blinker { 50% { opacity: 0; } }
+</style>
+</head>
+<body>
+
+<div class="term" id="term1">
+  <div class="header"><div class="dot red"></div><div class="dot yellow"></div><div class="dot green"></div></div>
+  <div class="content" id="c1"></div>
+</div>
+
+<div class="term" id="term2">
+  <div class="header"><div class="dot red"></div><div class="dot yellow"></div><div class="dot green"></div></div>
+  <div class="content" id="c2"></div>
+</div>
+
+<script>
+  const delay = ms => new Promise(res => setTimeout(res, ms));
+  const t1 = document.getElementById('c1');
+  const t2 = document.getElementById('c2');
+
+  async function typeLine(elem, text, className='', speed=30) {
+    const div = document.createElement('div');
+    if (className) div.className = className;
+    elem.appendChild(div);
+    for (let i=0; i<text.length; i++) {
+      div.innerHTML += text[i] === ' ' ? '&nbsp;' : text[i];
+      await delay(speed);
+    }
+    return div;
+  }
+
+  async function addLine(elem, text, className='') {
+    const div = document.createElement('div');
+    if (className) div.className = className;
+    div.innerHTML = text;
+    elem.appendChild(div);
+  }
+
+  async function run() {
+    await delay(1000);
+    // Node B starts listening
+    await typeLine(t2, "$ helheim-cli listen --port 9003", "green-text");
+    await delay(300);
+    addLine(t2, "[Helheim Gateway] Node B listening on port 9003...", "blue-text");
+    addLine(t2, "<span class='dim'>Waiting for incoming migrations...</span><span class='blink'>_</span>");
+    
+    await delay(1000);
+    // Node A starts execution
+    await typeLine(t1, "$ helheim-cli run script.hel", "green-text");
+    await delay(300);
+    addLine(t1, "[Helheim] Starting execution on Node A...");
+    await delay(800);
+    addLine(t1, "Calculating heavy workload: [██████░░░░░░░░░░]");
+    await delay(1000);
+    addLine(t1, "[MIGRATIE] perform Swarm::migrate(\"192.168.1.100\", 9003) called.", "yellow-text");
+    await delay(600);
+    addLine(t1, "[MIGRATIE] Packing memory state and continuations...");
+    await delay(500);
+    addLine(t1, "[MIGRATIE] Teleporting state over TCP...");
+    
+    // Node B receives
+    await delay(500);
+    t2.lastChild.remove(); // remove blinker
+    addLine(t2, "[Helheim Gateway] Incoming Swarm migration payload received! (42KB)", "blue-text");
+    await delay(600);
+    addLine(t2, "[MIGRATIE] Unpacking memory state...");
+    await delay(400);
+    addLine(t2, "[MIGRATIE] Restoring connections (na_aankomst)...");
+    await delay(500);
+    addLine(t2, "[Helheim] Resuming execution from exact snapshot...");
+    await delay(800);
+    addLine(t2, "Calculating heavy workload: [██████████████████] DONE", "green-text");
+    await delay(400);
+    addLine(t2, "[Helheim] Process completed successfully on Node B.");
+    addLine(t2, "$ <span class='blink'>_</span>", "green-text");
+
+    // Node A finishes
+    await delay(100);
+    addLine(t1, "[MIGRATIE] Transfer successful. Node A process terminated.", "dim");
+    addLine(t1, "$ <span class='blink'>_</span>", "green-text");
+  }
+  
+  run();
+</script>
+</body>
+</html>

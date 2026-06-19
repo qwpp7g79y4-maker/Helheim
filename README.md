@@ -4,6 +4,10 @@
 
 **Helheim** is a bare-metal, distributed, and zero-overhead execution engine for the CodeTaal (Dutch syntax) language, designed from the ground up for high-performance and robust system orchestration.
 
+<p align="center">
+  <img src="docs/assets/helheim_migration_demo.webp" alt="Helheim Swarm Migration Demo" width="800">
+</p>
+
 *English below*
 
 ---
