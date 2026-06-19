@@ -281,13 +281,27 @@ pub struct HelFunctionTable {
 // Wasm Module Loader (wasmtime)
 // =============================================================================
 
-/// A loaded Wasm module.
 pub struct LoadedWasmModule {
     pub name: String,
-    // Provide an empty/stub 'functions' hashmap for now so the executor doesn't break compiling.
-    // In a fully implemented Phase 2, this will be mapped to wasmtime::TypedFuncs.
-    pub functions: HashMap<String, HelFunctionCall>,
+    pub instance: wasmtime::Instance,
+    // Store is wrapped in a Mutex for Sync access across concurrent executor threads.
+    // In a highly concurrent scenario, a StorePool should be used, but Mutex is fine for Phase 2 baseline.
+    pub store: std::sync::Mutex<wasmtime::Store<()>>,
     pub context: std::sync::Mutex<HelFFIContext>,
+}
+
+impl LoadedWasmModule {
+    pub fn call_function(&self, name: &str, args: &[crate::orchestra::memory::HelheimType]) -> anyhow::Result<crate::orchestra::memory::HelheimType> {
+        let mut store = self.store.lock().map_err(|e| anyhow::anyhow!("Wasm store mutex poisoned: {}", e))?;
+        let func = self.instance.get_func(&mut *store, name).ok_or_else(|| anyhow::anyhow!("Function '{}' not found in Wasm module", name))?;
+        
+        // Phase 2: Stub implementation for Wasm Memory Marshalling
+        // We will need to map HelheimType arguments to Wasmtime Val types and handle string allocation.
+        // For now, we return Ok to ensure the system compiles and we can start translating arguments.
+        
+        // This validates that the function actually exists in the WASM guest
+        Ok(crate::orchestra::memory::HelheimType::String(format!("WASM_CALL_STUB: {}", name)))
+    }
 }
 
 unsafe impl Send for LoadedWasmModule {}
@@ -330,22 +344,25 @@ impl WasmModuleLoader {
         
         for candidate in candidates {
             if candidate.exists() {
-                // Here we would normally compile the Wasm module:
-                // let module = Module::from_file(&self.engine, &candidate)?;
-                // let mut store = Store::new(&self.engine, ());
-                // let instance = Instance::new(&mut store, &module, &[])?;
+                let module = Module::from_file(&self.engine, &candidate)?;
+                let mut store = Store::new(&self.engine, ());
                 
-                // For now, return a stub loaded module to keep Helheim compiling
+                // Set up WASI or host imports if needed. For now, empty imports.
+                // Note: Production WASM plugins will need WASI ctx for stdout/fs.
+                let imports: &[Extern] = &[];
+                let instance = Instance::new(&mut store, &module, imports).map_err(|e| anyhow::anyhow!("Wasm instantiation failed: {}", e))?;
+                
                 let ctx = create_ffi_context(user_data);
                 
                 let loaded = Arc::new(LoadedWasmModule {
                     name: module_name.to_string(),
-                    functions: HashMap::new(), // Stub: no functions loaded yet
+                    instance,
+                    store: std::sync::Mutex::new(store),
                     context: std::sync::Mutex::new(ctx),
                 });
                 
                 self.loaded.insert(module_name.to_string(), loaded.clone());
-                tracing::info!("Mock-Loaded WASM Sandbox for '{}'", module_name);
+                tracing::info!("Loaded sandboxed WASM plugin: '{}'", module_name);
                 return Ok(loaded);
             }
         }

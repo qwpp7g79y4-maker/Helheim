@@ -566,8 +566,8 @@ impl Executor {
                         } else {
                             let mut loader = self.stdlib.native_modules.lock().await;
                             match loader.load(&clean_path, std::ptr::null_mut()) {
-                                Ok(module) => {
-                                    tracing::debug!("[FFI]: Native module '{}' geladen ({} functies beschikbaar)", clean_path, module.functions.len());
+                                Ok(_module) => {
+                                    tracing::info!("[AST]: Wasm module ingeladen vanaf '{}'.", clean_path);
                                 }
                                 Err(e) => {
                                     tracing::debug!("[EXECUTOR]: Warning: CodeTaal::Gebruik for '{}' native load failed: {}", path, e);
@@ -1737,8 +1737,8 @@ impl Executor {
             let mod_name = self.memory.resolve_value(&args[0]).trim_matches('"').to_string();
             let mut loader = self.stdlib.native_modules.lock().await;
             match loader.reload(&mod_name, std::ptr::null_mut()) {
-                Ok(module) => {
-                    tracing::debug!("[HOT RELOAD]: Native module '{}' is succesvol herladen ({} functies beschikbaar).", mod_name, module.functions.len());
+                Ok(_module) => {
+                    tracing::info!("[AST]: Externe Wasm module '{}' klaar voor gebruik.", mod_name);
                     return Ok("waar".to_string());
                 }
                 Err(e) => {
@@ -1948,47 +1948,21 @@ impl Executor {
                         };
                         
                         if let Some(module) = module_opt {
-                            if let Some(call_fn) = module.functions.get(name.as_str()).copied() {
-                                // Convert Helheim strings to internal types
+                                // Convert Helheim strings to internal types for Wasm
                                 let mut ht_args = Vec::new();
                                 for arg in &resolved_args {
                                     ht_args.push(crate::orchestra::memory::HelheimType::parse(arg));
                                 }
 
-                                // Marshal to FFI
-                                // [W·AG·AF] C1 Review: FFI Lock-free dispatch via context copy
-                                let mut ffi_args = Vec::new();
-                                let mut local_ctx = {
-                                    let ctx_guard = module.context.lock().map_err(|e| anyhow::anyhow!("FFI mutex poisoned: {}", e))?;
-                                    *ctx_guard
-                                };
-                                let ctx_ffi_ptr = &mut local_ctx as *mut _;
-                                for arg in &ht_args {
-                                    ffi_args.push(unsafe { crate::ffi::marshal_helheimtype_to_helvalue(arg, ctx_ffi_ptr) });
-                                }
-
-                                // Output
-                                let mut out = crate::ffi::HelValue::NULL;
-                                let res_code = call_fn(ctx_ffi_ptr, ffi_args.as_ptr(), ffi_args.len() as u32, &mut out);
-
-                                if res_code == crate::ffi::HEL_ERR_OK {
-                                    let ret_ht = unsafe { crate::ffi::unmarshal_helvalue_to_helheimtype(out, ctx_ffi_ptr) };
-                                    ffi_result = Some(Ok(ret_ht.to_string()));
-                                } else {
-                                    let mut msg = format!("Native error code {}", res_code);
-                                    if !local_ctx.last_error_message.is_null() {
-                                        msg = unsafe { std::ffi::CStr::from_ptr(local_ctx.last_error_message).to_string_lossy().into_owned() };
+                                // Phase 2: Wasm Sandboxing Call
+                                match module.call_function(name.as_str(), &ht_args) {
+                                    Ok(ret_ht) => {
+                                        ffi_result = Some(Ok(ret_ht.to_string()));
                                     }
-                                    ffi_result = Some(Err(anyhow::anyhow!("[FFI ERROR] {}: {}", name, msg)));
+                                    Err(e) => {
+                                        ffi_result = Some(Err(anyhow::anyhow!("[WASM FFI ERROR] {}: {}", name, e)));
+                                    }
                                 }
-                                
-                                // Free the error message if it was allocated by the callback
-                                if local_ctx.owned_last_error_message && !local_ctx.last_error_message.is_null() {
-                                    let _ = unsafe { std::ffi::CString::from_raw(local_ctx.last_error_message as *mut std::ffi::c_char) };
-                                }
-                                // We explicitly DO NOT write local_ctx back to module.context!
-                                // Writing it back would cause race conditions on concurrent FFI calls.
-                            }
                         }
                     }
 
