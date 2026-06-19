@@ -1,0 +1,41 @@
+// Volledige re-acq demo met succes en error case
+
+zet target_ip = "127.0.0.1";
+zet target_port = 8080;
+zet target_addr = "127.0.0.1:8080";
+
+gebruik "Std::IO::Tcp";
+
+effect Migratie {
+    voor_vertrek,
+    na_aankomst
+}
+
+handle Migratie {
+    voor_vertrek => {
+        druk_af "Sluiten van netwerk verbinding voor vertrek...";
+        // Simulatie van resource cleanup via native roep_aan
+        hervat("cleanup_ok");
+    },
+    na_aankomst => {
+        druk_af "Heropenen van netwerk verbinding na aankomst...";
+        probeer {
+            // Native IO functies roepen we aan via roep_aan (in lijn met LANGUAGE_SPEC)
+            zet dummy = roep_aan Std::IO::Tcp::verbind(target_addr);
+            hervat("reacq_ok");
+        } vang err {
+            druk_af "Fout bij re-acq op target: " + err;
+            gooi "MigratieGefaaldDoorReacq";
+        }
+    }
+} in {
+    druk_af "Start programma op originele node.";
+    
+    // De migratie uitvoeren (effecten gebruiken we met perform)
+    probeer {
+        perform Swarm::migrate(target_ip, target_port);
+        druk_af "Ik ben succesvol gemigreerd!";
+    } vang err {
+        druk_af "Migratie afgebroken of mislukt: " + err;
+    }
+}

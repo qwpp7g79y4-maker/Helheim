@@ -1,0 +1,26 @@
+// effect_demo.hel
+// Demonstratie van Laag 2: Continuations & Algebraic Effects in Helheim
+
+effect Tcp { verbind, stuur, ontvang, sluit }
+
+spawn DemoActor {
+    print "Start van de DemoActor...";
+
+    // We definiëren een handler die Tcp.verbind afvangt,
+    // de continuation pauzeert/bewaart, en de boel resume-klaar maakt.
+    handle Tcp {
+        verbind => {
+            print "=> Handler onderschept Tcp.verbind()!";
+            print "=> Continuation is nu gepauzeerd in 'resume_k'";
+            // In het echt kunnen we resume_k naar Swarm sturen of later in REPL herladen.
+            // Voor de demo resumen we hem direct met een mock socket ID!
+            print "=> Hervat continuation met mock socket ID 'mock-tcp-99'";
+            resume resume_k, "mock-tcp-99"
+        }
+    } in {
+        print "Probeer TCP verbinding te maken via effect...";
+        // Dit triggert de handler
+        let socket = perform Tcp.verbind("192.168.1.100:8080");
+        print "Verbinding succesvol! Socket ID: " + socket;
+    }
+}

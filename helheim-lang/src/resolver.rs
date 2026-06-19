@@ -62,8 +62,14 @@ impl ModuleLinker {
         let mut out = Vec::with_capacity(statements.len() * 2);
 
         for stmt in statements {
-            if let CodeTaal::Gebruik { path } = stmt {
-                let module_file = self.resolve_module_path(&path, current_dir)?;
+            if let CodeTaal::Gebruik { ref path, ref module_naam } = stmt {
+                let module_file = match self.resolve_module_path(path, current_dir) {
+                    Ok(f) => f,
+                    Err(_) => {
+                        out.push(stmt); // Leave for FFI runtime
+                        continue;
+                    }
+                };
 
                 // Already expanded (cycle protection or duplicate import)
                 if !self.loaded.insert(module_file.clone()) {
@@ -82,7 +88,15 @@ impl ModuleLinker {
                     .to_path_buf();
 
                 let expanded = self.expand(module_ast, &module_dir)?;
-                out.extend(expanded);
+                
+                if let Some(ns) = module_naam {
+                    out.push(CodeTaal::Module {
+                        name: ns.clone(),
+                        body: expanded,
+                    });
+                } else {
+                    out.extend(expanded);
+                }
             } else {
                 out.push(stmt);
             }
@@ -146,4 +160,6 @@ impl ModuleLinker {
 
         anyhow::bail!("Module '{}' not found (searched relative to {} and search paths)", module, current_dir.display())
     }
+
+
 }

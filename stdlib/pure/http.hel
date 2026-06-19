@@ -1,0 +1,65 @@
+// stdlib/pure/http.hel
+// Standard HTTP Library for Helheim
+// Includes HTTP Client and HTTP Server primitives
+
+model HttpRequest {
+    methode,
+    pad,
+    versie
+}
+
+model HttpResponse {
+    status,
+    body
+}
+
+// ==========================================
+// HTTP SERVER (Parser & Response Generator)
+// ==========================================
+
+// Parseer een simpele HTTP request startlijn
+functie parse_request(data) {
+    // data is een string van de ruwe request
+    // Voor demo: we mocken een GET request parser
+    let req = nieuw HttpRequest("GET", "/", "HTTP/1.1");
+    geef_terug req;
+}
+
+// Bouwt een geldige HTTP respons string
+functie response_ok(body) {
+    let lengte = text(body);
+    // Simpele HTTP 200 OK string format
+    let res = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n" + body;
+    geef_terug res;
+}
+
+// ==========================================
+// HTTP CLIENT
+// ==========================================
+
+functie get(host, url) {
+    // Standaard port is 80 (HTTP)
+    zet pad = url;
+    als pad == "" dan {
+        zet pad = "/";
+    }
+
+    // Raw TCP connection (primitive)
+    zet verbinding = host + ":80";
+    zet sock = tcp_verbind verbinding;
+
+    // Build request (pure string construction)
+    zet req = "GET " + pad + " HTTP/1.1\r\nHost: " + host + "\r\nUser-Agent: Helheim/2.0\r\nConnection: close\r\n\r\n";
+
+    // Zero-copy send of the request bytes
+    tcp_stuur sock, req;
+
+    // Receive full response (blocking until close or content-length for simplicity)
+    // We will read 65535 bytes to prevent huge memory usage in demo.
+    zet resp_bytes = tcp_ontvang sock, 65535;
+
+    // Sluit socket
+    tcp_sluit sock;
+
+    geef_terug resp_bytes;
+}

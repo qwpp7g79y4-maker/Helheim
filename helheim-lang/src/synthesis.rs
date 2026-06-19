@@ -7,7 +7,7 @@ use std::sync::Mutex;
 lazy_static! {
     /// Kernel Cache: Het geheugen van de Reactor.
     /// Slaat reeds gegenereerde PTX op om herhalende taken (loops) instant te maken.
-    static ref KERNEL_CACHE: Mutex<HashMap<CodeTaal, String>> = Mutex::new(HashMap::new());
+    static ref KERNEL_CACHE: Mutex<HashMap<String, String>> = Mutex::new(HashMap::new());
 }
 
 pub struct KernelSynthesisEngine;
@@ -15,9 +15,21 @@ pub struct KernelSynthesisEngine;
 impl KernelSynthesisEngine {
     /// "Synthesize": Laat het abstracte zaadje groeien tot concrete machine-code (PTX).
     pub fn synthesize(seed: CodeTaal) -> Result<String> {
-        // Caching temporarily disabled during AST + Name Resolution refactor
-        // (CodeTaal no longer derives Eq + Hash because of LiteralValue::Float)
-        println!("[SYNTHESIS]: Starting synthesis (caching disabled during refactor)...");
+        let cache_key = match serde_json::to_string(&seed) {
+            Ok(k) => k,
+            Err(_) => String::new(),
+        };
+
+        if !cache_key.is_empty() {
+            if let Ok(cache) = KERNEL_CACHE.lock() {
+                if let Some(ptx) = cache.get(&cache_key) {
+                    tracing::debug!("[SYNTHESIS]: PTX retrieved from Kernel Cache!");
+                    return Ok(ptx.clone());
+                }
+            }
+        }
+
+        tracing::debug!("[SYNTHESIS]: Starting synthesis (cache miss)...");
         let ptx = match seed {
             CodeTaal::GpuKernel(ref kernel_def) => Self::synthesize_gpu_kernel(kernel_def)?,
             CodeTaal::MatMul { m, n, k } => Self::generate_matmul_ptx(m, n, k),
@@ -32,7 +44,7 @@ impl KernelSynthesisEngine {
                 ref target,
                 ref payload,
             } => {
-                println!("[NETWORK]: Preparing packet for {}: '{}'", target, payload);
+                tracing::debug!("[NETWORK]: Preparing packet for {}: '{}'", target, payload);
                 format!(
                     "// HOST_OP: SEND -> {} (Payload size: {})",
                     target,
@@ -40,14 +52,23 @@ impl KernelSynthesisEngine {
                 )
             }
             CodeTaal::HelBlock { ref raw_code } => {
-                println!(
+                tracing::debug!(
                     "[SYNTHESIS]: Hel-modus detectie. JIT compilatie van ruwe bare-metal logica."
                 );
                 // We return the raw code directly. The execution engine will pass it to NVRTC.
                 format!("// HEL_BLOCK_START\n{}\n// HEL_BLOCK_END", raw_code)
             }
+            CodeTaal::InlineAssembly { ref target, ref code, .. } if target == "ptx" => {
+                let mut ptx = String::new();
+                ptx.push_str("    // === Inline PTX start ===\n");
+                for line in code.lines() {
+                    ptx.push_str(&format!("    {}\n", line.trim()));
+                }
+                ptx.push_str("    // === Inline PTX end ===\n");
+                ptx
+            }
             CodeTaal::Encrypt { ref algo, data: _ } => {
-                println!("[SECURITY]: Encrypting data with {}...", algo);
+                tracing::debug!("[SECURITY]: Encrypting data with {}...", algo);
                 format!("// HOST_OP: ENCRYPT (algo: {})", algo)
             }
             CodeTaal::FileOp {
@@ -68,21 +89,21 @@ impl KernelSynthesisEngine {
                 _ => "// HOST_OP: FS_UNKNOWN".to_string(),
             },
             CodeTaal::SysOp { ref command } => {
-                println!("[SYS]: SysOp requested '{}'", command);
+                tracing::debug!("[SYS]: SysOp requested '{}'", command);
                 "// HOST_OP: SYS_EXEC".to_string()
             }
             CodeTaal::HttpOp {
                 ref method,
                 ref url,
             } => {
-                println!("[HTTP]: {} {:?}", method, url);
+                tracing::debug!("[HTTP]: {} {:?}", method, url);
                 "// HOST_OP: HTTP_REQ".to_string()
             }
-            CodeTaal::Gebruik { ref path } => {
+            CodeTaal::Gebruik { ref path, module_naam: _ } => {
                 format!("// WARNING: Unexpanded IMPORT -> {} (Linker skipped?)", path)
             }
             b @ CodeTaal::Block { .. } | b @ CodeTaal::FunctionDef { .. } => {
-                println!("[SYNTHESIS]: General Block/FunctionDef -> forcing PtxGenerator lowering (bare metal path)");
+                tracing::debug!("[SYNTHESIS]: General Block/FunctionDef -> forcing PtxGenerator lowering (bare metal path)");
                 let mut ptx_gen = PtxGenerator::new();
                 match ptx_gen.lower_general(&b) {
                     Ok(ptx) => ptx,
@@ -92,7 +113,11 @@ impl KernelSynthesisEngine {
             _ => "// HOST_OP: INTERPRETER_LOGIC (CPU-Side)".to_string(),
         };
 
-        // Stap 3: Opslaan in Cache was hier, maar is tijdelijk uitgeschakeld
+        if !cache_key.is_empty() {
+            if let Ok(mut cache) = KERNEL_CACHE.lock() {
+                cache.insert(cache_key, ptx.clone());
+            }
+        }
         Ok(ptx)
     }
 
@@ -305,6 +330,8 @@ pub struct PtxGenerator {
     shared_alloc: SharedMemoryAllocator,
     label_counter: usize,
     variables: std::collections::HashMap<String, String>,
+    current_line: usize,
+    current_col: usize,
 }
 
 impl PtxGenerator {
@@ -314,6 +341,8 @@ impl PtxGenerator {
             shared_alloc: SharedMemoryAllocator::new(),
             label_counter: 0,
             variables: std::collections::HashMap::new(),
+            current_line: 0,
+            current_col: 0,
         }
     }
 
@@ -445,6 +474,17 @@ impl PtxGenerator {
                     ptx.push(&format!("    // list/matrix loaded as b32 (packed upstream)"));
                     self.variables.insert(name.clone(), reg);
                 }
+                LiteralValue::Bytes(_) => {
+                    // bytes (TCP etc) are host-side only for now; provide dummy b32 param slot
+                    let reg = self.reg_alloc.alloc_b32_fragment(1)[0].clone();
+                    ptx.push(&format!("    ld.param.b32 {}, [input_{}]; // bytes host-side", reg, name));
+                    self.variables.insert(name.clone(), reg);
+                }
+                LiteralValue::Pointer(_) => {
+                    let reg = self.reg_alloc.alloc_b64_fragment(1)[0].clone();
+                    ptx.push(&format!("    ld.param.u64 {}, [input_{}]; // pointer host-side", reg, name));
+                    self.variables.insert(name.clone(), reg);
+                }
                 _ => {
                     let reg = self.reg_alloc.alloc_f32_fragment(1)[0].clone();
                     ptx.push(&format!("    mov.f32 {}, 0f00000000; // unsupported context type for {}", reg, name));
@@ -462,65 +502,80 @@ impl PtxGenerator {
     }
 
     fn translate_op(&mut self, ptx: &mut PtxModule, op: &CodeTaal) -> Result<()> {
-        match op {
-            CodeTaal::GpuOp(GpuOperation::SubgroupSync) => {
-                ptx.push("    bar.sync 0;");
-            }
-            CodeTaal::GpuOp(GpuOperation::MatrixMultiplyAccumulate { a, b, c, m, n, k, precision: _ }) => {
-                self.translate_matrix_multiply(ptx, a, b, c, *m, *n, *k)?;
-            }
-            CodeTaal::Block { statements } => {
-                for stmt in statements {
-                    self.translate_op(ptx, stmt)?;
+        let res = (|| -> Result<()> {
+            match op {
+                CodeTaal::LocationMarker { line, col } => {
+                    self.current_line = *line;
+                    self.current_col = *col;
+                    ptx.push(&format!("    // .loc {}:{}", line, col));
                 }
-            }
-            CodeTaal::VarDef { name, value } => {
-                let out_reg = self.translate_expression(ptx, value)?;
-                self.variables.insert(name.clone(), out_reg);
-            }
-            CodeTaal::Return { value } => {
-                if let Some(val) = value {
-                    let out_reg = self.translate_expression(ptx, val)?;
-                    if out_reg.starts_with("%r") {
-                        // Integer register → b32 store into f32 buffer (bit-cast). CPU reinterprets bits.
-                        ptx.push(&format!("    st.global.b32 [%rd1], {};", out_reg));
-                    } else {
-                        ptx.push(&format!("    st.global.f32 [%rd1], {};", out_reg));
+                CodeTaal::GpuOp(GpuOperation::SubgroupSync) => {
+                    ptx.push("    bar.sync 0;");
+                }
+                CodeTaal::GpuOp(GpuOperation::MatrixMultiplyAccumulate { a, b, c, m, n, k, precision: _ }) => {
+                    self.translate_matrix_multiply(ptx, a, b, c, *m, *n, *k)?;
+                }
+                CodeTaal::Block { statements } => {
+                    for stmt in statements {
+                        self.translate_op(ptx, stmt)?;
                     }
                 }
-            }
-            CodeTaal::If { condition, then, else_block } => {
-                let cond_pred = self.translate_expression(ptx, condition)?;
-                let label_end = self.get_label("END_IF");
-                
-                if let Some(else_b) = else_block {
-                    let label_else = self.get_label("ELSE");
-                    ptx.push(&format!("    @!{} bra {};", cond_pred, label_else));
-                    self.translate_op(ptx, then)?;
-                    ptx.push(&format!("    bra {};", label_end));
-                    ptx.push(&format!("{}:", label_else));
-                    self.translate_op(ptx, else_b)?;
-                } else {
-                    ptx.push(&format!("    @!{} bra {};", cond_pred, label_end));
-                    self.translate_op(ptx, then)?;
+                CodeTaal::VarDef { name, value } => {
+                    let out_reg = self.translate_expression(ptx, value)?;
+                    self.variables.insert(name.clone(), out_reg);
                 }
-                ptx.push(&format!("{}:", label_end));
+                CodeTaal::Return { value } => {
+                    if let Some(val) = value {
+                        let out_reg = self.translate_expression(ptx, val)?;
+                        if out_reg.starts_with("%r") {
+                            // Integer register → b32 store into f32 buffer (bit-cast). CPU reinterprets bits.
+                            ptx.push(&format!("    st.global.b32 [%rd1], {};", out_reg));
+                        } else {
+                            ptx.push(&format!("    st.global.f32 [%rd1], {};", out_reg));
+                        }
+                    }
+                }
+                CodeTaal::If { condition, then, else_block } => {
+                    let cond_pred = self.translate_expression(ptx, condition)?;
+                    let label_end = self.get_label("END_IF");
+                    
+                    if let Some(else_b) = else_block {
+                        let label_else = self.get_label("ELSE");
+                        ptx.push(&format!("    @!{} bra {};", cond_pred, label_else));
+                        self.translate_op(ptx, then)?;
+                        ptx.push(&format!("    bra {};", label_end));
+                        ptx.push(&format!("{}:", label_else));
+                        self.translate_op(ptx, else_b)?;
+                    } else {
+                        ptx.push(&format!("    @!{} bra {};", cond_pred, label_end));
+                        self.translate_op(ptx, then)?;
+                    }
+                    ptx.push(&format!("{}:", label_end));
+                }
+                CodeTaal::Loop { condition, body } => {
+                    let label_start = self.get_label("LOOP_START");
+                    let label_end = self.get_label("LOOP_END");
+                    
+                    ptx.push(&format!("{}:", label_start));
+                    let cond_pred = self.translate_expression(ptx, condition)?;
+                    ptx.push(&format!("    @!{} bra {};", cond_pred, label_end));
+                    
+                    self.translate_op(ptx, body)?;
+                    ptx.push(&format!("    bra {};", label_start));
+                    ptx.push(&format!("{}:", label_end));
+                }
+                _ => {
+                    ptx.push(&format!("    // Genegeerd in PTX: {:?}", op));
+                }
             }
-            CodeTaal::Loop { condition, body } => {
-                let label_start = self.get_label("LOOP_START");
-                let label_end = self.get_label("LOOP_END");
-                
-                ptx.push(&format!("{}:", label_start));
-                let cond_pred = self.translate_expression(ptx, condition)?;
-                ptx.push(&format!("    @!{} bra {};", cond_pred, label_end));
-                
-                self.translate_op(ptx, body)?;
-                ptx.push(&format!("    bra {};", label_start));
-                ptx.push(&format!("{}:", label_end));
+            Ok(())
+        })();
+
+        if let Err(e) = res {
+            if self.current_line > 0 {
+                return Err(anyhow::anyhow!("PTX JIT Fout op regel {}:{} - {}", self.current_line, self.current_col, e));
             }
-            _ => {
-                ptx.push(&format!("    // Genegeerd in PTX: {:?}", op));
-            }
+            return Err(e);
         }
         Ok(())
     }
@@ -567,6 +622,22 @@ impl PtxGenerator {
                         ptx.push(&format!("    // list/matrix literal - host/packed side {}", val));
                         Ok(out_reg)
                     }
+                    LiteralValue::Bytes(b) => {
+                        // Bytes literals are host-side (TCP primitives etc). Do not lower to PTX registers.
+                        let out_reg = self.reg_alloc.alloc_b32_fragment(1)[0].clone();
+                        ptx.push(&format!("    // bytes literal ({} bytes, host-side only) -> reg {}", b.len(), out_reg));
+                        Ok(out_reg)
+                    }
+                    LiteralValue::Pointer(addr) => {
+                        let out_reg = self.reg_alloc.alloc_b64_fragment(1)[0].clone();
+                        ptx.push(&format!("    mov.u64 {}, {}; // ptr literal", out_reg, addr));
+                        Ok(out_reg)
+                    }
+                    LiteralValue::Void => {
+                        let out_reg = self.reg_alloc.alloc_b32_fragment(1)[0].clone();
+                        ptx.push(&format!("    // void literal -> reg {}", out_reg));
+                        Ok(out_reg)
+                    }
                 }
             }
             CodeTaal::VarGet { name } => {
@@ -604,10 +675,22 @@ impl PtxGenerator {
                                 "-" => "sub.f32",
                                 "*" => "mul.f32",
                                 "/" => "div.approx.f32",
-                                "%" => "rem.approx.f32",
                                 _ => unreachable!(),
                             };
-                            ptx.push(&format!("    {} {}, {}, {};", ptx_op, out_reg, l_reg, r_reg));
+                            if op_str == "%" {
+                                let tmp_div = self.reg_alloc.alloc_f32_fragment(1)[0].clone();
+                                let tmp_floor = self.reg_alloc.alloc_f32_fragment(1)[0].clone();
+                                ptx.push(&format!("    div.approx.f32 {}, {}, {};", tmp_div, l_reg, r_reg));
+                                ptx.push(&format!("    cvt.rmi.f32.f32 {}, {};", tmp_floor, tmp_div));
+                                // l - floor(l/r)*r -> out_reg = -floor(l/r)*r + l
+                                // Wait, fma.rn.f32 is a * b + c. We need out = tmp_floor * (-r) + l, but we can't easily negate a register inline.
+                                // Let's just do: tmp_mul = tmp_floor * r; sub out, l, tmp_mul
+                                let tmp_mul = self.reg_alloc.alloc_f32_fragment(1)[0].clone();
+                                ptx.push(&format!("    mul.f32 {}, {}, {};", tmp_mul, tmp_floor, r_reg));
+                                ptx.push(&format!("    sub.f32 {}, {}, {};", out_reg, l_reg, tmp_mul));
+                            } else {
+                                ptx.push(&format!("    {} {}, {}, {};", ptx_op, out_reg, l_reg, r_reg));
+                            }
                             Ok(out_reg)
                         }
                     }
@@ -828,6 +911,12 @@ impl RegisterAllocator {
         (start..self.next_b32).map(|i| format!("%r{}", i)).collect()
     }
 
+    fn alloc_b64_fragment(&mut self, count: usize) -> Vec<String> {
+        let start = self.next_b64;
+        self.next_b64 += count as u32;
+        (start..self.next_b64).map(|i| format!("%rd{}", i)).collect()
+    }
+
     fn alloc_f32_fragment(&mut self, count: usize) -> Vec<String> {
         let start = self.next_f32;
         self.next_f32 += count as u32;
@@ -927,6 +1016,8 @@ pub struct GeneralPtxGenerator {
     next_label: u32,
     var_map: std::collections::HashMap<String, String>,
     functions_ptx: String,
+    current_line: usize,
+    current_col: usize,
 }
 
 impl GeneralPtxGenerator {
@@ -937,6 +1028,8 @@ impl GeneralPtxGenerator {
             next_label: 0,
             var_map: std::collections::HashMap::new(),
             functions_ptx: String::new(),
+            current_line: 0,
+            current_col: 0,
         }
     }
 
@@ -968,7 +1061,7 @@ impl GeneralPtxGenerator {
                     self.extract_functions(s)?;
                 }
             }
-            CodeTaal::FunctionDef { name, params, body } => {
+            CodeTaal::FunctionDef { name, is_pub: _, params, body } => {
                 // Save scope
                 let old_map = self.var_map.clone();
                 let old_reg = self.next_reg;
@@ -1011,91 +1104,103 @@ impl GeneralPtxGenerator {
     fn emit_statement(&mut self, out: &mut String, stmt: &CodeTaal, indent: usize) -> Result<()> {
         let pad = "    ".repeat(indent);
 
-        match stmt {
-            CodeTaal::Block { statements } => {
-                for s in statements {
-                    self.emit_statement(out, s, indent)?;
+        let res = (|| -> Result<()> {
+            match stmt {
+                CodeTaal::LocationMarker { line, col } => {
+                    self.current_line = *line;
+                    self.current_col = *col;
+                    out.push_str(&format!("{}// .loc {}:{}\n", pad, line, col));
                 }
-            }
-            CodeTaal::VarDef { name, value } => {
-                let val_reg = self.translate_expression(out, value, indent)?;
-                let dst_reg = self.alloc_temp_reg();
-                out.push_str(&format!("{}mov.f64 {}, {};\n", pad, dst_reg, val_reg));
-                self.var_map.insert(name.clone(), dst_reg);
-            }
-            CodeTaal::Op { left, op, right } => {
-                if op == "=" {
-                    if let CodeTaal::VarGet { name } = &**left {
-                        let val_reg = self.translate_expression(out, right, indent)?;
-                        if let Some(dst_reg) = self.var_map.get(name) {
-                            out.push_str(&format!("{}mov.f64 {}, {};\n", pad, dst_reg, val_reg));
-                        } else {
-                            // Assign to undeclared var (should ideally be caught by semantic analysis)
-                            let dst_reg = self.alloc_temp_reg();
-                            out.push_str(&format!("{}mov.f64 {}, {};\n", pad, dst_reg, val_reg));
-                            self.var_map.insert(name.clone(), dst_reg);
-                        }
+                CodeTaal::Block { statements } => {
+                    for s in statements {
+                        self.emit_statement(out, s, indent)?;
                     }
-                } else {
+                }
+                CodeTaal::VarDef { name, value } => {
+                    let val_reg = self.translate_expression(out, value, indent)?;
+                    let dst_reg = self.alloc_temp_reg();
+                    out.push_str(&format!("{}mov.f64 {}, {};\n", pad, dst_reg, val_reg));
+                    self.var_map.insert(name.clone(), dst_reg);
+                }
+                CodeTaal::Op { left, op, right } => {
+                    if op == "=" {
+                        if let CodeTaal::VarGet { name } = &**left {
+                            let val_reg = self.translate_expression(out, right, indent)?;
+                            if let Some(dst_reg) = self.var_map.get(name) {
+                                out.push_str(&format!("{}mov.f64 {}, {};\n", pad, dst_reg, val_reg));
+                            } else {
+                                let dst_reg = self.alloc_temp_reg();
+                                out.push_str(&format!("{}mov.f64 {}, {};\n", pad, dst_reg, val_reg));
+                                self.var_map.insert(name.clone(), dst_reg);
+                            }
+                        }
+                    } else {
+                        let _ = self.translate_expression(out, stmt, indent)?;
+                    }
+                }
+                CodeTaal::FunctionCall { .. } => {
                     let _ = self.translate_expression(out, stmt, indent)?;
                 }
-            }
-            CodeTaal::FunctionCall { .. } => {
-                let _ = self.translate_expression(out, stmt, indent)?;
-            }
-            CodeTaal::If { condition, then, else_block } => {
-                let cond_reg = self.translate_expression(out, condition, indent)?;
-                let p = self.alloc_pred_reg();
-                
-                // Compare with 0.0 (false)
-                out.push_str(&format!("{}setp.ne.f64 {}, {}, 0f0000000000000000;\n", pad, p, cond_reg));
-                
-                let then_label = self.new_label("then");
-                let else_label = self.new_label("else");
-                let end_label = self.new_label("endif");
+                CodeTaal::If { condition, then, else_block } => {
+                    let cond_reg = self.translate_expression(out, condition, indent)?;
+                    let p = self.alloc_pred_reg();
+                    
+                    out.push_str(&format!("{}setp.ne.f64 {}, {}, 0f0000000000000000;\n", pad, p, cond_reg));
+                    
+                    let then_label = self.new_label("then");
+                    let else_label = self.new_label("else");
+                    let end_label = self.new_label("endif");
 
-                out.push_str(&format!("{}@{} bra {};\n", pad, p, then_label));
-                out.push_str(&format!("{}bra {};\n", pad, else_label));
+                    out.push_str(&format!("{}@{} bra {};\n", pad, p, then_label));
+                    out.push_str(&format!("{}bra {};\n", pad, else_label));
 
-                out.push_str(&format!("{}:\n", then_label));
-                self.emit_statement(out, then, indent + 1)?;
-                out.push_str(&format!("{}bra {};\n", pad, end_label));
+                    out.push_str(&format!("{}:\n", then_label));
+                    self.emit_statement(out, then, indent + 1)?;
+                    out.push_str(&format!("{}bra {};\n", pad, end_label));
 
-                out.push_str(&format!("{}:\n", else_label));
-                if let Some(eb) = else_block {
-                    self.emit_statement(out, eb, indent + 1)?;
+                    out.push_str(&format!("{}:\n", else_label));
+                    if let Some(eb) = else_block {
+                        self.emit_statement(out, eb, indent + 1)?;
+                    }
+                    out.push_str(&format!("{}:\n", end_label));
                 }
-                out.push_str(&format!("{}:\n", end_label));
-            }
-            CodeTaal::Loop { condition, body } => {
-                let loop_start = self.new_label("loop");
-                let loop_end = self.new_label("loop_end");
+                CodeTaal::Loop { condition, body } => {
+                    let loop_start = self.new_label("loop");
+                    let loop_end = self.new_label("loop_end");
 
-                out.push_str(&format!("{}:\n", loop_start));
-                let cond_reg = self.translate_expression(out, condition, indent)?;
-                let p = self.alloc_pred_reg();
-                
-                out.push_str(&format!("{}setp.eq.f64 {}, {}, 0f0000000000000000;\n", pad, p, cond_reg));
-                out.push_str(&format!("{}@{} bra {};\n", pad, p, loop_end));
+                    out.push_str(&format!("{}:\n", loop_start));
+                    let cond_reg = self.translate_expression(out, condition, indent)?;
+                    let p = self.alloc_pred_reg();
+                    
+                    out.push_str(&format!("{}setp.eq.f64 {}, {}, 0f0000000000000000;\n", pad, p, cond_reg));
+                    out.push_str(&format!("{}@{} bra {};\n", pad, p, loop_end));
 
-                self.emit_statement(out, body, indent + 1)?;
-                out.push_str(&format!("{}bra {};\n", pad, loop_start));
-                out.push_str(&format!("{}:\n", loop_end));
-            }
-            CodeTaal::Return { value } => {
-                if let Some(v) = value {
-                    let reg = self.translate_expression(out, v, indent)?;
-                    out.push_str(&format!("{}mov.f64 %ret, {};\n", pad, reg));
+                    self.emit_statement(out, body, indent + 1)?;
+                    out.push_str(&format!("{}bra {};\n", pad, loop_start));
+                    out.push_str(&format!("{}:\n", loop_end));
                 }
-                out.push_str(&format!("{}ret;\n", pad));
+                CodeTaal::Return { value } => {
+                    if let Some(v) = value {
+                        let reg = self.translate_expression(out, v, indent)?;
+                        out.push_str(&format!("{}mov.f64 %ret, {};\n", pad, reg));
+                    }
+                    out.push_str(&format!("{}ret;\n", pad));
+                }
+                CodeTaal::FunctionDef { .. } => {
+                    // Handled in extract_functions
+                }
+                _ => {
+                    return Err(anyhow::anyhow!("Onondersteund statement voor PTX backend: {:?}", stmt));
+                }
             }
-            CodeTaal::FunctionDef { .. } => {
-                // Handled in extract_functions
+            Ok(())
+        })();
+
+        if let Err(e) = res {
+            if self.current_line > 0 {
+                return Err(anyhow::anyhow!("PTX JIT Fout op regel {}:{} - {}", self.current_line, self.current_col, e));
             }
-            _ => {
-                println!("Unhandled statement: {:#?}", stmt);
-                out.push_str(&format!("{}// Unhandled statement\n", pad));
-            }
+            return Err(e);
         }
         Ok(())
     }
@@ -1159,6 +1264,13 @@ impl GeneralPtxGenerator {
                 out.push_str(&format!("{}mov.f64 {}, 0f{:016x};\n", pad, dst, val.to_bits()));
                 Ok(dst)
             }
+            CodeTaal::Literal(LiteralValue::Bytes(b)) => {
+                // Bytes are never emitted into PTX compute kernels directly
+                let dst = self.alloc_temp_reg();
+                out.push_str(&format!("{}// bytes literal ({} bytes) host-only, dummy reg\n", pad, b.len()));
+                out.push_str(&format!("{}mov.u32 {}, 0;\n", pad, dst));
+                Ok(dst)
+            }
             CodeTaal::VarGet { name } => {
                 if let Some(reg) = self.var_map.get(name) {
                     Ok(reg.clone())
@@ -1202,17 +1314,5 @@ impl GeneralPtxGenerator {
         let lbl = format!("{}_{}", prefix, self.next_label);
         self.next_label += 1;
         lbl
-    }
-
-    fn emit_ptx_op(&self, _out: &mut String, _dst: &str, _op: &str, _a: &str, _b: &str) -> Result<()> {
-        Ok(())
-    }
-
-    fn literal_to_ptx(&self, lit: &LiteralValue) -> String {
-        match lit {
-            LiteralValue::Int(i) => i.to_string(),
-            LiteralValue::Float(f) => f.to_string(),
-            _ => "0".into(),
-        }
     }
 }

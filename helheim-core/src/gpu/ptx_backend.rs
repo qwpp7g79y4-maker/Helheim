@@ -6,9 +6,17 @@ use crate::gpu::backend::{
 };
 use helheim_lang::ast::{GpuKernelDef, Precision, CodeTaal};
 
+pub enum PtxTensor {
+    F32(CudaSlice<f32>),
+    I32(CudaSlice<i32>),
+    I8(CudaSlice<i8>),
+    F16(CudaSlice<u16>),
+    BF16(CudaSlice<u16>),
+}
+
 pub struct PtxBackend {
     context: Arc<CudaContext>,
-    tensors: DashMap<usize, CudaSlice<f32>>,    // Lock-free concurrent map
+    tensors: DashMap<usize, PtxTensor>,         // Lock-free concurrent map
     next_id: AtomicUsize,
     // Cache PTX source and the actual loaded CUDA module for real launches.
     kernel_cache: DashMap<String, String>, 
@@ -24,7 +32,10 @@ pub struct PtxBackend {
 
 impl PtxBackend {
     pub fn new() -> anyhow::Result<Self> {
-        let context = CudaContext::new(0)?;
+        let device_id: usize = std::env::var("HELHEIM_GPU_DEVICE")
+            .ok().and_then(|v| v.parse().ok())
+            .unwrap_or(1);
+        let context = CudaContext::new(device_id)?;
         let stream = context.default_stream();
 
         // Pre-allocate a ringbuffer of result buffers for lowered PTX launches.
@@ -67,23 +78,62 @@ impl GpuBackend for PtxBackend {
     fn allocate_tensor(
         &self,
         shape: &[usize],
-        _precision: Precision,        // TODO: later generiek maken
+        precision: Precision,
         init: TensorInit,
     ) -> Result<GpuPtr, GpuError> {
         let size = shape.iter().product::<usize>();
         let stream = self.context.default_stream();
         
-        let mut slice = stream.alloc_zeros::<f32>(size)
-            .map_err(|e: cudarc::driver::DriverError| GpuError::AllocationFailed(e.to_string()))?;
-
-        if let TensorInit::Random = init {
-            let host_data: Vec<f32> = (0..size).map(|_| rand::random()).collect();
-            stream.memcpy_htod(&host_data, &mut slice)
-                .map_err(|e: cudarc::driver::DriverError| GpuError::AllocationFailed(e.to_string()))?;
-        }
+        let ptx_tensor = match precision {
+            Precision::F32 => {
+                let mut slice = stream.alloc_zeros::<f32>(size)
+                    .map_err(|e: cudarc::driver::DriverError| GpuError::AllocationFailed(e.to_string()))?;
+                if let TensorInit::Random = init {
+                    let host_data: Vec<f32> = (0..size).map(|_| rand::random()).collect();
+                    stream.memcpy_htod(&host_data, &mut slice)
+                        .map_err(|e: cudarc::driver::DriverError| GpuError::AllocationFailed(e.to_string()))?;
+                }
+                PtxTensor::F32(slice)
+            }
+            Precision::I32 => {
+                let mut slice = stream.alloc_zeros::<i32>(size)
+                    .map_err(|e: cudarc::driver::DriverError| GpuError::AllocationFailed(e.to_string()))?;
+                if let TensorInit::Random = init {
+                    let host_data: Vec<i32> = (0..size).map(|_| rand::random::<i16>() as i32).collect();
+                    stream.memcpy_htod(&host_data, &mut slice)
+                        .map_err(|e: cudarc::driver::DriverError| GpuError::AllocationFailed(e.to_string()))?;
+                }
+                PtxTensor::I32(slice)
+            }
+            Precision::I8 => {
+                let mut slice = stream.alloc_zeros::<i8>(size)
+                    .map_err(|e: cudarc::driver::DriverError| GpuError::AllocationFailed(e.to_string()))?;
+                if let TensorInit::Random = init {
+                    let host_data: Vec<i8> = (0..size).map(|_| rand::random::<i8>()).collect();
+                    stream.memcpy_htod(&host_data, &mut slice)
+                        .map_err(|e: cudarc::driver::DriverError| GpuError::AllocationFailed(e.to_string()))?;
+                }
+                PtxTensor::I8(slice)
+            }
+            Precision::F16 | Precision::BF16 => {
+                // Using u16 as raw storage for 16-bit floats to avoid external crate dependencies for now.
+                let mut slice = stream.alloc_zeros::<u16>(size)
+                    .map_err(|e: cudarc::driver::DriverError| GpuError::AllocationFailed(e.to_string()))?;
+                if let TensorInit::Random = init {
+                    let host_data: Vec<u16> = (0..size).map(|_| rand::random::<u16>()).collect();
+                    stream.memcpy_htod(&host_data, &mut slice)
+                        .map_err(|e: cudarc::driver::DriverError| GpuError::AllocationFailed(e.to_string()))?;
+                }
+                if matches!(precision, Precision::F16) {
+                    PtxTensor::F16(slice)
+                } else {
+                    PtxTensor::BF16(slice)
+                }
+            }
+        };
 
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        self.tensors.insert(id, slice);
+        self.tensors.insert(id, ptx_tensor);
 
         GpuPtr::new(id).ok_or_else(|| GpuError::Internal("Invalid pointer".into()))
     }
@@ -102,7 +152,8 @@ impl GpuBackend for PtxBackend {
         let ptx_source = helheim_lang::synthesis::KernelSynthesisEngine::synthesize_gpu_kernel(kernel)
             .map_err(|e| GpuError::CompilationFailed(format!("PTX Synthesis Error: {:?}", e)))?;
 
-        println!("[PTX SYNTHESIZER] Generated Raw PTX for '{}':\n{}", kernel.name, ptx_source);
+        // [W·AG·AF] C1 Review: Zero-Noise Compliance (Migrated println! to tracing::debug!)
+        tracing::debug!("[PTX SYNTHESIZER] Generated Raw PTX for '{}':\n{}", kernel.name, ptx_source);
 
         // Load the raw PTX (assembly) directly. Capture the module for later launch.
         let ptx_opts = cudarc::nvrtc::Ptx::from_src(ptx_source.clone());
@@ -141,12 +192,32 @@ impl GpuBackend for PtxBackend {
             shared_mem_bytes: 0,
         };
 
-        println!("[Helheim PTX] Real launch of '{}' (grid 1x1x1, block 256) with {} tensor args", kernel.entry_point, args.len());
+        tracing::debug!("[Helheim PTX] Real launch of '{}' (grid 1x1x1, block 256) with {} tensor args", kernel.entry_point, args.len());
 
         unsafe {
             let mut builder = stream.launch_builder(&f);
-            // TODO: map args to real device pointers when GpuPtrs are passed for kernels that expect them.
-            // For basic lowered blocks and current GpuKernel usage in executor (empty args), this suffices.
+            
+            // Map args to real device pointers from self.tensors
+            let mut arg_refs = Vec::new();
+            for ptr in args {
+                if let Some(tensor_ref) = self.tensors.get_mut(&ptr.get()) {
+                    arg_refs.push(tensor_ref);
+                } else {
+                    return Err(GpuError::ExecutionFailed(format!("Ongeldige GpuPtr ({}) tijdens kernel launch", ptr.get())));
+                }
+            }
+
+            // Push all tensor pointers to the builder
+            for mut tensor_ref in arg_refs {
+                match tensor_ref.value_mut() {
+                    PtxTensor::F32(s) => builder.arg(s),
+                    PtxTensor::I32(s) => builder.arg(s),
+                    PtxTensor::I8(s) => builder.arg(s),
+                    PtxTensor::F16(s) => builder.arg(s),
+                    PtxTensor::BF16(s) => builder.arg(s),
+                };
+            }
+
             builder.launch(cfg)
                 .map_err(|e| GpuError::ExecutionFailed(format!("Kernel launch failed: {}", e)))?;
         }
@@ -177,7 +248,7 @@ impl GpuBackend for PtxBackend {
         let ptx_source = helheim_lang::synthesis::KernelSynthesisEngine::synthesize_lowered_with_context(code.clone(), context)
             .map_err(|e| GpuError::CompilationFailed(format!("Lowered PTX synthesis failed: {}", e)))?;
 
-        println!("[PTX LOWERED LAUNCH] Generated PTX for general block/function with context (first 800 chars):\n{}", &ptx_source[..ptx_source.len().min(800)]);
+        tracing::debug!("[PTX LOWERED LAUNCH] Generated PTX for general block/function with context (first 800 chars):\n{}", &ptx_source[..ptx_source.len().min(800)]);
 
         // 2. Load as raw PTX assembly (not C++ source)
         let ptx = cudarc::nvrtc::Ptx::from_src(ptx_source);
@@ -196,23 +267,25 @@ impl GpuBackend for PtxBackend {
             shared_mem_bytes: 0,
         };
 
-        // RESULT PROPAGATION via VRAM Ringbuffer / Pool (no more on-the-fly alloc_zeros).
-        // Grab a pre-allocated slot from the ringbuffer. The guard lives until after sync.
-        let mut pool_guard = self.result_pool.lock()
-            .map_err(|e| GpuError::Internal(format!("Result pool lock poisoned: {}", e)))?;
-        let pool_idx = self.result_pool_index.fetch_add(1, Ordering::Relaxed) % self.result_pool_size;
-        let out_buf = &mut pool_guard[pool_idx];
+        let mut out_buf = {
+            let mut pool_guard = self.result_pool.lock()
+                .map_err(|e| GpuError::Internal(format!("Result pool lock poisoned: {}", e)))?;
+            pool_guard.pop().unwrap_or_else(|| {
+                // Fallback alloc if pool is empty
+                stream.alloc_zeros::<f32>(1024).unwrap()
+            })
+        };
 
         // Prepare input args in the same order as emitted in lower_general_with_context (sorted names)
         let mut input_names: Vec<String> = context.keys().cloned().collect();
         input_names.sort();
 
-        println!("[PTX LOWERED LAUNCH] Launching 'hel_lowered' on real CUDA (grid=1x1x1, block=256x1x1) with {} context inputs ...", input_names.len());
+        tracing::debug!("[PTX LOWERED LAUNCH] Launching 'hel_lowered' on real CUDA (grid=1x1x1, block=256x1x1) with {} context inputs ...", input_names.len());
 
         unsafe {
             let mut builder = stream.launch_builder(&f);
             // 1. result pointer (device buffer)
-            builder.arg(&mut *out_buf);
+            builder.arg(&mut out_buf);
 
             // 2. context input scalars (all as f32 for context binding v1)
             // Collect first so the values live until launch.
@@ -240,12 +313,19 @@ impl GpuBackend for PtxBackend {
 
         // Fetch the result back to host memory
         let mut host_result = vec![0.0f32; 1];
-        stream.memcpy_dtoh(&*out_buf, &mut host_result)
+        stream.memcpy_dtoh(&out_buf, &mut host_result)
             .map_err(|e| GpuError::ExecutionFailed(format!("Failed to copy result from GPU: {}", e)))?;
+
+        // Put the buffer back into the pool
+        {
+            if let Ok(mut pool_guard) = self.result_pool.lock() {
+                pool_guard.push(out_buf);
+            }
+        }
 
         let result_val = host_result[0];
 
-        println!("[PTX LOWERED LAUNCH] ✅ Kernel executed on GPU. Fetched Result: {}", result_val);
+        tracing::debug!("[PTX LOWERED LAUNCH] ✅ Kernel executed on GPU. Fetched Result: {}", result_val);
         Ok(Some(result_val))
     }
 }

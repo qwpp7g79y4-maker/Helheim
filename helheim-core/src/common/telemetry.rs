@@ -17,8 +17,7 @@ pub fn init_telemetry() -> tracing_appender::non_blocking::WorkerGuard {
     // 3. Registry
     let subscriber = Registry::default().with(file_layer).with(console_layer);
 
-    tracing::subscriber::set_global_default(subscriber)
-        .expect("[FATAL]: Telemetry initialisatie mislukt.");
+    let _ = tracing::subscriber::set_global_default(subscriber);
 
     tracing::info!(
         system = "helheim-reactor",

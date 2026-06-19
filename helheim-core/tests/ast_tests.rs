@@ -8,7 +8,7 @@ fn test_parse_modulo() {
     let ast_result = HelParser::parse(script);
     
     assert!(ast_result.is_ok(), "Parser should not fail on modulo");
-    let ast = ast_result.unwrap();
+    let ast: Vec<CodeTaal> = ast_result.unwrap().into_iter().filter(|n| !matches!(n, CodeTaal::LocationMarker{..})).collect();
     
     assert_eq!(ast.len(), 1);
     match &ast[0] {
@@ -35,7 +35,7 @@ fn test_parse_modulo() {
 #[test]
 fn test_string_interpolation_parser() {
     let script = "print \"Hallo $NAAM\";";
-    let ast = HelParser::parse(script).expect("Parser failed");
+    let ast: Vec<CodeTaal> = HelParser::parse(script).expect("Parser failed").into_iter().filter(|n| !matches!(n, CodeTaal::LocationMarker{..})).collect();
     
     assert_eq!(ast.len(), 1);
     match &ast[0] {
@@ -62,7 +62,7 @@ fn test_parse_pipe() {
     let ast_result = HelParser::parse(script);
     
     assert!(ast_result.is_ok(), "Parser should not fail on pipe");
-    let ast = ast_result.unwrap();
+    let ast: Vec<CodeTaal> = ast_result.unwrap().into_iter().filter(|n| !matches!(n, CodeTaal::LocationMarker{..})).collect();
     
     assert_eq!(ast.len(), 1);
     match &ast[0] {
@@ -70,5 +70,33 @@ fn test_parse_pipe() {
             assert_eq!(command, "voer uit ls -la | grep helheim");
         }
         _ => panic!("Expected SysOp for voer uit with pipe"),
+    }
+}
+
+#[test]
+fn test_parse_inline_asm() {
+    let script = r#"
+        ptx in(x=a, y=b) out(z) clobber("memory") {
+            mov.u32 %r1, %r2;
+        }
+    "#;
+    let ast_result = HelParser::parse(script);
+    
+    assert!(ast_result.is_ok(), "Parser should parse inline assembly");
+    let ast: Vec<CodeTaal> = ast_result.unwrap().into_iter().filter(|n| !matches!(n, CodeTaal::LocationMarker{..})).collect();
+    
+    assert_eq!(ast.len(), 1);
+    match &ast[0] {
+        CodeTaal::InlineAssembly { target, code, inputs, outputs, clobbers, fallback: _ } => {
+            assert_eq!(target, "ptx");
+            assert_eq!(code, "mov.u32 % r1 , % r2 ;");
+            assert_eq!(inputs.len(), 2);
+            assert_eq!(inputs[0].0, "x");
+            assert_eq!(outputs.len(), 1);
+            assert_eq!(outputs[0], "z");
+            assert_eq!(clobbers.len(), 1);
+            assert_eq!(clobbers[0], "memory");
+        }
+        _ => panic!("Expected InlineAssembly"),
     }
 }

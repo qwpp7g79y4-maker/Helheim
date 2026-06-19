@@ -4,5 +4,5 @@ members = [
     "helheim-core",
     "helheim-lang",
     "helheim-gateway"
-]
+, "stdlib/lib/helheim-sqlite-plugin", "stdlib/lib/helheim-ptr-plugin"]
 resolver = "2"

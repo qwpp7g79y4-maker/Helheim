@@ -17,6 +17,8 @@ async fn run_helheim_script(script: &str) -> Arc<Orchestrator> {
     );
     let linked_ast = linker.link(ast, std::path::Path::new("test_script.hel")).expect("Linker error in test script!");
 
+    println!("{:#?}", linked_ast);
+
     let ctx = helheim_core::common::context::ExecutionContext::default_privileged();
     orchestrator
         .execute_ast(linked_ast, ctx)
@@ -603,4 +605,121 @@ async fn test_general_pure_functions_deep_return() {
     );
 
     println!("General pure functions deep return (nested zolang/als) test passed");
+}
+
+#[tokio::test]
+async fn test_inline_asm_fallback() {
+    let script = r#"
+        zet a = 10;
+        zet b = 20;
+        zet c = 0;
+        
+        // Target x86 is unsupported by our GPU compiler, so it should force CPU fallback
+        asm x86 in(a=a, b=b) out(c) clobber("memory") {
+            "add %eax, %ebx"
+        } fallback {
+            zet c = a + b;
+        };
+
+        zet final_c = c;
+    "#;
+
+    let engine = run_helheim_script(script).await;
+    assert_eq!(engine.get_var("final_c").unwrap(), "30", "CPU Fallback is niet uitgevoerd");
+}
+
+#[tokio::test]
+async fn test_actor_supervisor_escalate() {
+    let _ = tracing_subscriber::fmt::try_init();
+    let script = r#"
+        // Grandparent actor
+        perform Actor.spawn("{
+            zet my_id = self;
+            
+            // Spawn Parent actor with Escalate strategy
+            perform Actor.spawn(\"{
+                // Spawn Child actor with Escalate strategy
+                perform Actor.spawn(\\\"{
+                    gooi \\\\\\\"FatalChildError\\\\\\\";
+                }\\\", \\\"Escalate\\\");
+                
+                ontvang msg {
+                    als roep_aan tekst.bevat msg \\\"ESCALATION_ERROR\\\" dan {
+                        gooi \\\"FatalParentError\\\";
+                    }
+                }
+            }\", \"Escalate\");
+            
+            ontvang msg {
+                als roep_aan tekst.bevat msg \"ESCALATION_ERROR\" dan {
+                    als roep_aan tekst.bevat msg \"FatalParentError\" dan {
+                        druk_af \"Grandparent received escalation\";
+                        roep_aan bestand.schrijf \"escalation_test_output.txt\" \"waar\";
+                    }
+                }
+            }
+        }");
+        
+        // Wacht even zodat actors kunnen draaien
+        roep_aan wacht 1;
+    "#;
+
+    // Reset file if exists
+    let _ = std::fs::remove_file("escalation_test_output.txt");
+
+    let _engine = run_helheim_script(script).await;
+    
+    let result = std::fs::read_to_string("escalation_test_output.txt").unwrap_or_default();
+    assert_eq!(result.trim(), "waar", "Escalation message niet ontvangen door grandparent");
+    
+    let _ = std::fs::remove_file("escalation_test_output.txt");
+}
+
+#[tokio::test]
+async fn test_actor_supervisor_escalate_deep() {
+    let _ = tracing_subscriber::fmt::try_init();
+    let script = r#"
+        zet child_code = "{ gooi \"FatalChildError\"; }";
+        
+        zet parent_code = "{ 
+            perform Actor.spawn(child_code, \"Escalate\");
+            ontvang msg {
+                als roep_aan tekst.bevat msg \"ESCALATION_ERROR\" dan {
+                    gooi msg;
+                }
+            }
+        }";
+
+        zet grandparent_code = "{
+            perform Actor.spawn(parent_code, \"Escalate\");
+            ontvang msg {
+                als roep_aan tekst.bevat msg \"ESCALATION_ERROR\" dan {
+                    gooi msg;
+                }
+            }
+        }";
+
+        zet great_grandparent_code = "{
+            perform Actor.spawn(grandparent_code, \"Escalate\");
+            ontvang msg {
+                als roep_aan tekst.bevat msg \"ESCALATION_ERROR\" dan {
+                    als roep_aan tekst.bevat msg \"FatalChildError\" dan {
+                        druk_af \"Great-grandparent received full chain: \" + msg;
+                        roep_aan bestand.schrijf \"escalation_deep.txt\" msg;
+                    }
+                }
+            }
+        }";
+
+        perform Actor.spawn(great_grandparent_code);
+        roep_aan wacht 1;
+    "#;
+
+    let _ = std::fs::remove_file("escalation_deep.txt");
+    let _engine = run_helheim_script(script).await;
+    
+    let result = std::fs::read_to_string("escalation_deep.txt").unwrap_or_default();
+    assert!(result.contains("ESCALATION_ERROR"), "Missing escalation prefix in deep chain");
+    assert!(result.contains("FatalChildError"), "Missing root cause error in deep chain");
+    let _ = std::fs::remove_file("escalation_deep.txt");
 }

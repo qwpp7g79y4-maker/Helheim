@@ -104,7 +104,7 @@ voor elke item in lijst {
 Alias: `for each item in list`.  
 AST: `ForEach { iterator, iterable, body }` — iterable is een volledige expressie.
 
-### 3.5 Modules
+### 3.5 Modules & First-Class Namespaces
 
 ```
 gebruik "bestandsnaam";
@@ -112,7 +112,9 @@ use "bestandsnaam";
 import "bestandsnaam";
 ```
 
-Compile-time module expansie via `Resolver`. Het bestand wordt ingeladen en zijn AST wordt samengevoegd vóór semantic analyse. Geen runtime import.
+Compile-time module expansie via `Resolver`. Het bestand wordt ingeladen en zijn AST wordt samengevoegd vóór semantic analyse.  
+Na de import zijn de functies en variabelen uit die module beschikbaar via **gekwalificeerde namen** (namespaces).
+Voorbeeld voor functies: `roep_aan Std::IO::Tcp::stuur(s, "data")`. Voor effecten: `perform Swarm::migrate("ip", 80)`. De oude string hacks (`gebruik "x" als Y`) zijn verwijderd.
 
 ### 3.6 Foutafhandeling
 
@@ -152,6 +154,117 @@ hel {
 }
 ```
 AST: `HelBlock { raw_code }` — wordt rechtstreeks doorgegeven aan NVRTC/executor. Geen parsing.
+
+### 3.10 Inline Assembly & CPU Fallback
+
+Volledige integratie van de hardware assembly pipeline met optionele CPU fallback:
+```
+asm ptx in(a=a, b=b) out(c) clobber("memory") {
+    "add.u32 %0, %1, %2;"
+} fallback {
+    zet c = a + b;
+    druk_af "[CPU Fallback] Geen GPU gevonden, software emulatie gebruikt!";
+};
+```
+Ondersteunt `in(..)`, `out(..)` en `clobber(..)`. Deze inputs en outputs worden tijdens de semantic analysis gevalideerd en veilig gekoppeld aan de locale variabelen.
+Het optionele `fallback { ... }` of `terugval { ... }` blok wordt automatisch door de executor uitgevoerd als de GPU niet beschikbaar is, of als het gevraagde target (bijv. `x86`) niet ondersteund wordt op de huidige architectuur. Dit garandeert hardware-onafhankelijke code-uitvoering en voorkomt "no-op" data corruptie of crashes.
+
+### 3.11 Effecten en Continuations (Algebraic Effects)
+
+Helheim ondersteunt first-class algebraic effects (het scheiden van *wat* je wilt doen van *hoe* het uitgevoerd wordt).
+
+**Definitie & Handler:**
+```
+effect Migratie {
+    voor_vertrek,
+    na_aankomst
+}
+
+handle Migratie {
+    voor_vertrek => {
+        // ... resource cleanup
+        hervat("ok");
+    }
+} in {
+    // Perform een effect. Ondersteunt nu ook namespaced effecten!
+    zet result = perform Swarm::migrate("ip", 80);
+    druk_af "Hervat met waarde: " + result;
+}
+```
+
+**Continuations & Resume Value:**
+Een `hervat` (resume) call binnen een handler geeft niet alleen de controle terug aan het originele programma, maar kan ook een waarde doorgeven (de `resume_value`). In het voorbeeld hierboven zal de variabele `result` de waarde `"ok"` krijgen nadat de handler klaar is. Dit mechanisme maakt asynchrone patronen, state injectie en foutafhandeling uiterst flexibel.
+
+**Migratie (Swarm::migrate) & Resource Re-acquisition:**
+De `Swarm::migrate` aanroep triggert een netwerk-teleportatie via continuations. De executie op de huidige node pauzeert, en pakt zijn complete callstack en de `MemorySnapshot` in JSON/Base64.
+Voordat hij over het netwerk gaat, roept hij de `voor_vertrek` effect handler aan (indien gedefinieerd). Hier kan men expliciet open sockets/files sluiten. 
+Op de doellocatie (na deserialisatie) roept de Helheim executor eerst `na_aankomst` aan. Hier herstelt de script zijn resources (bijv. opnieuw verbinden met DB) vóórdat de normale uitvoering via `hervat` of `resume` doorgaat.
+
+**Migratie Contract (Resource Validatie):** Het is de expliciete verantwoordelijkheid van de `na_aankomst` handler om alle verbonden state (zoals open sockets via `Std::IO::Tcp`) te heropenen in een equivalente logische toestand als voor vertrek. Bij het ontbreken van correcte re-acquisitie zal de executor falen op de eerstvolgende netwerk I/O die vereist is, wat de verdere state van de code onvoorspelbaar en de node attributie onveilig maakt. Als `voor_vertrek` crasht, wordt de migratie volledig afgebroken en blijft de code veilig op de oorspronkelijke node draaien zonder memory leaks. Een crash in `voor_vertrek` blokkeert de migratie.
+
+*(Zie ook `examples/reacq_full.hel` voor een compleet uitvoerbaar bestand.)*
+
+**Volledig voorbeeld met qualified calls en resource re-acq:**
+```
+gebruik "Std::IO::Tcp";
+
+effect Migratie { voor_vertrek, na_aankomst }
+
+handle Migratie {
+    voor_vertrek => {
+        roep_aan Std::IO::Tcp::sluit(s);
+        hervat("ok");
+    },
+    na_aankomst => {
+        zet s = roep_aan Std::IO::Tcp::verbind("192.168.1.100");
+        hervat("ok");
+    }
+} in {
+    // We gebruiken hier een gekwalificeerde aanroep voor de functie
+    roep_aan Std::IO::Tcp::stuur(s, "Hallo wereld!");
+    // We gebruiken perform voor het effect
+    perform Swarm::migrate("10.0.0.5", 9003);
+    roep_aan Std::IO::Tcp::stuur(s, "Ik ben nu op node 2!");
+}
+```
+
+### 3.12 Actor Supervisor (Crash Escalation)
+
+Helheim ondersteunt gedistribueerde en lokaal-geïsoleerde actors via `Actor.spawn`. Een actor draait in zijn eigen `daemon_memory` stack en kan niet direct de globale state muteren. Als een actor crasht (bijv. via `gooi`), wordt er gekeken naar zijn **SupervisionStrategy**.
+
+**Spawn Syntax:**
+```
+// Standaard ("Stop" strategie)
+perform Actor.spawn("{ ... }");
+
+// Met escalatie ("Escalate" strategie)
+perform Actor.spawn("{ ... }", "Escalate");
+
+// Met herstart ("Restart" strategie)
+perform Actor.spawn("{ ... }", "Restart");
+```
+
+**Escalatie:**
+Als een child-actor wordt gestart met de `"Escalate"` strategie en hij crasht, pakt de Helheim executor dit op en stuurt hij een foutbericht terug naar de inbox (mailbox) van de parent-actor die hem heeft gestart. Het bericht begint altijd met `"ESCALATION_ERROR van <child_id>:"`.
+De parent kan dit in zijn `ontvang { ... }` blok afvangen. Dit patroon stelt Helheim in staat om diepe falende takken in asynchrone executie bomen veilig naar boven te borrelen. Als een parent de error op zijn beurt weer `gooi`t, ontstaat er een multi-level escalation chain (bijv. `ESCALATION_ERROR van 2: ESCALATION_ERROR van 3: ...`).
+
+*(Zie test `test_actor_supervisor_escalate_deep` in `tests/integration_tests.rs` voor een bewezen 4-level escalatie chain).*
+
+### 3.13 FFI en Package Manager (Ed25519 Signatures)
+
+Helheim kan native C/Rust bibliotheken (`.so` of `.dll`) zero-overhead inladen via de Package Manager. Omdat we bare-metal draaien, eist de `PackageManifest` een cryptografische Ed25519 handtekening (`.sig`) naast de module. Het laden van ongesigneerde code of het gebruik van paden met directory traversal (`../`) is fundamenteel onmogelijk. Dit beveiligt het `Swarm` netwerk tegen malafide externe plugins. *(Zie `helheim-core/src/bin/signer.rs` en `helheim-core/tests/test_ffi_stress.rs`).*
+
+### 3.14 Flight Recorder (Observability)
+
+In plaats van langzame log-statements, weeft Helheim een hardware-accelerated "Flight Recorder" direct in de AST-executie lus. Elke `MigrateCapture`, `GpuLaunch` of `ErrorPropagated` slaat een microseconde timestamp (TSC) plus payload in een memory-mapped ringbuffer. Met `helheim-cli audit trace.json` kan een ontwikkelaar deze datastroom direct terugleiden naar de specifieke `lijn:kolom` in de CodeTaal broncode, compleet met kleurcodes voor faalpaden.
+
+**Voorbeeld (2-level):**
+```
+perform Actor.spawn("{
+    perform Actor.spawn(\"{ gooi \\\"ChildFout\\\"; }\", \"Escalate\");
+    ontvang msg { druk_af \"Fout opgevangen: \" + msg; }
+}");
+```
 
 ---
 
@@ -228,10 +341,31 @@ Deze nodes worden uitgevoerd op de CPU, niet op de GPU.
 | `stuur data naar doel` | `send`, `to` | HSP netwerk verzending |
 | `haal url` | `fetch` | HTTP GET |
 | `voer uit commando` | `execute` | Shell commando (Motor Cortex) |
+| `trace_event!` | | Interne macro voor Flight Recorder observability |
 
 ---
 
-## 8. GPU Kernel Pad (PtxGenerator)
+## 8. Observability & Flight Recorder
+
+De Helheim runtime (executor) heeft een ingebouwde, zero-overhead tracer (de **Flight Recorder**). 
+Alle nodes in the AST genereren cryptografische trace events als dit gecompileerd is met `#[cfg(feature = "flight_recorder")]`.
+Trace events worden visueel aan de CLI teruggegeven met kleurcodering voor live monitoring van swarm teleports, handler errors, resource blocks, e.d.
+
+**Trace Effect:**
+De taal biedt het `Trace` effect aan om handmatig custom events te loggen.
+```
+perform Trace::record("Event details");
+```
+
+Event types:
+- `MigrateCapture` (wanneer een continuation ingepakt wordt)
+- `MigrateTeleport` (wanneer verzonden via netwerk)
+- `MigrateResume` (wanneer de state op een nieuw node landt)
+- ... en standaard runtime events.
+
+---
+
+## 9. GPU Kernel Pad (PtxGenerator)
 
 **Doel:** Expliciete GPU kernels met gecontroleerde register allocatie.  
 **Activatie:** `CodeTaal::GpuKernel(GpuKernelDef)` in de AST.  
@@ -302,7 +436,7 @@ endif_1:
 ### Beperkingen (bewust open gelaten)
 
 - Strings zijn niet in PTX registers — host-side only by design
-- `ForEach` is nog niet ge-lowered naar PTX (`// Unhandled statement`)
+- `ForEach` is geparkeerd voor Phase 2 PTX lowering
 - Integer-specifiek PTX (bitwise, popc) verloopt via PtxGenerator, niet GeneralPtxGenerator
 - Caching uitgeschakeld — `CodeTaal` mist `Eq + Hash` door `LiteralValue::Float`
 
@@ -330,7 +464,7 @@ SNN-specifieke logica (astrocyten, hormonen, droomtoestand, CANN) leeft in **Nex
 | Kernel caching | Uitgeschakeld | `CodeTaal` mist `Eq + Hash` door `Float` |
 | `ForEach` PTX lowering | Open | Fase 3+ |
 | String in PTX | Niet ondersteund | Host-side only by design |
-| `ModelDef` / `ModelInit` | Gedefinieerd in AST | Nog niet ge-lowered |
+| `ModelDef` / `ModelInit` | Gedefinieerd in AST | Phase 9 (NEXUS) |
 | `Chaos` kernel | Stub | Placeholder, oneindige loops / registerdruk |
 
 ---

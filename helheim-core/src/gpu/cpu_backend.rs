@@ -62,7 +62,7 @@ impl GpuBackend for CpuBackend {
             return Err(GpuError::Internal("Wrong kernel type".into()));
         };
 
-        println!("[CPU 5950X] Executing kernel '{}' on {} threads", 
+        tracing::debug!("[CPU 5950X] Executing kernel '{}' on {} threads", 
                 def.name, rayon::current_num_threads());
 
         // Map parameter names to GpuPtrs
@@ -94,7 +94,7 @@ impl GpuBackend for CpuBackend {
         _code: &CodeTaal,
         _context: &std::collections::HashMap<String, LiteralValue>,
     ) -> Result<Option<f32>, GpuError> {
-        println!("[CPU Backend] execute_lowered_block: falling back to CPU AST interpretation (pure compute will run on 5950X threads)");
+        tracing::debug!("[CPU Backend] execute_lowered_block: falling back to CPU AST interpretation (pure compute will run on 5950X threads)");
         Err(GpuError::NotAvailable("CPU Backend requires AST interpretation".into()))
     }
 }
@@ -131,7 +131,7 @@ impl CpuBackend {
                         // Verwijder tijdelijk C uit de map om veilig parallel te muteren
                         let (_, mut tensor_c) = self.tensors.remove(&ptr_c.get()).ok_or_else(|| GpuError::Internal("Tensor C not found".into()))?;
 
-                        println!("[CPU 5950X] Computing MatMul ({}x{}x{}) op Rayon...", m, n, k);
+                        tracing::debug!("[CPU 5950X] Computing MatMul ({}x{}x{}) op Rayon...", m, n, k);
                         
                         // Pure brute-force Rayon par_iter_mut over de rijen van C
                         tensor_c.par_chunks_mut(n).enumerate().for_each(|(i, row_c)| {
@@ -151,12 +151,12 @@ impl CpuBackend {
                         // Nop op CPU, Rayon threads syncen na par_iter impliciet
                     }
                     _ => {
-                        println!("[CPU 5950X] Waarschuwing: Onbekende GpuOperation overgeslagen.");
+                        tracing::debug!("[CPU 5950X] Waarschuwing: Onbekende GpuOperation overgeslagen.");
                     }
                 }
             }
             _ => {
-                println!("[CPU 5950X] Waarschuwing: Negeer niet-GpuOp blok.");
+                tracing::debug!("[CPU 5950X] Waarschuwing: Negeer niet-GpuOp blok.");
             }
         }
         Ok(())

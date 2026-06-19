@@ -6,11 +6,46 @@ pub struct SystemManager;
 
 impl SystemManager {
     pub async fn try_execute_native(memory: &Arc<MemoryManager>, name: &str, args: &[String], ctx: &crate::common::context::ExecutionContext) -> Result<Option<String>> {
+        // Normalize English function names to Dutch equivalents
+        let name = match name {
+            "wait" | "sleep" => "wacht",
+            "append" | "push" => "voeg_toe",
+            "remove" | "delete" => "verwijder",
+            "list.contains" => "lijst.bevat",
+            "list.reverse" => "lijst.omdraaien",
+            "length" | "len" => "lengte",
+            "text.length" | "str.length" => "tekst.lengte",
+            "text.replace" | "str.replace" => "tekst.vervang",
+            "text.uppercase" | "str.uppercase" | "str.upper" | "text.upper" => "tekst.hoofdletters",
+            "text.split" | "str.split" => "tekst.splitsen",
+            "text.contains" | "str.contains" => "tekst.bevat",
+            "text.lowercase" | "str.lowercase" | "str.lower" | "text.lower" => "tekst.kleine_letters",
+            "math.random" => "wiskunde.willekeurig",
+            "math.round" => "wiskunde.afronden",
+            "math.pow" | "math.power" => "wiskunde.macht",
+            "math.sqrt" => "wiskunde.wortel",
+            "math.abs" => "wiskunde.absoluut",
+            "json.parse" => "json.ontleden",
+            "json.stringify" | "json.to_string" => "json.tekst",
+            "dict.get" | "dict.read" => "dic.lees",
+            "dict.set" | "dict.write" => "dic.schrijf",
+            "file.read" => "bestand.lees",
+            "file.write" => "bestand.schrijf",
+            "file.read_bytes" => "bestand.lees_binair",
+            "file.write_bytes" => "bestand.schrijf_binair",
+            "system.shell" | "sys.shell" => "systeem.shell",
+            "system.env" | "sys.env" => "systeem.env",
+            "system.time" | "system.timestamp" | "sys.time" => "systeem.tijd",
+            "network.get" | "net.get" => "netwerk.get",
+            "network.post" | "net.post" => "netwerk.post",
+            n => n,
+        };
+
         // --- NATIVE STD LIB ---
         if name == "wacht" && args.len() == 1 {
             let secs_str = memory.resolve_value(&args[0]);
             if let Ok(secs) = secs_str.parse::<u64>() {
-                println!("[ASYNC]: Wachten voor {} seconden...", secs);
+                tracing::debug!("Wachten voor {} seconden...", secs);
                 tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
             }
             return Ok(Some("".to_string()));
@@ -43,14 +78,16 @@ impl SystemManager {
             let index_val = memory.resolve_value(&args[1]);
             let list_val = memory.resolve_value(list_name);
 
-            if let Ok(mut arr) = serde_json::from_str::<Vec<serde_json::Value>>(&list_val)
-                && let Ok(idx) = index_val.parse::<usize>()
-                    && idx < arr.len() {
+            if let Ok(mut arr) = serde_json::from_str::<Vec<serde_json::Value>>(&list_val) {
+                if let Ok(idx) = index_val.parse::<usize>() {
+                    if idx < arr.len() {
                         arr.remove(idx);
                         let new_list = serde_json::to_string(&arr).unwrap();
                         memory.set_var_native(list_name.clone(), HelheimType::parse(&new_list));
                         return Ok(Some(new_list));
                     }
+                }
+            }
         }
 
         if name == "lijst.bevat" && args.len() == 2 {
@@ -235,7 +272,7 @@ impl SystemManager {
             match std::fs::read_to_string(&path) {
                 Ok(content) => return Ok(Some(content)),
                 Err(e) => {
-                    println!("[ERR]: bestand.lees - Kan '{}' niet lezen: {}", path, e);
+                    tracing::error!("bestand.lees - Kan '{}' niet lezen: {}", path, e);
                     return Ok(Some("null".to_string()));
                 }
             }
@@ -261,7 +298,7 @@ impl SystemManager {
             match std::fs::write(&path, clean_content) {
                 Ok(_) => return Ok(Some("waar".to_string())),
                 Err(e) => {
-                    println!("[ERR]: bestand.schrijf - Kan '{}' niet schrijven: {}", path, e);
+                    tracing::error!("bestand.schrijf - Kan '{}' niet schrijven: {}", path, e);
                     return Ok(Some("onwaar".to_string()));
                 }
             }
@@ -283,7 +320,7 @@ impl SystemManager {
                     return Ok(Some(b64));
                 }
                 Err(e) => {
-                    println!("[ERR]: bestand.lees_binair - Kan '{}' niet lezen: {}", path, e);
+                    tracing::error!("bestand.lees_binair - Kan '{}' niet lezen: {}", path, e);
                     return Ok(Some("null".to_string()));
                 }
             }
@@ -312,13 +349,13 @@ impl SystemManager {
                     match std::fs::write(&path, bytes) {
                         Ok(_) => return Ok(Some("waar".to_string())),
                         Err(e) => {
-                            println!("[ERR]: bestand.schrijf_binair - Kan '{}' niet schrijven: {}", path, e);
+                            tracing::error!("bestand.schrijf_binair - Kan '{}' niet schrijven: {}", path, e);
                             return Ok(Some("onwaar".to_string()));
                         }
                     }
                 }
                 Err(e) => {
-                    println!("[ERR]: bestand.schrijf_binair - Ongeldige Base64 data: {}", e);
+                    tracing::error!("bestand.schrijf_binair - Ongeldige Base64 data: {}", e);
                     return Ok(Some("onwaar".to_string()));
                 }
             }
@@ -330,7 +367,10 @@ impl SystemManager {
                 return Err(anyhow::anyhow!("[SECURITY]: OS-level Shell vereist Elevated Privileges."));
             }
             let cmd_str = memory.resolve_value(&args[0]).trim_matches('"').to_string();
-            match std::process::Command::new("sh").arg("-c").arg(&cmd_str).output() {
+            // H-7: Prevent shell injection by splitting args and avoiding `sh -c`
+            let parts: Vec<&str> = cmd_str.split_whitespace().collect();
+            if parts.is_empty() { return Ok(Some("".to_string())); }
+            match std::process::Command::new(parts[0]).args(&parts[1..]).output() {
                 Ok(output) => {
                     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -342,7 +382,7 @@ impl SystemManager {
                     return Ok(Some(combined.trim().to_string()));
                 }
                 Err(e) => {
-                    println!("[ERR]: systeem.shell - Kon commando niet uitvoeren: {}", e);
+                    tracing::error!("systeem.shell - Kon commando niet uitvoeren: {}", e);
                     return Ok(Some("null".to_string()));
                 }
             }
@@ -368,23 +408,21 @@ impl SystemManager {
         // --- STD LIB: NETWERK ---
         if name == "netwerk.get" && args.len() == 1 {
             let url = memory.resolve_value(&args[0]).trim_matches('"').to_string();
-            if !ctx.is_privileged {
-                if url.contains("127.0.0.1") || url.contains("localhost") || url.contains("192.168.") || url.contains("10.") || url.contains("169.254.") {
-                    return Err(anyhow::anyhow!("[SECURITY]: SSRF Protectie actief. Lokale IPs geblokkeerd."));
-                }
+            if !ctx.is_privileged && !is_ssrf_safe(&url).await {
+                return Err(anyhow::anyhow!("[SECURITY]: SSRF Protectie actief. Lokale IPs/DNS rebinding geblokkeerd."));
             }
             match reqwest::get(&url).await {
                 Ok(resp) => {
                     match resp.text().await {
                         Ok(text) => return Ok(Some(text)),
                         Err(e) => {
-                            println!("[ERR]: netwerk.get - Kon response tekst niet lezen: {}", e);
+                            tracing::error!("netwerk.get - Kon response tekst niet lezen: {}", e);
                             return Ok(Some("null".to_string()));
                         }
                     }
                 }
                 Err(e) => {
-                    println!("[ERR]: netwerk.get - Fout bij request naar {}: {}", url, e);
+                    tracing::error!("netwerk.get - Fout bij request naar {}: {}", url, e);
                     return Ok(Some("null".to_string()));
                 }
             }
@@ -393,10 +431,8 @@ impl SystemManager {
             let url = memory.resolve_value(&args[0]).trim_matches('"').to_string();
             let body = memory.resolve_value(&args[1]);
             
-            if !ctx.is_privileged {
-                if url.contains("127.0.0.1") || url.contains("localhost") || url.contains("192.168.") || url.contains("10.") || url.contains("169.254.") {
-                    return Err(anyhow::anyhow!("[SECURITY]: SSRF Protectie actief. Lokale IPs geblokkeerd."));
-                }
+            if !ctx.is_privileged && !is_ssrf_safe(&url).await {
+                return Err(anyhow::anyhow!("[SECURITY]: SSRF Protectie actief. Lokale IPs/DNS rebinding geblokkeerd."));
             }
 
             let mut clean_body = body;
@@ -415,13 +451,13 @@ impl SystemManager {
                     match resp.text().await {
                         Ok(text) => return Ok(Some(text)),
                         Err(e) => {
-                            println!("[ERR]: netwerk.post - Kon response tekst niet lezen: {}", e);
+                            tracing::error!("netwerk.post - Kon response tekst niet lezen: {}", e);
                             return Ok(Some("null".to_string()));
                         }
                     }
                 }
                 Err(e) => {
-                    println!("[ERR]: netwerk.post - Fout bij request naar {}: {}", url, e);
+                    tracing::error!("netwerk.post - Fout bij request naar {}: {}", url, e);
                     return Ok(Some("null".to_string()));
                 }
             }
@@ -430,4 +466,25 @@ impl SystemManager {
         // If no native function matches
         Ok(None)
     }
+}
+
+pub async fn is_ssrf_safe(url_str: &str) -> bool {
+    let blocked = [
+        "localhost", "127.", "169.254.", "10.", "192.168.", "::1", "fe80::", "0.0.0.0",
+        "172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.",
+        "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31."
+    ];
+    if blocked.iter().any(|b| url_str.contains(b)) {
+        return false;
+    }
+    let host = url_str.split("://").nth(1).unwrap_or(url_str).split('/').next().unwrap_or(url_str).split(':').next().unwrap_or(url_str);
+    if let Ok(mut addrs) = tokio::net::lookup_host(format!("{}:80", host)).await {
+        while let Some(addr) = addrs.next() {
+            let ip_str = addr.ip().to_string();
+            if blocked.iter().any(|b| ip_str.contains(b)) || addr.ip().is_loopback() || addr.ip().is_unspecified() || addr.ip().is_multicast() {
+                return false;
+            }
+        }
+    }
+    true
 }

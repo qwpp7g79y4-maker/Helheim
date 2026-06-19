@@ -15,20 +15,23 @@ Herstart VS Code en open een `.hel` bestand.
 
 ## Features
 
-- Volledige syntax highlighting voor alle keywords (zet, functie, zolang, als, retourneer, roep_aan, probeer, model, nieuw, etc.)
-- Highlighting van functie-namen bij definitie (`functie naam met ...`)
+- Volledige syntax highlighting voor alle keywords — Nederlands én Engels:
+  - Variabelen: `zet`, `let`, `set`
+  - Control flow: `als`/`if`, `anders`/`else`, `zolang`/`while`, `voor`/`for`
+  - Functies: `functie`, `fn`, `function`, `retourneer`, `return`
+  - Aanroepen: `roep_aan`, `call`, `invoke`
+  - Foutafhandeling: `probeer`/`try`, `vang`/`catch`, `gooi`/`throw`
+  - Concurrentie: `tegelijkertijd`/`concurrent`, `achtergrond`/`daemon`
+  - TCP: `tcp_luister`, `tcp_verbind`, `tcp_accepteer`, `tcp_stuur`, `tcp_ontvang`
+  - GPU: `hel { ... }`, `matmul`
+  - Print: `druk_af`, `print`, `log`
+- Highlighting van functie-namen bij definitie
 - Lijsten `[ ... ]` en matrices (geneste lijsten)
+- Bytes literals: `b"raw bytes"`
 - String interpolatie: `{VAR}` en `$VAR`
-- Goede support voor integers, floats en booleans (`waar`/`onwaar`/`true`/`false`)
-- Fatsoenlijke auto-closing brackets, auto-indent en comment toggling (`#`)
-- Handige snippets:
-  - `func` / `functie`
-  - `als` / `if`
-  - `zolang`
-  - `probeer`
-  - `model` + `model + nieuw` combinatie
-  - `tegelijkertijd`
-  - etc.
+- Support voor integers, floats en booleans (`waar`/`onwaar`/`true`/`false`)
+- Auto-closing brackets, auto-indent en comment toggling (`#`)
+- Snippets voor alle veelgebruikte constructen
 
 ## TypeScript Setup & Build (voor .vsix)
 

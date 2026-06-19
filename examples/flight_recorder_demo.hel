@@ -1,0 +1,31 @@
+// [W·AG·AF] C1 Review: Flight Recorder als eerste-klasse taalfeature
+// Dit script demonstreert de ingebouwde tracing en hoe handmatig events te loggen.
+// Om de output te zien, start Helheim met HELHEIM_TRACE=1 en gebruik het audit commando:
+// $ HELHEIM_TRACE=1 cargo run --bin helheim-cli script examples/flight_recorder_demo.hel
+// $ cargo run --bin helheim-cli audit audit_trail.jsonl
+
+gebruik "Std::IO::Tcp";
+
+functie genereer_traces() {
+    druk_af "== Start Flight Recorder Demo ==";
+    
+    // 1. Handmatig een custom trace event loggen.
+    // perform Trace::record(TraceKind als integer, node_id, payload)
+    // TraceKind 10 = InlineAsm, 12 = MigrateCapture, etc.
+    // Laten we kind=11 (LoopIter) simuleren, payload = 42
+    perform Trace::record(11, 9999, 42);
+    
+    // 2. Tracing van netwerk en error propagatie
+    // We roepen doelbewust een fout op zodat we de automatische
+    // ErrorPropagated (15) trace event zien!
+    probeer {
+        // Een ongeldige tcp operatie
+        perform Std::IO::Tcp::verbind("invalid_host_no_port");
+    } vang e {
+        druk_af "Gevangen error (zie trace log voor details): " + e;
+    }
+    
+    druk_af "== Einde Flight Recorder Demo ==";
+}
+
+roep_aan genereer_traces();

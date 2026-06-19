@@ -35,7 +35,7 @@ impl DiscoveryService {
         let socket = match UdpSocket::bind(&addr) {
             Ok(s) => s,
             Err(_) => {
-                println!(
+                tracing::debug!(
                     "ℹ️  Port {} is bezet. Helheim draait op deze node in 'Social Mode' (alleen zenden).",
                     port
                 );
@@ -51,29 +51,41 @@ impl DiscoveryService {
                 if let Ok((n, addr)) = socket.recv_from(&mut buf) {
                     let raw_payload = String::from_utf8_lossy(&buf[..n]);
 
-                    // Quantum Shield Ontcijfering
-                    let payload = if raw_payload.starts_with("KYBER_PROTECTED_") {
-                        &raw_payload[16..]
+                    // HSP Discovery Prefix with HMAC
+                    let (signature, payload) = if raw_payload.starts_with("HSP_DISCOVERY_") {
+                        let rest = &raw_payload[14..];
+                        if let Some((sig, pay)) = rest.split_once('_') {
+                            (sig, pay)
+                        } else {
+                            continue;
+                        }
                     } else {
                         // Ongeldige/Unprotected node negeren (Security Tier 1)
                         continue;
                     };
 
+                    let master_key = crate::shield::crypto::HelSigner::get_master_key();
+                    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &master_key);
+                    if let Err(_) = ring::hmac::verify(&key, payload.as_bytes(), &hex::decode(signature).unwrap_or_default()) {
+                        tracing::debug!("⚠️ Ontdekte node is genegeerd: HMAC signature mismatch.");
+                        continue;
+                    }
+
                     if let Ok(caps) = serde_json::from_str::<NodeCapabilities>(payload) {
-                        let mut p = peers.lock().unwrap();
+                        let mut p = peers.lock().unwrap_or_else(|e| e.into_inner());
                         let ip = addr.ip().to_string();
                         if !p.contains_key(&ip) {
-                            println!(
+                            tracing::debug!(
                                 "✨ Antigravity Node ontdekt: {} (Score: {:.2})",
                                 ip, caps.estimated_cpu_gflops
                             );
                             if caps.gpu_count > 0 {
-                                println!(
+                                tracing::debug!(
                                     "   🎮 GPU(s): {}x {:?} (Total VRAM: {} MB)",
                                     caps.gpu_count, caps.gpu_models, caps.total_vram
                                 );
                             }
-                            println!("   💾 RAM: {} MB", caps.ram_mb);
+                            tracing::debug!("   💾 RAM: {} MB", caps.ram_mb);
                         }
                         p.insert(ip, caps);
                     }
@@ -89,12 +101,13 @@ impl DiscoveryService {
         socket.set_broadcast(true)?;
 
         let payload = serde_json::to_string(&caps)?;
+        
+        let master_key = crate::shield::crypto::HelSigner::get_master_key();
+        let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &master_key);
+        let signature = ring::hmac::sign(&key, payload.as_bytes());
+        let signature_hex = hex::encode(signature.as_ref());
 
-        // --- QUANTUM SHIELD START ---
-        // In een echte release gebruiken we hier Kyber512 voor key-encapsulation.
-        // Voor nu obfusceren we de heartbeat op een manier die Quantum-Resistant LIJKT.
-        let protected_payload = format!("KYBER_PROTECTED_{}", payload);
-        // ----------------------------
+        let protected_payload = format!("HSP_DISCOVERY_{}_{}", signature_hex, payload);
 
         std::thread::spawn(move || {
             loop {
@@ -115,26 +128,26 @@ impl NodeRelay {
     /// Start de node listener op een specifieke poort
     pub fn listen(port: u16) -> Result<()> {
         let listener = TcpListener::bind(format!("0.0.0.0:{}", port))?;
-        println!("📡 Helheim Node luistert op poort {}...", port);
-        println!("Druk op Ctrl+C om de node te stoppen.");
+        tracing::info!("📡 Helheim Node luistert op poort {}...", port);
+        tracing::info!("Druk op Ctrl+C om de node te stoppen.");
 
         for stream in listener.incoming() {
             match stream {
                 Ok(mut stream) => {
-                    println!("📥 Inkomende verbinding van: {}", stream.peer_addr()?);
+                    tracing::debug!("📥 Inkomende verbinding van: {}", stream.peer_addr()?);
                     let mut buffer = [0; 1024];
                     let n = stream.read(&mut buffer)?;
                     let received = String::from_utf8_lossy(&buffer[..n]);
 
                     // Decodeer de obfuscated payload
-                    println!("🔓 Payload ontvangen. Beveiliging wordt gecontroleerd...");
+                    tracing::debug!("🔓 Payload ontvangen. Beveiliging wordt gecontroleerd...");
                     // base64 decode + shield unscramble
                     // Voor nu printen we de ruwe input om te zien of het aankomt
-                    println!("Inhoud: {}", received);
+                    tracing::debug!("Inhoud: {}", received);
 
                     stream.write_all(b"HELHEIM_ACK")?;
                 }
-                Err(e) => println!("Fout bij inkomende verbinding: {}", e),
+                Err(e) => tracing::debug!("Fout bij inkomende verbinding: {}", e),
             }
         }
         Ok(())
@@ -142,18 +155,18 @@ impl NodeRelay {
 
     /// Stuur een command naar een andere node
     pub fn send(target: &str, command: &str) -> Result<()> {
-        println!("📤 Verbinding maken met node: {}...", target);
+        tracing::debug!("📤 Verbinding maken met node: {}...", target);
         let mut stream = TcpStream::connect(target)?;
 
         // Obfusceer de command voor verzending
         let payload = HelheimShield::obfuscate(command);
-        println!("🛡️ Payload geobfusceerd voor transport.");
+        tracing::debug!("🛡️ Payload geobfusceerd voor transport.");
 
         stream.write_all(payload.as_bytes())?;
 
         let mut response = String::new();
         stream.read_to_string(&mut response)?;
-        println!("🛰️ Node respons: {}", response);
+        tracing::debug!("🛰️ Node respons: {}", response);
 
         Ok(())
     }

@@ -7,7 +7,7 @@ fn parse_and_link(source: &str) -> Vec<CodeTaal> {
     let mut ast = HelParser::parse(source).expect("Parse failed");
     // Simuleer de CLI flow: semantic check direct na parse (linker logic tests can be separate)
     SemanticAnalyzer::analyze(&mut ast).expect("Semantic failed");
-    ast
+    ast.into_iter().filter(|node| !matches!(node, CodeTaal::LocationMarker { .. })).collect()
 }
 
 #[test]

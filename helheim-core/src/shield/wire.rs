@@ -15,9 +15,7 @@ impl Wire {
             .collect()
     }
 
-    /// Wraps a token in a credible "Honey URL"
-    /// In a real operation, this would point to our C2 server.
-    /// For now, we use a placeholder that looks scary/tracking-like.
+    /// Wraps a token in a credible "Honey URL" (placeholder URLs for canary traps).
     pub fn forge_honey_url(service: &str) -> String {
         let token = Self::generate_token();
         match service {

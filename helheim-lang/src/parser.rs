@@ -85,6 +85,10 @@ impl HelParser {
         let mut ast = Vec::new();
 
         while iter.peek().is_some() {
+            // Inject line/col marker
+            if let Some(tok) = iter.peek() {
+                ast.push(CodeTaal::LocationMarker { line: tok.line, col: tok.column });
+            }
             if let Some(stmt) = Self::parse_statement(input, &mut iter)? {
                 ast.push(stmt);
             }
@@ -102,6 +106,19 @@ impl HelParser {
         };
 
         match token.value.as_str() {
+            "pub" | "publiek" => {
+                let stmt_opt = Self::parse_statement(input, iter)?;
+                if let Some(mut stmt) = stmt_opt {
+                    match &mut stmt {
+                        CodeTaal::FunctionDef { is_pub, .. } => *is_pub = true,
+                        // Could add VarDef here if needed
+                        _ => {}
+                    }
+                    Ok(Some(stmt))
+                } else {
+                    Ok(None)
+                }
+            }
             "gebruik" | "use" | "import" => {
                 let path = iter.next().ok_or(anyhow::anyhow!(
                     "Verwacht een bestandsnaam na 'gebruik' of 'use'"
@@ -110,12 +127,29 @@ impl HelParser {
                 let clean_path = path.value.trim_matches('"').trim_end_matches(';').to_string();
 
                 // Optionele puntkomma consumeren
-                if let Some(next_tok) = iter.peek()
-                    && next_tok == ";" {
+                if let Some(next_tok) = iter.peek() {
+                    if next_tok == ";" {
                         iter.next();
                     }
+                }
 
-                Ok(Some(CodeTaal::Gebruik { path: clean_path }))
+                let mut alias = None;
+                if let Some(t) = iter.peek() {
+                    if t.value == "als" || t.value == "as" {
+                        iter.next(); // consume 'als'
+                        let alias_tok = iter.next().ok_or(anyhow::anyhow!("Verwacht module naam na 'als'"))?;
+                        alias = Some(alias_tok.value.clone());
+
+                        // Optionele puntkomma consumeren
+                        if let Some(next_tok) = iter.peek() {
+                            if next_tok == ";" {
+                                iter.next();
+                            }
+                        }
+                    }
+                }
+
+                Ok(Some(CodeTaal::Gebruik { path: clean_path, module_naam: alias }))
             }
             "zet" | "let" | "set" => {
                 // zet [naam] = [waarde]
@@ -152,7 +186,9 @@ impl HelParser {
                         "functie" | "fn" | "func" |
                         "voor" | "for" |
                         "probeer" | "try" |
-                        "schrijf" | "print" | "log"
+                        "schrijf" | "print" | "log" |
+                        "tcp_luister" | "tcp_listen" |
+                        "tcp_stuur" | "tcp_send"
                     ) {
                         break;
                     }
@@ -177,6 +213,9 @@ impl HelParser {
                         Box::new(CodeTaal::Literal(LiteralValue::Int(v.parse().unwrap())))
                     } else if v.parse::<f64>().is_ok() {
                         Box::new(CodeTaal::Literal(LiteralValue::Float(v.parse().unwrap())))
+                    } else if v.starts_with("b\"") {
+                        let inner = v.trim_start_matches('b').trim_matches('"').to_string();
+                        Box::new(CodeTaal::Literal(LiteralValue::Bytes(inner.into_bytes())))
                     } else if v.starts_with("\"") {
                         let s = v.trim_matches('"').to_string();
                         Box::new(CodeTaal::Literal(LiteralValue::String(s)))
@@ -230,7 +269,7 @@ impl HelParser {
                 // voor elke [item] in [LIJST] { ... }
                 let elke = iter.next().unwrap_or_default();
                 if elke.value != "elke" && elke.value != "each" {
-                    return Err(Self::format_parse_error(input, &token, "Verwacht 'elke' of 'each' na 'voor'/'for'"));
+                    return Err(Self::format_parse_error(input, &elke, "Verwacht 'elke' of 'each' na 'voor'/'for'"));
                 }
 
                 let iterator = iter
@@ -286,14 +325,15 @@ impl HelParser {
 
                 let body_ast = Box::new(Self::parse_block(input, iter)?);
 
-                // Optioneel 'anders' blok vangen
+                // Optioneel 'anders'/'else' blok vangen
                 let mut else_block = None;
-                if let Some(next_token) = iter.peek()
-                    && next_token == "anders" {
+                if let Some(next_token) = iter.peek() {
+                    if next_token == "anders" || next_token == "else" {
                         // Consume 'anders'
                         iter.next();
                         else_block = Some(Box::new(Self::parse_block(input, iter)?));
                     }
+                }
 
                 Ok(Some(CodeTaal::If {
                     condition: cond_ast,
@@ -347,10 +387,11 @@ impl HelParser {
                 }
 
                 let mut error_var = None;
-                if let Some(t) = iter.peek()
-                    && t != "{" {
+                if let Some(t) = iter.peek() {
+                    if t != "{" {
                         error_var = Some(iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde van het script"))?.to_string());
                     }
+                }
 
                 let catch_ast = Box::new(Self::parse_block(input, iter)?);
                 Ok(Some(CodeTaal::TryCatch {
@@ -368,8 +409,8 @@ impl HelParser {
                 // Als payload tussen quotes staat, is het 1 token.
 
                 let mut targets = Vec::new();
-                if let Some(naar) = iter.next()
-                    && (naar == "naar" || naar == "to") {
+                if let Some(naar) = iter.next() {
+                    if naar == "naar" || naar == "to" {
                         while let Some(t) = iter.peek() {
                             if t == ";" || t == "}" {
                                 break;
@@ -377,6 +418,7 @@ impl HelParser {
                             targets.push(iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde van het script"))?.value);
                         }
                     }
+                }
                 let target_str = targets.join(" ");
                 Ok(Some(CodeTaal::Send {
                     target: target_str,
@@ -403,6 +445,424 @@ impl HelParser {
                     url: Box::new(url_expr),
                 }))
             }
+            "tcp_verbind" | "tcp_connect" => {
+                // New primitives-first: returns a stream handle (ResourceHandle at runtime)
+                let mut addr_tokens = Vec::new();
+                while let Some(t) = iter.peek() {
+                    if t == ";" || t == "}" {
+                        break;
+                    }
+                    addr_tokens.push(iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde van het script"))?);
+                }
+                if addr_tokens.is_empty() {
+                    return Err(Self::format_parse_error(input, &token, "Verwachte host:port na 'tcp_verbind'"));
+                }
+                let mut expr_iter = addr_tokens.into_iter().peekable();
+                let addr_expr = Self::parse_expression(input, &mut expr_iter, 0)?;
+                Ok(Some(CodeTaal::TcpConnect { addr: Box::new(addr_expr) }))
+            }
+            "tcp_luister" | "tcp_listen" => {
+                // New primitives: creates listener handle. Use tcp_accepteer to get streams.
+                let mut addr_tokens = Vec::new();
+                while let Some(t) = iter.peek() {
+                    if t == ";" || t == "}" {
+                        break;
+                    }
+                    addr_tokens.push(iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde van het script"))?);
+                }
+                if addr_tokens.is_empty() {
+                    return Err(Self::format_parse_error(input, &token, "Verwachte bind addr na 'tcp_luister'"));
+                }
+                let mut expr_iter = addr_tokens.into_iter().peekable();
+                let addr_expr = Self::parse_expression(input, &mut expr_iter, 0)?;
+                Ok(Some(CodeTaal::TcpListen { addr: Box::new(addr_expr) }))
+            }
+            "tcp_stuur" | "tcp_send" => {
+                // Primitives-first: tcp_stuur <socket_handle_expr> <data_expr>
+                // data_expr can be b"..." (Bytes), string, list, etc.
+                // Legacy "data naar host" is no longer used; socket handle is primary.
+                let mut all_tokens = Vec::new();
+                while let Some(t) = iter.peek() {
+                    if t == ";" || t == "}" {
+                        break;
+                    }
+                    all_tokens.push(iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde van het script"))?);
+                }
+                if all_tokens.is_empty() {
+                    return Err(Self::format_parse_error(input, &token, "Verwacht socket en data na 'tcp_stuur'"));
+                }
+
+                // Collect up to two expressions. Support comma separation.
+                let mut parts: Vec<Vec<Token>> = vec![vec![]];
+                for t in all_tokens {
+                    if t.value == "," {
+                        parts.push(vec![]);
+                    } else {
+                        parts.last_mut().unwrap().push(t);
+                    }
+                }
+
+                let mut socket_expr = None;
+                let mut data_expr = None;
+
+                if parts.len() > 1 && !parts[0].is_empty() && !parts[1].is_empty() {
+                    let mut it0 = parts[0].clone().into_iter().peekable();
+                    socket_expr = Some(Self::parse_expression(input, &mut it0, 0)?);
+                    let mut it1 = parts[1].clone().into_iter().peekable();
+                    data_expr = Some(Self::parse_expression(input, &mut it1, 0)?);
+                } else if parts.len() == 1 && parts[0].len() > 1 {
+                    let mut it0 = vec![parts[0][0].clone()].into_iter().peekable();
+                    socket_expr = Some(Self::parse_expression(input, &mut it0, 0)?);
+                    let mut it1 = parts[0][1..].to_vec().into_iter().peekable();
+                    data_expr = Some(Self::parse_expression(input, &mut it1, 0)?);
+                }
+
+                let socket = socket_expr.ok_or_else(|| Self::format_parse_error(input, &token, "tcp_stuur vereist socket handle als eerste arg"))?;
+                let data = data_expr.ok_or_else(|| Self::format_parse_error(input, &token, "tcp_stuur vereist data als tweede arg (b\"...\" of string of list)"))?;
+
+                Ok(Some(CodeTaal::TcpSend { socket: Box::new(socket), data: Box::new(data) }))
+            }
+            "tcp_accepteer" | "tcp_accept" => {
+                // tcp_accepteer listener_handle   → new stream handle (blocks until connection)
+                let mut listener_tokens = Vec::new();
+                while let Some(t) = iter.peek() {
+                    if t == ";" || t == "}" {
+                        break;
+                    }
+                    listener_tokens.push(iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde van het script"))?);
+                }
+                if listener_tokens.is_empty() {
+                    return Err(Self::format_parse_error(input, &token, "Verwacht listener handle na 'tcp_accepteer'"));
+                }
+                let mut expr_iter = listener_tokens.into_iter().peekable();
+                let listener_expr = Self::parse_expression(input, &mut expr_iter, 0)?;
+                Ok(Some(CodeTaal::TcpAccept { listener: Box::new(listener_expr) }))
+            }
+            "tcp_ontvang" | "tcp_receive" | "tcp_recv" => {
+                // tcp_ontvang socket_handle [max_bytes]
+                // Returns bytes (as Bytes literal / HelheimType::Bytes at runtime)
+                let mut all_tokens = Vec::new();
+                while let Some(t) = iter.peek() {
+                    if t == ";" || t == "}" {
+                        break;
+                    }
+                    all_tokens.push(iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde van het script"))?);
+                }
+                if all_tokens.is_empty() {
+                    return Err(Self::format_parse_error(input, &token, "Verwacht socket handle na 'tcp_ontvang'"));
+                }
+
+                // Split on comma or just first as socket, rest as max expr
+                let mut parts: Vec<Vec<Token>> = vec![vec![]];
+                for t in all_tokens {
+                    if t.value == "," {
+                        parts.push(vec![]);
+                    } else {
+                        parts.last_mut().unwrap().push(t);
+                    }
+                }
+
+                let socket_expr = if !parts[0].is_empty() {
+                    let mut it = parts[0].clone().into_iter().peekable();
+                    Some(Self::parse_expression(input, &mut it, 0)?)
+                } else { None };
+
+                let max_expr = if parts.len() > 1 && !parts[1].is_empty() {
+                    let mut it = parts[1].clone().into_iter().peekable();
+                    Some(Self::parse_expression(input, &mut it, 0)?)
+                } else { None };
+
+                let socket = socket_expr.ok_or_else(|| Self::format_parse_error(input, &token, "tcp_ontvang vereist socket handle"))?;
+
+                Ok(Some(CodeTaal::TcpReceive {
+                    socket: Box::new(socket),
+                    max_bytes: max_expr.map(Box::new),
+                }))
+            }
+            "tcp_sluit" | "tcp_close" => {
+                let mut socket_tokens = Vec::new();
+                while let Some(t) = iter.peek() {
+                    if t.value == ";" || t.value == "}" {
+                        break;
+                    }
+                    socket_tokens.push(iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde van het script"))?);
+                }
+                if socket_tokens.is_empty() {
+                    return Err(Self::format_parse_error(input, &token, "Verwacht socket handle na 'tcp_sluit'"));
+                }
+                let mut expr_iter = socket_tokens.into_iter().peekable();
+                let socket_expr = Self::parse_expression(input, &mut expr_iter, 0)?;
+                Ok(Some(CodeTaal::TcpClose { socket: Box::new(socket_expr) }))
+            }
+
+            // === ACTOR PRIMITIVES (Vraag 2) ===
+            "spawn" | "start_actor" | "ontkiem" | "creëer" => {
+                // spawn [name] { body }
+                let mut name = None;
+                let next = iter.peek();
+                if let Some(t) = next {
+                    if !t.value.starts_with('{') && !t.value.contains("=>") {
+                        // treat as name if not immediately a block
+                        let name_tok = iter.next().unwrap();
+                        name = Some(name_tok.value.clone());
+                    }
+                }
+                let body = Box::new(Self::parse_block(input, iter)?);
+                Ok(Some(CodeTaal::Spawn { name, body }))
+            }
+            "stuur_bericht" | "send_message" => {
+                // stuur_bericht <target> <message>
+                let target = Self::parse_expression(input, iter, 0)?;
+                let message = Self::parse_expression(input, iter, 0)?;
+                Ok(Some(CodeTaal::SendMessage {
+                    target: Box::new(target),
+                    message: Box::new(message),
+                }))
+            }
+            "ontvang" | "receive" | "recv" => {
+                // ontvang <var> [timeout] { body }
+                let var_tok = iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Verwacht variabele naam na 'ontvang'"))?;
+                let var = var_tok.value.clone();
+
+                let mut timeout = None;
+                // peek for timeout expression before {
+                if let Some(t) = iter.peek() {
+                    if t.value != "{" && t.value != ";" {
+                        let to = Self::parse_expression(input, iter, 0)?;
+                        timeout = Some(Box::new(to));
+                    }
+                }
+
+                let body = Box::new(Self::parse_block(input, iter)?);
+                Ok(Some(CodeTaal::Receive { var, timeout, body }))
+            }
+
+            // === ALGEBRAIC EFFECTS (Vraag 6) ===
+            "effect" => {
+                let name = iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Verwacht effect naam"))?.value;
+                let mut operations = Vec::new();
+                let start_brace = iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Verwacht '{' na effect naam"))?;
+                if start_brace.value != "{" {
+                    return Err(Self::format_parse_error(input, &start_brace, "Verwacht '{'"));
+                }
+                while let Some(t) = iter.peek() {
+                    if t.value == "}" {
+                        iter.next();
+                        break;
+                    }
+                    if t.value != "," {
+                        operations.push(t.value.clone());
+                    }
+                    iter.next();
+                }
+                Ok(Some(CodeTaal::EffectDef { name, operations }))
+            }
+            "perform" | "voer_uit_effect" => {
+                let effect_token = iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Verwacht effect naam"))?.value;
+                let effect;
+                let operation;
+                if effect_token.contains('.') {
+                    let parts: Vec<&str> = effect_token.split('.').collect();
+                    effect = parts[0].to_string();
+                    operation = parts[1].to_string();
+                } else {
+                    effect = effect_token;
+                    let dot = iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Verwacht '.' na effect naam"))?;
+                    if dot.value != "." {
+                        return Err(Self::format_parse_error(input, &dot, "Verwacht '.'"));
+                    }
+                    operation = iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Verwacht operatie naam"))?.value;
+                }
+                // parse optional args: perform Tcp.send(arg1, arg2) or perform Tcp.send arg1
+                let mut args = Vec::new();
+                if let Some(t) = iter.peek() {
+                    if t.value == "(" {
+                        iter.next(); // consume '('
+                        while let Some(t2) = iter.peek() {
+                            if t2.value == ")" {
+                                iter.next();
+                                break;
+                            }
+                            args.push(Self::parse_expression(input, iter, 0)?);
+                            if let Some(c) = iter.peek() {
+                                if c.value == "," {
+                                    iter.next();
+                                }
+                            }
+                        }
+                    } else if t.value != ";" && t.value != "}" {
+                        // single arg without parens
+                        args.push(Self::parse_expression(input, iter, 0)?);
+                    }
+                }
+                Ok(Some(CodeTaal::Perform { effect, operation, args }))
+            }
+            "handle" | "handel_af" => {
+                let effect = iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Verwacht effect naam"))?.value;
+                
+                let mut handlers = Vec::new();
+                let start_brace = iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Verwacht '{' na effect naam"))?;
+                if start_brace.value != "{" {
+                    return Err(Self::format_parse_error(input, &start_brace, "Verwacht '{' voor handlers"));
+                }
+                while let Some(t) = iter.peek() {
+                    if t.value == "}" {
+                        iter.next();
+                        break;
+                    }
+                    let op_name = iter.next().unwrap().value;
+                    let arrow = iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Verwacht '=>'"))?;
+                    if arrow.value != "=>" {
+                        return Err(Self::format_parse_error(input, &arrow, "Verwacht '=>'"));
+                    }
+                    let handler_body = Self::parse_block(input, iter)?;
+                    handlers.push((op_name, Box::new(handler_body)));
+                    if let Some(c) = iter.peek() {
+                        if c.value == "," {
+                            iter.next();
+                        }
+                    }
+                }
+                
+                let in_kw = iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Verwacht 'in' na handlers"))?;
+                if in_kw.value != "in" {
+                    return Err(Self::format_parse_error(input, &in_kw, "Verwacht 'in'"));
+                }
+                let body = Self::parse_block(input, iter)?;
+                
+                Ok(Some(CodeTaal::Handle { effect, handlers, body: Box::new(body) }))
+            }
+            "resume" | "hervat" => {
+                let continuation = Self::parse_expression(input, iter, 0)?;
+                let mut value = CodeTaal::Literal(LiteralValue::Void); // Assume Void is not defined, use Int(0) or similar, actually we just parse expression. Wait, I should add LiteralValue::Void? No, I'll use None or String? Let's check LiteralValue.
+                // For now, if there is a comma, parse value
+                if let Some(c) = iter.peek() {
+                    if c.value == "," {
+                        iter.next(); // consume ','
+                        value = Self::parse_expression(input, iter, 0)?;
+                    }
+                }
+                Ok(Some(CodeTaal::Resume { continuation: Box::new(continuation), value: Box::new(value) }))
+            }
+
+            // [W·AG·AF] C1 Review: InlineAssembly met in/out/clobber
+            // === INLINE PTX/ASM (Vraag 1) ===
+            "ptx" | "asm" | "inline_asm" | "ruwe_code" | "machinecode" => {
+                // ptx { raw ptx or asm source }
+                // Optional: inputs like ptx { ... } in (a=expr, b=expr) out (c, d)
+                // For simplicity in first version: ptx { ... } with implicit bindings via context
+                let mut target = token.value.clone();
+                let mut inputs = Vec::new();
+                let mut outputs = Vec::new();
+                let mut clobbers = Vec::new();
+
+                // If the next token is an identifier and NOT `{`, `in`, `out`, `clobber`, it's the target
+                if let Some(t) = iter.peek() {
+                    let v = t.value.as_str();
+                    if v != "{" && v != "in" && v != "invoer" && v != "out" && v != "uitvoer" && v != "clobber" {
+                        target = iter.next().unwrap().value.clone();
+                    }
+                }
+
+                while let Some(t) = iter.peek() {
+                    if t.value == "{" {
+                        break;
+                    }
+                    if t.value == "in" || t.value == "invoer" {
+                        iter.next(); // consume 'in'
+                        let open = iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Verwacht '(' na 'in'"))?;
+                        if open.value != "(" { return Err(Self::format_parse_error(input, &open, "Verwacht '('")); }
+                        while let Some(arg) = iter.peek() {
+                            if arg.value == ")" {
+                                iter.next();
+                                break;
+                            }
+                            if arg.value == "," {
+                                iter.next();
+                                continue;
+                            }
+                            let name = iter.next().unwrap().value.clone();
+                            let eq = iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Verwacht '=' na in-variabele"))?;
+                            if eq.value != "=" { return Err(Self::format_parse_error(input, &eq, "Verwacht '='")); }
+                            let expr = Self::parse_expression(input, iter, 0)?;
+                            inputs.push((name, Box::new(expr)));
+                        }
+                    } else if t.value == "out" || t.value == "uitvoer" {
+                        iter.next(); // consume 'out'
+                        let open = iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Verwacht '(' na 'out'"))?;
+                        if open.value != "(" { return Err(Self::format_parse_error(input, &open, "Verwacht '('")); }
+                        while let Some(arg) = iter.peek() {
+                            if arg.value == ")" {
+                                iter.next();
+                                break;
+                            }
+                            if arg.value == "," {
+                                iter.next();
+                                continue;
+                            }
+                            outputs.push(iter.next().unwrap().value.clone());
+                        }
+                    } else if t.value == "clobber" {
+                        iter.next(); // consume 'clobber'
+                        let open = iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Verwacht '(' na 'clobber'"))?;
+                        if open.value != "(" { return Err(Self::format_parse_error(input, &open, "Verwacht '('")); }
+                        while let Some(arg) = iter.peek() {
+                            if arg.value == ")" {
+                                iter.next();
+                                break;
+                            }
+                            if arg.value == "," {
+                                iter.next();
+                                continue;
+                            }
+                            clobbers.push(iter.next().unwrap().value.clone().trim_matches('"').to_string());
+                        }
+                    } else {
+                        let err_t = t.clone();
+                        return Err(Self::format_parse_error(input, &err_t, "Onverwacht token voor inline assembly block"));
+                    }
+                }
+
+                let mut code_tokens = Vec::new();
+                let start = iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Verwacht '{' na 'ptx'"))?;
+                if start.value != "{" {
+                    return Err(Self::format_parse_error(input, &start, "Verwacht '{' voor inline assembly block"));
+                }
+
+                let mut brace_depth = 1;
+                while let Some(t) = iter.next() {
+                    if t.value == "{" {
+                        brace_depth += 1;
+                    } else if t.value == "}" {
+                        brace_depth -= 1;
+                        if brace_depth == 0 {
+                            break;
+                        }
+                    }
+                    code_tokens.push(t.value);
+                }
+
+                let code = code_tokens.join(" ");
+
+                let mut fallback = None;
+                if let Some(t) = iter.peek() {
+                    if t.value == "fallback" || t.value == "terugval" {
+                        iter.next(); // consume fallback
+                        let fallback_block = Self::parse_block(input, iter)?;
+                        fallback = Some(Box::new(fallback_block));
+                    }
+                }
+
+                Ok(Some(CodeTaal::InlineAssembly {
+                    target,
+                    code,
+                    inputs,
+                    outputs,
+                    clobbers,
+                    fallback,
+                }))
+            }
+
             "lees" | "read" => {
                 // lees <path-expr>   (dynamisch)
                 let mut path_tokens = Vec::new();
@@ -597,13 +1057,31 @@ impl HelParser {
             }
             "functie" | "func" | "fn" | "function" => {
                 // functie [naam] met [arg1] [arg2] { ... } -> of 'functie [naam] a b {'
-                let name = iter.next().ok_or(Self::format_parse_error(input, &token, "Verwacht functienaam"))?;
+                let name_tok = iter.next().ok_or(Self::format_parse_error(input, &token, "Verwacht functienaam"))?;
+                let mut name = name_tok.value.clone();
+                // Check if it's a namespaced function (e.g. http::get)
+                while let Some(t) = iter.peek() {
+                    if t == ":" {
+                        iter.next();
+                        if let Some(t2) = iter.peek() {
+                            if t2 == ":" {
+                                iter.next(); // Consume second colon
+                                if let Some(t3) = iter.next() {
+                                    name.push_str("::");
+                                    name.push_str(&t3.value);
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                    break;
+                }
                 let mut params = Vec::new();
                 while let Some(t) = iter.peek() {
                     if t == "{" {
                         break;
                     }
-                    if t == "met" || t == "with" || t == "," {
+                    if t == "met" || t == "with" || t == "," || t == "(" || t == ")" {
                         iter.next();
                         continue;
                     }
@@ -611,7 +1089,8 @@ impl HelParser {
                 }
                 let body_ast = Box::new(Self::parse_block(input, iter)?);
                 Ok(Some(CodeTaal::FunctionDef {
-                    name: name.value.clone(),
+                    name: name.clone(),
+                    is_pub: false,
                     params,
                     body: body_ast,
                 }))
@@ -754,8 +1233,18 @@ impl HelParser {
                 Ok(None)
             }
             "{" => {
-                // Genest blok?
-                Ok(Some(Self::parse_block(input, iter)?))
+                // Genest blok? De '{' is al geconsumeerd door parse_statement!
+                let mut statements = Vec::new();
+                while let Some(t) = iter.peek() {
+                    if t == "}" {
+                        iter.next(); // Consume '}'
+                        return Ok(Some(CodeTaal::Block { statements }));
+                    }
+                    if let Some(stmt) = Self::parse_statement(input, iter)? {
+                        statements.push(stmt);
+                    }
+                }
+                Err(anyhow::anyhow!("Fout: Onverwacht einde bestand, sluitende '}}' mist."))
             }
             _ => {
                 // Fallback: SysOp / Command pass-through
@@ -849,7 +1338,15 @@ impl HelParser {
             
             if escape_next {
                 if current.is_empty() { token_start_col = column_number; }
-                current.push(c);
+                if c == 'n' {
+                    current.push('\n');
+                } else if c == 'r' {
+                    current.push('\r');
+                } else if c == 't' {
+                    current.push('\t');
+                } else {
+                    current.push(c);
+                }
                 escape_next = false;
                 column_number += 1;
                 i += 1;
@@ -860,7 +1357,6 @@ impl HelParser {
                 '\\' => {
                     if current.is_empty() { token_start_col = column_number; }
                     escape_next = true;
-                    current.push(c);
                     column_number += 1;
                 }
                 '"' => {
@@ -917,6 +1413,10 @@ impl HelParser {
                             tokens.push(Self::build_token(format!("{}=", c), line_number, column_number ));
                             column_number += 2;
                             i += 1;
+                        } else if c == '=' && i + 1 < chars.len() && chars[i + 1] == '>' {
+                            tokens.push(Self::build_token(format!("=>"), line_number, column_number ));
+                            column_number += 2;
+                            i += 1;
                         } else {
                             tokens.push(Self::build_token(c.to_string(), line_number, column_number ));
                             column_number += 1;
@@ -927,7 +1427,28 @@ impl HelParser {
                         column_number += 1;
                     }
                 }
-                '{' | '}' | ';' | '(' | ')' | '[' | ']' | ',' | ':' | '#' => {
+                ':' => {
+                    if !in_quote {
+                        if i + 1 < chars.len() && chars[i + 1] == ':' {
+                            if current.is_empty() { token_start_col = column_number; }
+                            current.push_str("::");
+                            column_number += 2;
+                            i += 1;
+                        } else {
+                            if !current.trim().is_empty() {
+                                tokens.push(Self::build_token(current.trim().to_string(), line_number, token_start_col ));
+                                current.clear();
+                            }
+                            tokens.push(Self::build_token(c.to_string(), line_number, column_number ));
+                            column_number += 1;
+                        }
+                    } else {
+                        if current.is_empty() { token_start_col = column_number; }
+                        current.push(c);
+                        column_number += 1;
+                    }
+                }
+                '{' | '}' | ';' | '(' | ')' | '[' | ']' | ',' | '#' => {
                     if !in_quote {
                         if !current.trim().is_empty() {
                             tokens.push(Self::build_token(current.trim().to_string(), line_number, token_start_col ));
@@ -982,12 +1503,71 @@ impl HelParser {
             match t.value.as_str() {
                 "nieuw" | "new" => {
                     iter.next(); // consume keyword
-                    let mut toks = vec!["nieuw".to_string()];
-                    while let Some(u) = iter.peek() {
-                        if u.value == ";" || u.value == "}" { break; }
-                        toks.push(iter.next().unwrap().value.clone());
+                    let model_name_tok = iter.next().ok_or_else(|| anyhow::anyhow!("Verwacht model naam na 'nieuw'"))?;
+                    let model_name = model_name_tok.value.clone();
+                    let mut args = Vec::new();
+
+                    if let Some(t) = iter.peek() {
+                        if t.value == "(" {
+                            iter.next(); // consume '('
+                            while let Some(arg_tok) = iter.peek() {
+                                if arg_tok.value == ")" {
+                                    iter.next();
+                                    break;
+                                }
+                                if arg_tok.value == "," {
+                                    iter.next();
+                                    continue;
+                                }
+                                args.push(arg_tok.value.clone());
+                                iter.next();
+                            }
+                        } else {
+                            // fall back to old way? No, parse args until ; or }
+                            while let Some(u) = iter.peek() {
+                                if u.value == ";" || u.value == "}" { break; }
+                                args.push(iter.next().unwrap().value.clone());
+                            }
+                        }
                     }
-                    return Ok(CodeTaal::VarGet { name: toks.join(" ") });
+                    return Ok(CodeTaal::ModelInit { model_name, args });
+                }
+                "perform" | "voer_uit_effect" => {
+                    let token = iter.next().unwrap(); // consume keyword
+                    let effect_token = iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Verwacht effect naam"))?.value;
+                    let effect;
+                    let operation;
+                    if effect_token.contains('.') {
+                        let parts: Vec<&str> = effect_token.split('.').collect();
+                        effect = parts[0].to_string();
+                        operation = parts[1].to_string();
+                    } else {
+                        effect = effect_token;
+                        let dot = iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Verwacht '.' na effect naam"))?;
+                        if dot.value != "." {
+                            return Err(Self::format_parse_error(input, &dot, "Verwacht '.'"));
+                        }
+                        operation = iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Verwacht operatie naam"))?.value;
+                    }
+                    let mut args = Vec::new();
+                    if let Some(t) = iter.peek() {
+                        if t.value == "(" {
+                            iter.next();
+                            while let Some(t2) = iter.peek() {
+                                if t2.value == ")" {
+                                    iter.next();
+                                    break;
+                                }
+                                args.push(Self::parse_expression(input, iter, 0)?);
+                                if let Some(c) = iter.peek() {
+                                    if c.value == "," { iter.next(); }
+                                }
+                            }
+                        } else if t.value != ";" && t.value != "}" {
+                            args.push(Self::parse_expression(input, iter, 0)?);
+                        }
+                    }
+                    return Ok(CodeTaal::Perform { effect, operation, args });
                 }
                 "roep_aan" | "invoke" | "call" => {
                     iter.next(); // consume keyword
@@ -1050,6 +1630,99 @@ impl HelParser {
                     let content = Self::parse_expression(input, &mut cit, 0)?;
                     return Ok(CodeTaal::FileOp { action: "write".to_string(), path: Box::new(path), content: Some(Box::new(content)) });
                 }
+                // TCP primitives as expressions (zet s = tcp_verbind "...")
+                "tcp_verbind" | "tcp_connect" => {
+                    iter.next();
+                    let mut addr_toks = Vec::new();
+                    while let Some(u) = iter.peek() {
+                        if u == ";" || u == "}" { break; }
+                        addr_toks.push(iter.next().unwrap());
+                    }
+                    if addr_toks.is_empty() {
+                        return Err(anyhow::anyhow!("Verwachte addr na tcp_verbind in expr"));
+                    }
+                    let mut eit = addr_toks.into_iter().peekable();
+                    let addr = Self::parse_expression(input, &mut eit, 0)?;
+                    return Ok(CodeTaal::TcpConnect { addr: Box::new(addr) });
+                }
+                "tcp_luister" | "tcp_listen" => {
+                    iter.next();
+                    let mut addr_toks = Vec::new();
+                    while let Some(u) = iter.peek() {
+                        if u == ";" || u == "}" { break; }
+                        addr_toks.push(iter.next().unwrap());
+                    }
+                    if addr_toks.is_empty() {
+                        return Err(anyhow::anyhow!("Verwachte addr na tcp_luister in expr"));
+                    }
+                    let mut eit = addr_toks.into_iter().peekable();
+                    let addr = Self::parse_expression(input, &mut eit, 0)?;
+                    return Ok(CodeTaal::TcpListen { addr: Box::new(addr) });
+                }
+                "tcp_accepteer" | "tcp_accept" => {
+                    iter.next();
+                    let mut lis_toks = Vec::new();
+                    while let Some(u) = iter.peek() {
+                        if u == ";" || u == "}" { break; }
+                        lis_toks.push(iter.next().unwrap());
+                    }
+                    if lis_toks.is_empty() {
+                        return Err(anyhow::anyhow!("Verwachte listener na tcp_accepteer in expr"));
+                    }
+                    let mut eit = lis_toks.into_iter().peekable();
+                    let lis = Self::parse_expression(input, &mut eit, 0)?;
+                    return Ok(CodeTaal::TcpAccept { listener: Box::new(lis) });
+                }
+                "tcp_stuur" | "tcp_send" => {
+                    iter.next();
+                    // Minimal support in expr context: tcp_stuur sock data  (returns unit-ish for now)
+                    let mut toks = Vec::new();
+                    while let Some(u) = iter.peek() {
+                        if u == ";" || u == "}" { break; }
+                        toks.push(iter.next().unwrap());
+                    }
+                    // For expr we still produce the node; execution will handle side-effect
+                    if toks.len() < 2 {
+                        return Err(anyhow::anyhow!("tcp_stuur in expr verwacht socket + data"));
+                    }
+                    let mut sit = vec![toks[0].clone()].into_iter().peekable();
+                    let sock = Self::parse_expression(input, &mut sit, 0)?;
+                    let mut dit = toks[1..].to_vec().into_iter().peekable();
+                    let dat = Self::parse_expression(input, &mut dit, 0)?;
+                    return Ok(CodeTaal::TcpSend { socket: Box::new(sock), data: Box::new(dat) });
+                }
+                "tcp_ontvang" | "tcp_receive" | "tcp_recv" => {
+                    iter.next();
+                    let mut toks = Vec::new();
+                    while let Some(u) = iter.peek() {
+                        if u == ";" || u == "}" { break; }
+                        toks.push(iter.next().unwrap());
+                    }
+                    if toks.is_empty() {
+                        return Err(anyhow::anyhow!("tcp_ontvang in expr verwacht socket"));
+                    }
+                    let mut sit = vec![toks[0].clone()].into_iter().peekable();
+                    let sock = Self::parse_expression(input, &mut sit, 0)?;
+                    let maxb = if toks.len() > 1 {
+                        let mut mit = toks[1..].to_vec().into_iter().peekable();
+                        Some(Box::new(Self::parse_expression(input, &mut mit, 0)?))
+                    } else { None };
+                    return Ok(CodeTaal::TcpReceive { socket: Box::new(sock), max_bytes: maxb });
+                }
+                "tcp_sluit" | "tcp_close" => {
+                    iter.next();
+                    let mut toks = Vec::new();
+                    while let Some(u) = iter.peek() {
+                        if u == ";" || u == "}" { break; }
+                        toks.push(iter.next().unwrap());
+                    }
+                    if toks.is_empty() {
+                        return Err(anyhow::anyhow!("tcp_sluit in expr verwacht socket"));
+                    }
+                    let mut sit = toks.into_iter().peekable();
+                    let sock = Self::parse_expression(input, &mut sit, 0)?;
+                    return Ok(CodeTaal::TcpClose { socket: Box::new(sock) });
+                }
                 _ => {}
             }
         }
@@ -1100,7 +1773,12 @@ impl HelParser {
                                 } else if sitem.value.parse::<f64>().is_ok() {
                                     LiteralValue::Float(sitem.value.parse().unwrap())
                                 } else if sitem.value.starts_with("\"") {
-                                    LiteralValue::String(sitem.value.trim_matches('"').to_string())
+                                    if sitem.value.starts_with("b\"") {
+                                let inner = sitem.value.trim_start_matches('b').trim_matches('"').to_string();
+                                LiteralValue::Bytes(inner.into_bytes())
+                            } else {
+                                LiteralValue::String(sitem.value.trim_matches('"').to_string())
+                            }
                                 } else {
                                     return Err(anyhow::anyhow!("Unsupported matrix item: {}", sitem.value));
                                 };
@@ -1132,7 +1810,12 @@ impl HelParser {
                         } else if item_tok.value.parse::<f64>().is_ok() {
                             LiteralValue::Float(item_tok.value.parse().unwrap())
                         } else if item_tok.value.starts_with("\"") {
-                            LiteralValue::String(item_tok.value.trim_matches('"').to_string())
+                            if item_tok.value.starts_with("b\"") {
+                                let inner = item_tok.value.trim_start_matches('b').trim_matches('"').to_string();
+                                LiteralValue::Bytes(inner.into_bytes())
+                            } else {
+                                LiteralValue::String(item_tok.value.trim_matches('"').to_string())
+                            }
                         } else {
                             return Err(anyhow::anyhow!("Unsupported list item in literal: {}", item_tok.value));
                         };
@@ -1225,6 +1908,10 @@ impl HelParser {
                     } else {
                         CodeTaal::Literal(LiteralValue::Int(raw.parse().unwrap_or(0)))
                     }
+                } else if t.value.starts_with("b\"") {
+                    // Rock-solid byte literal: b"raw bytes here" → Bytes(Vec<u8>)
+                    let inner = t.value.trim_start_matches('b').trim_matches('"').to_string();
+                    CodeTaal::Literal(LiteralValue::Bytes(inner.into_bytes()))
                 } else if t.value.starts_with("\"") {
                     let s = t.value.trim_matches('"').to_string();
                     CodeTaal::Literal(LiteralValue::String(s))

@@ -1,68 +1,69 @@
-# Helheim
+# Helheim Engine v2.0 (Alpha)
 
-> **Taal:** CodeTaal — tweetalige DSL (Nederlands & Engels)  
-> **Runtime:** Native Rust, CPU + GPU (CUDA optioneel)
+> Alpha release. See LICENSE for usage terms.
 
-Helheim is een high-performance execution engine met een eigen programmeertaal. Scripts worden gecompileerd naar een AST en uitgevoerd op CPU of direct verlaagd naar PTX voor Nvidia GPU's.
+**Helheim** is a bare-metal, distributed, and zero-overhead execution engine for the CodeTaal (Dutch syntax) language, designed from the ground up for high-performance and robust system orchestration.
 
-## CodeTaal
+*English below*
 
-Bilingual (Nederlands/Engels). Dezelfde semantiek, beide notaties werken.
+---
 
-```helheim
-zet naam = "Helheim";
-zet versie = 1;
+## Nederlands (Dutch)
 
-als versie >= 1 dan {
-    druk_af naam;
-}
+### Wat is Helheim?
+Helheim is meer dan een scripttaal. Het is een "Motor Cortex" voor je systeem:
+- **Zero-Overhead FFI**: Direct inladen van C/C++ libraries zonder wrapper-overhead.
+- **Algebraïsche Effect Handlers**: Scheid logica van I/O (zoals netwerk of file access) via krachtige `perform` en `handle` blokken.
+- **Actor Model & Supervisor (Swarm)**: Ingebouwd lokaal (zero-copy MPSC) en gedistribueerd berichtenverkeer voor extreem parallelle taken. 100% Actor-Supervisor capabel met ingebouwde faalstrategieën (Escalate, Restart, Stop).
+- **Continuations & Distributed Teleportation**: Pauzeer en verplaats actieve processen naadloos tussen verschillende machines (`perform Swarm::migrate`).
+- **Flight Recorder**: Zero-overhead tracing en telemetrie ingebouwd in de virtuele machine.
+- **Hardware JIT & Inline Assembly**: Directe toegang tot NVIDIA PTX via `asm ptx` blokken voor ongeëvenaarde controle.
+- **Cryptografisch Beveiligd**: Packages en plugins worden geverifieerd via Ed25519.
 
-functie optellen a b {
-    retourneer a + b;
-}
+### Starten
+Zorg ervoor dat Rust en Cargo geïnstalleerd zijn.
 
-zet resultaat = roep_aan optellen 10, 32;
-druk_af resultaat;
-```
-
-## Functies
-
-- Variables (`zet` / `let`)
-- Control flow (`als`/`if`, `zolang`/`while`, `voor`/`for`)
-- Functies (`functie`/`fn`, `roep_aan`/`call`, `retourneer`/`return`)
-- Lijsten en matrices (`[1, 2, 3]`, `[[1, 0], [0, 1]]`)
-- Concurrente blokken (`concurrent { ... }`)
-- Bestands- en netwerk I/O (elevated privileges)
-- PTX JIT lowering voor GPU-blokken (`hel { ... }`)
-- HSP Swarm Protocol — gedistribueerde uitvoering via TCP
-
-## Gebruik
-
-**Script uitvoeren:**
 ```bash
-helheim script mijn_script.hel
+# Start de Helheim REPL
+cargo run --bin helheim-cli
+
+# Draai een script
+cargo run --bin helheim-cli run examples/reacq_full.hel
+
+# Start de Universal Gateway (API)
+cargo run --bin helheim-gateway
 ```
 
-**Interactieve REPL:**
+Zie `CHEATSHEET.md` voor de syntax en veelgebruikte concepten.
+
+---
+
+## English
+
+### What is Helheim?
+Helheim is a bare-metal, high-performance execution engine parsing a Dutch-syntax language (CodeTaal). It's designed as the "Motor Cortex" for complex, distributed systems:
+- **Zero-Overhead FFI**: Load C/C++ libraries directly without wrapper-overhead.
+- **Algebraic Effect Handlers**: Cleanly separate logic from side-effects (like I/O) using `perform` and `handle`.
+- **Actor Model & Supervisor (Swarm)**: First-class support for local (zero-copy MPSC) and remote message passing for massive concurrency. 100% Actor-Supervisor capable with built-in failure strategies (Escalate, Restart, Stop).
+- **Continuations & Distributed Teleportation**: Seamlessly pause and migrate active processes across different machines (`perform Swarm::migrate`).
+- **Flight Recorder**: Built-in zero-overhead telemetry and tracing directly at the VM level.
+- **Hardware JIT & Inline Assembly**: Direct NVIDIA PTX access via `asm ptx` blocks for unparalleled hardware control.
+- **Cryptographically Secured**: Signed and verified packages via Ed25519 cryptography.
+
+### Getting Started
+Ensure you have Rust and Cargo installed.
+
 ```bash
-helheim repl
+# Start the Helheim REPL
+cargo run --bin helheim-cli
+
+# Run a script
+cargo run --bin helheim-cli run examples/reacq_full.hel
+
+# Start the Universal Gateway (API)
+cargo run --bin helheim-gateway
 ```
 
-**Swarm node starten:**
-```bash
-helheim service --port 9003
-```
+See `CHEATSHEET.md` for syntax examples and core concepts.
 
-## Architectuur
-
-| Crate | Functie |
-|---|---|
-| `helheim-lang` | Lexer, parser, AST, PTX lowering |
-| `helheim-core` | Executor, memory, swarm, GPU backend |
-| `helheim-gateway` | HTTP API (`POST /api/execute`) |
-| `helheim-cli` | CLI — script / repl / service |
-
-## Documentatie
-
-- [Taalspecificatie](docs/LANGUAGE_SPEC.md)
-- [Kernprincipes](docs/architecture/core_principles.md)
+## License — BSL 1.1 © PEPAI

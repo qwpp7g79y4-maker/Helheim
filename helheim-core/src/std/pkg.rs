@@ -25,7 +25,7 @@ impl PackageManager {
             ));
         };
 
-        println!("[PKG]: Uitvoeren: {} {}", cmd, args.join(" "));
+        tracing::debug!("[PKG]: Uitvoeren: {} {}", cmd, args.join(" "));
 
         let output = Command::new(cmd).args(&args).output()?;
 

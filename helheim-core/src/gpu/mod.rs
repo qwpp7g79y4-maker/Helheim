@@ -48,21 +48,29 @@ pub fn get_backend() -> Box<dyn GpuBackend> {
     #[cfg(feature = "cuda")]
     {
         if let Ok(ptx) = PtxBackend::new() {
-            println!("[HELHEIM] NVIDIA CUDA gedetecteerd. PtxBackend geladen.");
+            tracing::debug!("[HELHEIM] NVIDIA CUDA gedetecteerd. PtxBackend geladen.");
             return Box::new(ptx);
         }
-        println!("[HELHEIM] Geen CUDA gedetecteerd of feature niet enabled. Fallback naar Rayon (CpuBackend).");
+        tracing::debug!("[HELHEIM] Geen CUDA gedetecteerd of feature niet enabled. Fallback naar Rayon (CpuBackend).");
     }
     #[cfg(not(feature = "cuda"))]
     {
-        println!("[HELHEIM] CUDA feature niet geactiveerd. Gebruik CpuBackend.");
+        tracing::debug!("[HELHEIM] CUDA feature niet geactiveerd. Gebruik CpuBackend.");
     }
     Box::new(CpuBackend::new())
 }
 
 #[cfg(feature = "cuda")]
+fn helheim_device() -> anyhow::Result<std::sync::Arc<CudaContext>> {
+    let id: usize = std::env::var("HELHEIM_GPU_DEVICE")
+        .ok().and_then(|v| v.parse().ok())
+        .unwrap_or(1);
+    CudaContext::new(id)
+}
+
+#[cfg(feature = "cuda")]
 pub fn gpu_alloc_tensor_random(m: usize, n: usize) -> Result<usize> {
-    let dev = CudaContext::new(0)?;
+    let dev = helheim_device()?;
     let stream = dev.default_stream();
     let elements = m * n;
 
@@ -90,7 +98,7 @@ pub fn gpu_alloc_tensor_random(_m: usize, _n: usize) -> Result<usize> {
 
 #[cfg(feature = "cuda")]
 pub fn gpu_alloc_tensor_empty(m: usize, n: usize) -> Result<usize> {
-    let dev = CudaContext::new(0)?;
+    let dev = helheim_device()?;
     let stream = dev.default_stream();
     let elements = m * n;
     let dev_data = stream.alloc_zeros::<f32>(elements)?;
@@ -147,11 +155,11 @@ extern "C" __global__ void matmul(int m, int n, int k, float alpha, const float*
 
 #[cfg(feature = "cuda")]
 pub fn gpu_work_real(size: usize, device_id: usize) -> Result<()> {
-    println!("Checking hardware for GPU acceleration (Bare Metal Check)...");
+    tracing::debug!("Checking hardware for GPU acceleration (Bare Metal Check)...");
     let has_nvidia = std::process::Command::new("nvidia-smi").output().is_ok();
 
     if !has_nvidia {
-        println!(
+        tracing::debug!(
             "{}",
             "[FALLBACK]: No Nvidia GPU detected! Falling back to Native Multi-Core CPU execution."
                 .yellow()
@@ -159,7 +167,7 @@ pub fn gpu_work_real(size: usize, device_id: usize) -> Result<()> {
         );
         let start_cpu = Instant::now();
 
-        println!(
+        tracing::debug!(
             "Generating and computing matrix {}x{} purely on CPU...",
             size, size
         );
@@ -178,17 +186,17 @@ pub fn gpu_work_real(size: usize, device_id: usize) -> Result<()> {
         let k = size;
         let gflops = ((2.0 * m as f64 * n as f64 * k as f64) / 1e9) * 0.001; // Scale down for CPU
 
-        println!("CPU COMPUTE FINISHED. (Sum: {})", sum);
-        println!("Time: {:.2?}", duration);
-        println!("Performance: {:.2} GFLOPS (CPU Fallback)", gflops);
+        tracing::debug!("CPU COMPUTE FINISHED. (Sum: {})", sum);
+        tracing::debug!("Time: {:.2?}", duration);
+        tracing::debug!("Performance: {:.2} GFLOPS (CPU Fallback)", gflops);
         return Ok(());
     }
 
-    println!("Initializing CUDA Context for GPU {}...", device_id);
+    tracing::debug!("Initializing CUDA Context for GPU {}...", device_id);
     let start_init = Instant::now();
     let dev = CudaContext::new(device_id)?;
     let stream = dev.default_stream();
-    println!("CUDA initialized in {:.2?}", start_init.elapsed());
+    tracing::debug!("CUDA initialized in {:.2?}", start_init.elapsed());
 
     // Detect compute capability — Blackwell (sm_100+) needs FP32 fallback
     let cc_major = unsafe {
@@ -200,10 +208,10 @@ pub fn gpu_work_real(size: usize, device_id: usize) -> Result<()> {
         );
         val
     };
-    println!("GPU {} compute capability: sm_{}x", device_id, cc_major);
+    tracing::debug!("GPU {} compute capability: sm_{}x", device_id, cc_major);
 
     let (module, kernel_name): (_, &str) = if cc_major >= 10 {
-        println!("Blackwell detected — using FP32 tiled kernel (CUDA 12.4 limit)");
+        tracing::debug!("Blackwell detected — using FP32 tiled kernel (CUDA 12.4 limit)");
         let ptx = compile_ptx(PTX_SRC)
             .map_err(|e| anyhow::anyhow!("NVRTC FP32 compile failed: {:?}", e))?;
         (dev.load_module(ptx)?, "matmul")
@@ -217,7 +225,7 @@ pub fn gpu_work_real(size: usize, device_id: usize) -> Result<()> {
     let n = size;
     let k = size;
 
-    println!("Generating random matrices {}x{}...", size, size);
+    tracing::debug!("Generating random matrices {}x{}...", size, size);
     let mut rng = rand::rng();
     let a_host: Vec<f32> = (0..m * k).map(|_| rng.random()).collect();
     let b_host: Vec<f32> = (0..k * n).map(|_| rng.random()).collect();
@@ -228,13 +236,13 @@ pub fn gpu_work_real(size: usize, device_id: usize) -> Result<()> {
     let copy_stream = dev.new_stream()?;
 
     // B matrix volledig naar GPU — wordt hergebruikt voor alle chunks
-    println!("Copying B matrix to GPU...");
+    tracing::debug!("Copying B matrix to GPU...");
     let start_copy = Instant::now();
     let mut b_dev = stream.alloc_zeros::<f32>(b_host.len())?;
     stream.memcpy_htod(&b_host, &mut b_dev)?;
     let mut c_dev = stream.alloc_zeros::<f32>(c_host.len())?;
     stream.synchronize()?;
-    println!("B copied in {:.2?}", start_copy.elapsed());
+    tracing::debug!("B copied in {:.2?}", start_copy.elapsed());
 
     // Splits A in twee chunks — double buffer
     let num_chunks = 2usize;
@@ -244,7 +252,7 @@ pub fn gpu_work_real(size: usize, device_id: usize) -> Result<()> {
     let mut a_buf_0 = compute_stream.alloc_zeros::<f32>(chunk_rows * k)?;
     let mut a_buf_1 = copy_stream.alloc_zeros::<f32>(chunk_rows * k)?;
 
-    println!("Executing Custom Kernel (double-buffer) on GPU...");
+    tracing::debug!("Executing Custom Kernel (double-buffer) on GPU...");
 
     let wmma_tile = 16u32;
     let warps_x = 4u32;
@@ -329,26 +337,26 @@ pub fn gpu_work_real(size: usize, device_id: usize) -> Result<()> {
 
     let avg_secs = durations.iter().map(|d| d.as_secs_f64()).sum::<f64>() / durations.len() as f64;
     let gflops = (2.0 * m as f64 * n as f64 * k as f64) / (avg_secs * 1e9);
-    println!("GPU COMPUTE FINISHED (Custom Kernel 0.19.0).");
-    println!(
+    tracing::debug!("GPU COMPUTE FINISHED (Custom Kernel 0.19.0).");
+    tracing::debug!(
         "Time (gem. {} runs): {:.2?}",
         durations.len(),
         std::time::Duration::from_secs_f64(avg_secs)
     );
-    println!("Performance: {:.2} GFLOPS", gflops);
+    tracing::debug!("Performance: {:.2} GFLOPS", gflops);
 
-    println!("Copying result back to Host...");
+    tracing::debug!("Copying result back to Host...");
     stream.memcpy_dtoh(&c_dev, &mut c_host)?;
     stream.synchronize()?;
 
-    println!("Sample result C[0]: {}", c_host[0]);
+    tracing::debug!("Sample result C[0]: {}", c_host[0]);
 
     Ok(())
 }
 
 #[cfg(not(feature = "cuda"))]
 pub fn gpu_work_real(size: usize, _device_id: usize) -> Result<()> {
-    println!("[HELHEIM] CUDA feature disabled. Running CPU simulation for gpu_work_real.");
+    tracing::debug!("[HELHEIM] CUDA feature disabled. Running CPU simulation for gpu_work_real.");
     let start = std::time::Instant::now();
     let mut sum = 0.0f32;
     let mut rng = rand::rng();
@@ -357,8 +365,8 @@ pub fn gpu_work_real(size: usize, _device_id: usize) -> Result<()> {
         sum += val * 1.05;
     }
     let duration = start.elapsed();
-    println!("CPU WORK FINISHED. Sum: {}", sum);
-    println!("Time: {:.2?}", duration);
+    tracing::debug!("CPU WORK FINISHED. Sum: {}", sum);
+    tracing::debug!("Time: {:.2?}", duration);
     Ok(())
 }
 
@@ -372,13 +380,13 @@ pub fn gpu_execute_raw_ptx_ids(
     n: usize,
     k: usize,
 ) -> Result<f64> {
-    let dev = CudaContext::new(0)?;
+    let dev = helheim_device()?;
     let stream = dev.default_stream();
 
     let opts = cudarc::nvrtc::CompileOptions {
         options: vec![
             "--use_fast_math".to_string(),
-            "-arch=compute_86".to_string(),
+            "-arch=compute_89".to_string(),
             "-std=c++11".to_string(),
             "-I/usr/local/cuda/include".to_string(),
         ],
@@ -402,7 +410,7 @@ pub fn gpu_execute_raw_ptx_ids(
         helper_src,
         cudarc::nvrtc::CompileOptions {
             options: vec![
-                "-arch=compute_86".to_string(),
+                "-arch=compute_89".to_string(),
                 "-std=c++11".to_string(),
                 "-I/usr/local/cuda/include".to_string(),
             ],
@@ -413,16 +421,13 @@ pub fn gpu_execute_raw_ptx_ids(
     let helper_module = dev.load_module(helper_ptx)?;
     let f_cvt = helper_module.load_function("f32_to_f16")?;
 
-    let mut store = TENSOR_STORE.lock().unwrap();
-    let mut dev_c = store
-        .remove(&id_c)
-        .ok_or_else(|| anyhow::anyhow!("C not found"))?;
-    let dev_a = store
-        .get(&id_a)
-        .ok_or_else(|| anyhow::anyhow!("A not found"))?;
-    let dev_b = store
-        .get(&id_b)
-        .ok_or_else(|| anyhow::anyhow!("B not found"))?;
+    let (dev_a, dev_b, mut dev_c) = {
+        let mut store = TENSOR_STORE.lock().unwrap();
+        let c = store.remove(&id_c).ok_or_else(|| anyhow::anyhow!("C not found"))?;
+        let a = store.remove(&id_a).ok_or_else(|| anyhow::anyhow!("A not found"))?;
+        let b = store.remove(&id_b).ok_or_else(|| anyhow::anyhow!("B not found"))?;
+        (a, b, c)
+    };
 
     // Convert A and B to fp16
     let mut a_half = stream.alloc_zeros::<u16>(m * k)?;
@@ -502,8 +507,13 @@ pub fn gpu_execute_raw_ptx_ids(
     let avg_secs = durations.iter().map(|d| d.as_secs_f64()).sum::<f64>() / durations.len() as f64;
     let gflops = (2.0 * m as f64 * n as f64 * k as f64) / (avg_secs * 1e9);
 
-    // Put dev_c back
-    store.insert(id_c, dev_c);
+    // Put tensors back
+    {
+        let mut store = TENSOR_STORE.lock().unwrap();
+        store.insert(id_a, dev_a);
+        store.insert(id_b, dev_b);
+        store.insert(id_c, dev_c);
+    }
 
     Ok(gflops)
 }
@@ -511,7 +521,7 @@ pub fn gpu_execute_raw_ptx_ids(
 #[cfg(feature = "cuda")]
 pub async fn gpu_execute_hel_block(raw_source: &str) -> Result<()> {
     use colored::*;
-    println!(
+    tracing::debug!(
         "{}",
         "Checking hardware for Hel-modus acceleration...".magenta()
     );
@@ -523,11 +533,11 @@ pub async fn gpu_execute_hel_block(raw_source: &str) -> Result<()> {
         ));
     }
 
-    println!(
+    tracing::debug!(
         "{}",
         "[HEL-MODUS]: JIT Compiling raw C++/PTX via NVRTC...".magenta()
     );
-    let dev = CudaContext::new(0)?;
+    let dev = helheim_device()?;
 
     let ptx = match cudarc::nvrtc::compile_ptx(raw_source) {
         Ok(p) => p,
@@ -536,7 +546,7 @@ pub async fn gpu_execute_hel_block(raw_source: &str) -> Result<()> {
         }
     };
 
-    println!(
+    tracing::debug!(
         "{}",
         "[HEL-MODUS]: Kernel succesvol gecompileerd. Laden in VRAM...".magenta()
     );
@@ -551,7 +561,7 @@ pub async fn gpu_execute_hel_block(raw_source: &str) -> Result<()> {
         }
     };
 
-    println!(
+    tracing::debug!(
         "{}",
         "[HEL-MODUS]: Lanceren van custom kernel (Grid: 4096, Block: 1024, Threads: 4M)..."
             .red()
@@ -576,7 +586,7 @@ pub async fn gpu_execute_hel_block(raw_source: &str) -> Result<()> {
     }
     stream.synchronize()?;
 
-    println!(
+    tracing::debug!(
         "{}",
         "[HEL-MODUS]: ✅ Executie voltooid. Veilig terug in de basis."
             .green()
@@ -599,10 +609,10 @@ pub fn gpu_execute_tensor_add(
     m: usize,
     n: usize,
 ) -> Result<f64> {
-    let dev = CudaContext::new(0)?;
+    let dev = helheim_device()?;
     let stream = dev.default_stream();
     let opts = cudarc::nvrtc::CompileOptions {
-        options: vec!["-arch=compute_86".to_string(), "-std=c++11".to_string()],
+        options: vec!["-arch=compute_89".to_string(), "-std=c++11".to_string()],
         ..Default::default()
     };
     let ptx_res = cudarc::nvrtc::compile_ptx_with_opts(ptx_src, opts).unwrap();
@@ -611,16 +621,13 @@ pub fn gpu_execute_tensor_add(
 
     let elements = m * n;
 
-    let mut store = TENSOR_STORE.lock().unwrap();
-    let mut dev_c = store
-        .remove(&id_c)
-        .ok_or_else(|| anyhow::anyhow!("C not found"))?;
-    let dev_a = store
-        .get(&id_a)
-        .ok_or_else(|| anyhow::anyhow!("A not found"))?;
-    let dev_b = store
-        .get(&id_b)
-        .ok_or_else(|| anyhow::anyhow!("B not found"))?;
+    let (dev_a, dev_b, mut dev_c) = {
+        let mut store = TENSOR_STORE.lock().unwrap();
+        let c = store.remove(&id_c).ok_or_else(|| anyhow::anyhow!("C not found"))?;
+        let a = store.remove(&id_a).ok_or_else(|| anyhow::anyhow!("A not found"))?;
+        let b = store.remove(&id_b).ok_or_else(|| anyhow::anyhow!("B not found"))?;
+        (a, b, c)
+    };
 
     let threads = 256;
     let blocks = (elements as u32).div_ceil(threads);
@@ -647,7 +654,12 @@ pub fn gpu_execute_tensor_add(
     let elapsed = start.elapsed().as_secs_f64();
     let gflops = (elements as f64) / (elapsed * 1e9);
 
-    store.insert(id_c, dev_c);
+    {
+        let mut store = TENSOR_STORE.lock().unwrap();
+        store.insert(id_a, dev_a);
+        store.insert(id_b, dev_b);
+        store.insert(id_c, dev_c);
+    }
     Ok(gflops)
 }
 
@@ -664,10 +676,10 @@ pub fn gpu_execute_tensor_relu(
     m: usize,
     n: usize,
 ) -> Result<f64> {
-    let dev = CudaContext::new(0)?;
+    let dev = helheim_device()?;
     let stream = dev.default_stream();
     let opts = cudarc::nvrtc::CompileOptions {
-        options: vec!["-arch=compute_86".to_string(), "-std=c++11".to_string()],
+        options: vec!["-arch=compute_89".to_string(), "-std=c++11".to_string()],
         ..Default::default()
     };
     let ptx_res = cudarc::nvrtc::compile_ptx_with_opts(ptx_src, opts).unwrap();
@@ -676,13 +688,12 @@ pub fn gpu_execute_tensor_relu(
 
     let elements = m * n;
 
-    let mut store = TENSOR_STORE.lock().unwrap();
-    let mut dev_b = store
-        .remove(&id_b)
-        .ok_or_else(|| anyhow::anyhow!("B not found"))?;
-    let dev_a = store
-        .get(&id_a)
-        .ok_or_else(|| anyhow::anyhow!("A not found"))?;
+    let (dev_a, mut dev_b) = {
+        let mut store = TENSOR_STORE.lock().unwrap();
+        let b = store.remove(&id_b).ok_or_else(|| anyhow::anyhow!("B not found"))?;
+        let a = store.remove(&id_a).ok_or_else(|| anyhow::anyhow!("A not found"))?;
+        (a, b)
+    };
 
     let threads = 256;
     let blocks = (elements as u32).div_ceil(threads);
@@ -705,7 +716,11 @@ pub fn gpu_execute_tensor_relu(
     let elapsed = start.elapsed().as_secs_f64();
     let gflops = (elements as f64) / (elapsed * 1e9);
 
-    store.insert(id_b, dev_b);
+    {
+        let mut store = TENSOR_STORE.lock().unwrap();
+        store.insert(id_a, dev_a);
+        store.insert(id_b, dev_b);
+    }
     Ok(gflops)
 }
 
@@ -723,7 +738,7 @@ pub fn cpu_execute_matmul(
     n: usize,
     k: usize,
 ) -> Result<f64> {
-    let dev = CudaContext::new(0)?;
+    let dev = helheim_device()?;
     let stream = dev.default_stream();
 
     let mut a_host = vec![0.0f32; m * k];
@@ -793,7 +808,7 @@ pub fn cpu_execute_tensor_add(
     m: usize,
     n: usize,
 ) -> Result<f64> {
-    let dev = CudaContext::new(0)?;
+    let dev = helheim_device()?;
     let stream = dev.default_stream();
     let elements = m * n;
 
@@ -876,7 +891,7 @@ fn cpu_matmul_tiled(size: usize) -> f64 {
 }
 
 pub fn inferno_work_real(size: usize, _device_id: usize) -> Result<()> {
-    println!("{}", "[HEAVY]: Asymmetric load balancing (GPU + CPU)".yellow());
+    tracing::debug!("{}", "[HEAVY]: Asymmetric load balancing (GPU + CPU)".yellow());
 
     let gpu_count = match std::process::Command::new("nvidia-smi").arg("-L").output() {
         Ok(out) => String::from_utf8_lossy(&out.stdout).lines().count(),
@@ -884,7 +899,7 @@ pub fn inferno_work_real(size: usize, _device_id: usize) -> Result<()> {
     };
 
     let cpu_threads = rayon::current_num_threads();
-    println!(
+    tracing::debug!(
         "[HEAVY]: {} GPU(s) + {} CPU threads on master node.",
         gpu_count, cpu_threads
     );
@@ -910,7 +925,7 @@ pub fn inferno_work_real(size: usize, _device_id: usize) -> Result<()> {
         .into_par_iter()
         .map(|w| match w {
             Worker::Gpu(id) => {
-                println!(
+                tracing::debug!(
                     "[GPU-{}]: Kernel starten ({}x{})...",
                     id, per_gpu_size, per_gpu_size
                 );
@@ -918,7 +933,7 @@ pub fn inferno_work_real(size: usize, _device_id: usize) -> Result<()> {
                 Ok(format!("GPU-{}", id))
             }
             Worker::Cpu => {
-                println!(
+                tracing::debug!(
                     "{}",
                     format!(
                         "[CPU-{}T]: Tiled matmul starten ({}x{})...",
@@ -927,7 +942,7 @@ pub fn inferno_work_real(size: usize, _device_id: usize) -> Result<()> {
                     .cyan()
                 );
                 let gflops = cpu_matmul_tiled(cpu_size);
-                println!(
+                tracing::debug!(
                     "{}",
                     format!("[CPU]: COMPUTE FINISHED. Prestatie: {:.2} GFLOPS", gflops).cyan()
                 );
@@ -939,7 +954,7 @@ pub fn inferno_work_real(size: usize, _device_id: usize) -> Result<()> {
     let mut had_error = false;
     for res in &results {
         if let Err(e) = res {
-            println!("{}", format!("[ERROR]: {}", e).red());
+            tracing::debug!("{}", format!("[ERROR]: {}", e).red());
             had_error = true;
         }
     }
@@ -951,8 +966,8 @@ pub fn inferno_work_real(size: usize, _device_id: usize) -> Result<()> {
     }
 
     let duration = start_inferno.elapsed();
-    println!("{}", "[HEAVY]: Local multi-device compute complete!".green());
-    println!("[HEAVY]: Total parallel time: {:.2?}", duration);
+    tracing::debug!("{}", "[HEAVY]: Local multi-device compute complete!".green());
+    tracing::debug!("[HEAVY]: Total parallel time: {:.2?}", duration);
 
     let gpu_flops = if gpu_count > 0 {
         (2.0 * per_gpu_size as f64 * per_gpu_size as f64 * per_gpu_size as f64 * gpu_count as f64)
@@ -962,7 +977,7 @@ pub fn inferno_work_real(size: usize, _device_id: usize) -> Result<()> {
     };
     let cpu_flops = (2.0 * cpu_size as f64 * cpu_size as f64 * cpu_size as f64) / 1e9;
     let total_gflops = (gpu_flops + cpu_flops) / duration.as_secs_f64();
-    println!(
+    tracing::debug!(
         "[HEAVY]: Combined performance: {:.2} GFLOPS (GPU + CPU)",
         total_gflops
     );

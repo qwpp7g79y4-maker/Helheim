@@ -1,0 +1,63 @@
+// Helheim Voorbeeld: Actor Supervisor Escalatie
+// Dit script demonstreert hoe child-actors die vastlopen, netjes hun falen escaleren 
+// naar hun parents, en hoe de parent_id door de boom heen doorgegeven wordt.
+
+zet script_start = roep_aan systeem.tijd;
+
+perform Trace.record(0, 0, 100); // 0 = GenericLog
+
+// 3-level demo per G1 sprint 3.1
+// De Grandparent Actor (Bovenste laag)
+perform Actor.spawn("{
+    zet grandparent_id = self;
+    perform Trace.record(0, grandparent_id, 101); // 0 = GenericLog
+    
+    // De Parent Actor (Midden laag)
+    // De strategie \"Escalate\" betekent dat een crash wordt gestuurd naar grandparent
+    perform Actor.spawn(\"{
+        zet parent_id = self;
+        perform Trace.record(0, parent_id, 102); // 0 = GenericLog
+        
+        // De Child Actor (Onderste laag)
+        // De strategie \"Escalate\" betekent dat een crash wordt gestuurd naar parent
+        perform Actor.spawn(\\\"{
+            zet child_id = self;
+            perform Trace.record(0, child_id, 103); // 0 = GenericLog
+            
+            // Simuleer een fatale fout in de child
+            gooi \\\\\\\"OnverwachteChildFout\\\\\\\";
+        }\\\", \\\"Escalate\\\");
+        
+        // Parent wacht totdat de child faalt en een bericht stuurt
+        ontvang bericht {
+            als roep_aan tekst.bevat bericht \\\"ESCALATION_ERROR\\\" dan {
+                perform Trace.record(0, parent_id, 202); // 0 = GenericLog
+                
+                // Om dit verder te escaleren, crashen we de parent ook
+                gooi \\\"ParentIsOokMislukt\\\";
+            }
+        }
+    }\", \"Escalate\");
+    
+    // Grandparent wacht op de escalatie van de parent
+    ontvang bericht {
+        als roep_aan tekst.bevat bericht \"ESCALATION_ERROR\" dan {
+            als roep_aan tekst.bevat bericht \"ParentIsOokMislukt\" dan {
+                perform Trace.record(0, grandparent_id, 201); // 0 = GenericLog
+                
+                // Herstel logica of verdere verwerking
+                roep_aan bestand.schrijf \"escalatie_succes.txt\" \"De boom heeft zijn integriteit behouden!\";
+            }
+        }
+    }
+}");
+
+// Wacht even zodat de achtergrond actors de tijd hebben om hun werk te doen
+roep_aan wacht 2;
+
+zet resultaat = roep_aan bestand.lees "escalatie_succes.txt";
+als resultaat != "null" dan {
+    roep_aan print "Test geslaagd: " + resultaat;
+} anders {
+    roep_aan print "Test mislukt: escalatie pad werkte niet zoals verwacht.";
+}

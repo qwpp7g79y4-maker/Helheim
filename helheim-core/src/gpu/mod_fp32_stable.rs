@@ -49,14 +49,14 @@ extern "C" __global__ void matmul(int m, int n, int k, float alpha, const float*
 "#;
 
 pub fn gpu_work_real(size: usize, device_id: usize) -> Result<()> {
-    println!("Checking hardware for GPU acceleration (Bare Metal Check)...");
+    tracing::debug!("Checking hardware for GPU acceleration (Bare Metal Check)...");
     let has_nvidia = std::process::Command::new("nvidia-smi").output().is_ok();
     
     if !has_nvidia {
-        println!("{}", "[FALLBACK]: No Nvidia GPU detected! Falling back to Native Multi-Core CPU execution.".yellow().bold());
+        tracing::debug!("{}", "[FALLBACK]: No Nvidia GPU detected! Falling back to Native Multi-Core CPU execution.".yellow().bold());
         let start_cpu = Instant::now();
         
-        println!("Generating and computing matrix {}x{} purely on CPU...", size, size);
+        tracing::debug!("Generating and computing matrix {}x{} purely on CPU...", size, size);
         let mut sum = 0.0f32;
         let mut rng = rand::rng();
         // Simulated CPU load
@@ -70,19 +70,19 @@ pub fn gpu_work_real(size: usize, device_id: usize) -> Result<()> {
         let m = size; let n = size; let k = size;
         let gflops = ((2.0 * m as f64 * n as f64 * k as f64) / 1e9) * 0.001; // Scale down for CPU
         
-        println!("CPU COMPUTE FINISHED. (Sum: {})", sum);
-        println!("Time: {:.2?}", duration);
-        println!("Performance: {:.2} GFLOPS (CPU Fallback)", gflops);
+        tracing::debug!("CPU COMPUTE FINISHED. (Sum: {})", sum);
+        tracing::debug!("Time: {:.2?}", duration);
+        tracing::debug!("Performance: {:.2} GFLOPS (CPU Fallback)", gflops);
         return Ok(());
     }
 
-    println!("Initializing CUDA Context for GPU {}...", device_id);
+    tracing::debug!("Initializing CUDA Context for GPU {}...", device_id);
     let start_init = Instant::now();
     let dev = CudaContext::new(device_id)?;
     let stream = dev.default_stream();
-    println!("CUDA initialized in {:.2?}", start_init.elapsed());
+    tracing::debug!("CUDA initialized in {:.2?}", start_init.elapsed());
 
-    println!("Compiling MatMul Kernel (NVRTC)...");
+    tracing::debug!("Compiling MatMul Kernel (NVRTC)...");
     let ptx_res = compile_ptx(PTX_SRC).expect("Failed to compile PTX");
     let module = dev.load_module(ptx_res)?;
     let f = module.load_function("matmul")?;
@@ -91,13 +91,13 @@ pub fn gpu_work_real(size: usize, device_id: usize) -> Result<()> {
     let n = size;
     let k = size;
 
-    println!("Generating random matrices {}x{}...", size, size);
+    tracing::debug!("Generating random matrices {}x{}...", size, size);
     let mut rng = rand::rng();
     let a_host: Vec<f32> = (0..m * k).map(|_| rng.random()).collect();
     let b_host: Vec<f32> = (0..k * n).map(|_| rng.random()).collect();
     let mut c_host: Vec<f32> = vec![0.0; m * n];
 
-    println!("Copying data to GPU...");
+    tracing::debug!("Copying data to GPU...");
     let start_copy = Instant::now();
 
     let mut a_dev = stream.alloc_zeros::<f32>(a_host.len())?;
@@ -109,9 +109,9 @@ pub fn gpu_work_real(size: usize, device_id: usize) -> Result<()> {
     let mut c_dev = stream.alloc_zeros::<f32>(c_host.len())?;
 
     stream.synchronize()?;
-    println!("Data copied in {:.2?}", start_copy.elapsed());
+    tracing::debug!("Data copied in {:.2?}", start_copy.elapsed());
 
-    println!("Executing Custom Kernel on GPU...");
+    tracing::debug!("Executing Custom Kernel on GPU...");
 
     let block_size = 32;
     let grid_x = (n as u32 + block_size - 1) / block_size;
@@ -151,21 +151,24 @@ pub fn gpu_work_real(size: usize, device_id: usize) -> Result<()> {
 
     let avg_secs = durations.iter().map(|d| d.as_secs_f64()).sum::<f64>() / durations.len() as f64;
     let gflops = (2.0 * m as f64 * n as f64 * k as f64) / (avg_secs * 1e9);
-    println!("GPU COMPUTE FINISHED (Custom Kernel 0.19.0).");
-    println!("Time (gem. {} runs): {:.2?}", durations.len(), std::time::Duration::from_secs_f64(avg_secs));
-    println!("Performance: {:.2} GFLOPS", gflops);
+    tracing::debug!("GPU COMPUTE FINISHED (Custom Kernel 0.19.0).");
+    tracing::debug!("Time (gem. {} runs): {:.2?}", durations.len(), std::time::Duration::from_secs_f64(avg_secs));
+    tracing::debug!("Performance: {:.2} GFLOPS", gflops);
 
-    println!("Copying result back to Host...");
+    tracing::debug!("Copying result back to Host...");
     stream.memcpy_dtoh(&c_dev, &mut c_host)?;
     stream.synchronize()?;
 
-    println!("Sample result C[0]: {}", c_host[0]);
+    tracing::debug!("Sample result C[0]: {}", c_host[0]);
 
     Ok(())
 }
 
 pub fn gpu_execute_raw_ptx(ptx_src: &str) -> Result<f64> {
-    let dev = CudaContext::new(0)?;
+    let device_id: usize = std::env::var("HELHEIM_GPU_DEVICE")
+        .ok().and_then(|v| v.parse().ok())
+        .unwrap_or(1);
+    let dev = CudaContext::new(device_id)?;
     let stream = dev.default_stream();
 
     // In a real scenario, this might be a generic kernel, but for this benchmark we assume a matmul-compatible signature
@@ -234,7 +237,7 @@ pub fn gpu_execute_raw_ptx(ptx_src: &str) -> Result<f64> {
 }
 
 pub fn inferno_work_real(size: usize, _device_id: usize) -> Result<()> {
-    println!("{}", "[HEAVY]: Multi-GPU load balancing...".yellow());
+    tracing::debug!("{}", "[HEAVY]: Multi-GPU load balancing...".yellow());
     
     // Check available GPUs via Native OS Layer
     let gpu_count = match std::process::Command::new("nvidia-smi").arg("-L").output() {
@@ -243,11 +246,11 @@ pub fn inferno_work_real(size: usize, _device_id: usize) -> Result<()> {
     };
     
     if gpu_count == 0 {
-        println!("{}", "[HEAVY]: No GPUs, falling back to CPU.".yellow());
+        tracing::debug!("{}", "[HEAVY]: No GPUs, falling back to CPU.".yellow());
         return gpu_work_real(size, 0); // gpu_work_real triggers CPU math ifnvidia-smi fails
     }
 
-    println!("[HEAVY]: {} active CUDA device(s). Splitting workload...", gpu_count);
+    tracing::debug!("[HEAVY]: {} active CUDA device(s). Splitting workload...", gpu_count);
     
     // Split the node's payload evenly across all local GPUs (3060 and 5060 simultaneously)
     let per_gpu_size = size / (gpu_count as usize);
@@ -257,14 +260,14 @@ pub fn inferno_work_real(size: usize, _device_id: usize) -> Result<()> {
     let gpu_ids: Vec<usize> = (0..gpu_count as usize).collect();
     
     let results: Vec<Result<()>> = gpu_ids.into_par_iter().map(|id| {
-        println!("[THREAD-{}]: Spin up kernel for size {}...", id, per_gpu_size);
+        tracing::debug!("[THREAD-{}]: Spin up kernel for size {}...", id, per_gpu_size);
         gpu_work_real(per_gpu_size, id)
     }).collect();
 
     let mut had_error = false;
     for (i, res) in results.iter().enumerate() {
         if let Err(e) = res {
-             println!("{}", format!("[ERROR-GPU-{}]: Lokale Cuda Fout opgetreden: {}", i, e).red());
+             tracing::debug!("{}", format!("[ERROR-GPU-{}]: Lokale Cuda Fout opgetreden: {}", i, e).red());
              had_error = true;
         }
     }
@@ -274,13 +277,13 @@ pub fn inferno_work_real(size: usize, _device_id: usize) -> Result<()> {
     }
 
     let duration = start_inferno.elapsed();
-    println!("{}", format!("[HEAVY]: Local multi-GPU compute complete!").green());
-    println!("[HEAVY]: Total parallel time: {:.2?}", duration);
+    tracing::debug!("{}", format!("[HEAVY]: Local multi-GPU compute complete!").green());
+    tracing::debug!("[HEAVY]: Total parallel time: {:.2?}", duration);
     
     // Calculate final GFLOPS (All GPU's combined payload)
     let m = per_gpu_size; let n = m; let k = m;
     let gflops = ((2.0 * m as f64 * n as f64 * k as f64 * (gpu_count as f64)) / duration.as_secs_f64()) / 1e9;
-    println!("[HEAVY]: Local performance: {:.2} GFLOPS", gflops);
+    tracing::debug!("[HEAVY]: Local performance: {:.2} GFLOPS", gflops);
     
     Ok(())
 }

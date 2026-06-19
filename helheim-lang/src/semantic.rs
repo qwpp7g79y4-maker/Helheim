@@ -95,6 +95,13 @@ impl SymbolTable {
         Ok(())
     }
 
+    pub fn register_qualified(&mut self, ns: &str, name: &str, ty: TypeInfo) -> Result<(), SemanticError> {
+        let qualified_name = format!("{}::{}", ns, name);
+        let current_scope = self.scopes.first_mut().unwrap(); // Namespaces always go to global scope
+        current_scope.insert(qualified_name.clone(), SymbolInfo { name: qualified_name, ty });
+        Ok(())
+    }
+
     pub fn resolve(&self, name: &str) -> Option<&SymbolInfo> {
         for scope in self.scopes.iter().rev() {
             if let Some(info) = scope.get(name) {
@@ -107,25 +114,28 @@ impl SymbolTable {
 
 pub struct SemanticAnalyzer {
     symbols: SymbolTable,
+    current_module: Option<String>,
 }
 
 impl SemanticAnalyzer {
     pub fn new() -> Self {
         Self {
             symbols: SymbolTable::new(),
+            current_module: None,
         }
     }
 
     pub fn analyze(ast: &mut Vec<CodeTaal>) -> Result<(), SemanticError> {
         let mut analyzer = Self::new();
-        for node in ast {
+        for node in ast.iter_mut() {
             analyzer.visit(node)?;
         }
         Ok(())
     }
 
-    fn visit(&mut self, node: &CodeTaal) -> Result<TypeInfo, SemanticError> {
+    fn visit(&mut self, node: &mut CodeTaal) -> Result<TypeInfo, SemanticError> {
         match node {
+            CodeTaal::LocationMarker { .. } => Ok(TypeInfo::Void),
             CodeTaal::Literal(val) => {
                 match val {
                     crate::ast::LiteralValue::Int(_) => Ok(TypeInfo::Int),
@@ -133,7 +143,19 @@ impl SemanticAnalyzer {
                     crate::ast::LiteralValue::String(_) => Ok(TypeInfo::String),
                     crate::ast::LiteralValue::Bool(_) => Ok(TypeInfo::Bool),
                     crate::ast::LiteralValue::List(_) => Ok(TypeInfo::List),
+                    crate::ast::LiteralValue::Bytes(_) => Ok(TypeInfo::List), // bytes as byte-buffer (list-like for now)
+                    crate::ast::LiteralValue::Pointer(_) => Ok(TypeInfo::Int), // pointer as integer addr
+                    crate::ast::LiteralValue::Void => Ok(TypeInfo::Void),
                 }
+            }
+            CodeTaal::Module { name, body } => {
+                let prev = self.current_module.take();
+                self.current_module = Some(name.clone());
+                for stmt in body.iter_mut() {
+                    self.visit(stmt)?;
+                }
+                self.current_module = prev;
+                Ok(TypeInfo::Void)
             }
             CodeTaal::VarDef { name, value } => {
                 let ty = self.visit(value)?;
@@ -141,6 +163,12 @@ impl SemanticAnalyzer {
                 Ok(TypeInfo::Void)
             }
             CodeTaal::VarGet { name } => {
+                if name == "waar" || name == "onwaar" || name == "true" || name == "false" {
+                    return Ok(TypeInfo::Bool);
+                }
+                if name == "null" {
+                    return Ok(TypeInfo::Void);
+                }
                 if let Some(info) = self.symbols.resolve(name) {
                     Ok(info.ty.clone())
                 } else {
@@ -195,8 +223,13 @@ impl SemanticAnalyzer {
                 self.symbols.exit_scope();
                 Ok(TypeInfo::Void)
             }
-            CodeTaal::FunctionDef { name, params, body } => {
-                self.symbols.define(name, TypeInfo::Function { arity: params.len() })?;
+            CodeTaal::FunctionDef { name, is_pub: _, params, body } => {
+                let ty = TypeInfo::Function { arity: params.len() };
+                if let Some(ns) = &self.current_module {
+                    self.symbols.register_qualified(ns, name, ty)?;
+                } else {
+                    self.symbols.define(name, ty)?;
+                }
                 
                 self.symbols.enter_scope();
                 for param in params {
@@ -207,10 +240,24 @@ impl SemanticAnalyzer {
                 Ok(TypeInfo::Void)
             }
             CodeTaal::FunctionCall { name, args } => {
-                for arg in args {
+                for arg in args.iter_mut() {
                     self.visit(arg)?;
                 }
+                // Try fully qualified resolution first
+                let mut resolved_info = None;
+                
                 if let Some(info) = self.symbols.resolve(name) {
+                    resolved_info = Some(info.clone());
+                } else if let Some(ns) = &self.current_module {
+                    // It might be a module function that was just called as `get()` instead of `http::get()`
+                    let qual_name = format!("{}::{}", ns, name);
+                    if let Some(info) = self.symbols.resolve(&qual_name) {
+                        resolved_info = Some(info.clone());
+                        *name = qual_name; // Modify AST in-place! No runtime string hack!
+                    }
+                }
+
+                if let Some(info) = resolved_info {
                     if let TypeInfo::Function { arity } = info.ty {
                         if args.len() != arity {
                             return Err(SemanticError::ArityMismatch { name: name.clone(), expected: arity, found: args.len() });
@@ -267,14 +314,6 @@ impl SemanticAnalyzer {
                 }
                 Ok(TypeInfo::Void)
             }
-            CodeTaal::Concurrent { statements } => {
-                self.symbols.enter_scope();
-                for stmt in statements {
-                    self.visit(stmt)?;
-                }
-                self.symbols.exit_scope();
-                Ok(TypeInfo::Void)
-            }
             CodeTaal::Daemon { body } => {
                 self.symbols.enter_scope();
                 self.visit(body)?;
@@ -295,7 +334,11 @@ impl SemanticAnalyzer {
                 Ok(TypeInfo::Void)
             }
             CodeTaal::GpuKernel(kernel) => {
-                self.symbols.define(&kernel.name, TypeInfo::Unknown)?;
+                if let Some(ns) = &self.current_module {
+                    self.symbols.register_qualified(ns, &kernel.name, TypeInfo::Unknown)?;
+                } else {
+                    self.symbols.define(&kernel.name, TypeInfo::Unknown)?;
+                }
                 self.symbols.enter_scope();
                 for param in &kernel.params {
                     let p_ty = match &param.ty {
@@ -305,7 +348,7 @@ impl SemanticAnalyzer {
                     };
                     self.symbols.define(&param.name, p_ty)?;
                 }
-                self.visit(&kernel.body)?;
+                self.visit(&mut *kernel.body)?;
                 self.symbols.exit_scope();
                 Ok(TypeInfo::Void)
             }
@@ -346,6 +389,17 @@ impl SemanticAnalyzer {
                 }
                 Ok(TypeInfo::Void)
             }
+            CodeTaal::ModelDef { name, fields: _ } => {
+                if let Some(ns) = &self.current_module {
+                    self.symbols.register_qualified(ns, name, TypeInfo::Unknown)?;
+                } else {
+                    self.symbols.define(name, TypeInfo::Unknown)?;
+                }
+                Ok(TypeInfo::Void)
+            }
+            CodeTaal::ModelInit { model_name: _, args: _ } => {
+                Ok(TypeInfo::Unknown)
+            }
             CodeTaal::HttpOp { url, .. } => {
                 // Haal/fetch: altijd String resultaat (response body)
                 let _ = self.visit(url)?;
@@ -367,6 +421,63 @@ impl SemanticAnalyzer {
             }
             CodeTaal::Send { .. } | CodeTaal::SysOp { .. } | CodeTaal::Encrypt { .. } | CodeTaal::Gebruik { .. } | CodeTaal::RuneOp { .. } => {
                 Ok(TypeInfo::Void)
+            }
+            CodeTaal::EffectDef { name, operations: _ } => {
+                if let Some(ns) = &self.current_module {
+                    self.symbols.register_qualified(ns, name, TypeInfo::Unknown)?;
+                } else {
+                    self.symbols.define(name, TypeInfo::Unknown)?;
+                }
+                Ok(TypeInfo::Void)
+            }
+            CodeTaal::Perform { effect, operation: _, args } => {
+                for arg in args.iter_mut() {
+                    self.visit(arg)?;
+                }
+                
+                if self.symbols.resolve(effect).is_none() {
+                    if let Some(ns) = &self.current_module {
+                        let qual_name = format!("{}::{}", ns, effect);
+                        if self.symbols.resolve(&qual_name).is_some() {
+                            *effect = qual_name; // Modify AST in-place
+                        }
+                    }
+                }
+                Ok(TypeInfo::Unknown)
+            }
+            CodeTaal::Handle { effect, handlers, body } => {
+                if self.symbols.resolve(effect).is_none() {
+                    if let Some(ns) = &self.current_module {
+                        let qual_name = format!("{}::{}", ns, effect);
+                        if self.symbols.resolve(&qual_name).is_some() {
+                            *effect = qual_name; // Modify AST in-place
+                        }
+                    }
+                }
+                
+                self.symbols.enter_scope();
+                for (_, h_body) in handlers.iter_mut() {
+                    self.symbols.enter_scope();
+                    self.symbols.define("arg1", TypeInfo::Unknown)?;
+                    self.symbols.define("arg2", TypeInfo::Unknown)?;
+                    self.symbols.define("arg3", TypeInfo::Unknown)?;
+                    self.symbols.define("arg4", TypeInfo::Unknown)?;
+                    self.symbols.define("arg5", TypeInfo::Unknown)?;
+                    self.visit(h_body)?;
+                    self.symbols.exit_scope();
+                }
+                let ret_ty = self.visit(body)?;
+                self.symbols.exit_scope();
+                Ok(ret_ty)
+            }
+            CodeTaal::Resume { continuation, value } => {
+                self.visit(continuation)?;
+                self.visit(value)?;
+                Ok(TypeInfo::Void)
+            }
+            CodeTaal::LinearResource { kind: _, id } => {
+                self.visit(id)?;
+                Ok(TypeInfo::Unknown)
             }
             _ => {
                 Ok(TypeInfo::Unknown)

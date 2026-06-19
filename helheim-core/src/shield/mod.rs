@@ -34,42 +34,104 @@ impl HelheimShield {
         STANDARD.encode(&obfuscated)
     }
 
-    /// HSP: Helheim Secure Protocol Encryption (Reversible)
-    /// Wraps payload in a Noise Shell.
-    pub fn encrypt_packet(input: &str) -> String {
+
+
+    /// HSP: Helheim Secure Protocol Encryption (ChaCha20-Poly1305 AEAD) with specific session key
+    pub fn encrypt_packet_with_key(input: &str, key: &[u8; 32]) -> String {
+        use ring::aead::{Aad, BoundKey, Nonce, NonceSequence, SealingKey, UnboundKey, CHACHA20_POLY1305};
         let mut rng = rand::rng();
-        let raw_bytes = input.as_bytes();
-        let mut buffer = Vec::with_capacity(raw_bytes.len() + 1);
+        let mut nonce_bytes = [0u8; 12];
+        rng.fill(&mut nonce_bytes);
+        
+        let unbound_key = UnboundKey::new(&CHACHA20_POLY1305, key)
+            .expect("ChaCha20 key init: key is exactly 32 bytes by type");
 
-        let key: u8 = rng.random_range(1..255);
-        buffer.push(key); // Header: [KEY]
-
-        for (i, &b) in raw_bytes.iter().enumerate() {
-            // Cipher: Byte XOR Key XOR PositionRotator
-            let cipher_byte = b ^ key ^ (i as u8 % 11);
-            buffer.push(cipher_byte);
+        struct OneNonceSequence(Option<Nonce>);
+        impl NonceSequence for OneNonceSequence {
+            fn advance(&mut self) -> Result<Nonce, ring::error::Unspecified> {
+                self.0.take().ok_or(ring::error::Unspecified)
+            }
         }
 
-        STANDARD.encode(&buffer)
+        let nonce = Nonce::try_assume_unique_for_key(&nonce_bytes)
+            .expect("ChaCha20 nonce init: nonce is exactly 12 bytes by type");
+        let mut sealing_key = SealingKey::new(unbound_key, OneNonceSequence(Some(nonce)));
+
+        let mut in_out = input.as_bytes().to_vec();
+        sealing_key.seal_in_place_append_tag(Aad::empty(), &mut in_out)
+            .expect("ChaCha20 seal: fresh nonce sequence cannot be exhausted");
+        
+        let mut result = nonce_bytes.to_vec();
+        result.extend(in_out);
+        STANDARD.encode(&result)
     }
 
-    /// HSP: De-Noise & Decrypt
-    pub fn decrypt_packet(input: &str) -> anyhow::Result<String> {
+    /// HSP: De-Noise & Decrypt (ChaCha20-Poly1305 AEAD) with specific session key
+    pub fn decrypt_packet_with_key(input: &str, key: &[u8; 32]) -> anyhow::Result<String> {
+        use ring::aead::{Aad, BoundKey, Nonce, NonceSequence, OpeningKey, UnboundKey, CHACHA20_POLY1305};
         let decoded = STANDARD.decode(input)?;
-        if decoded.is_empty() {
-            return Err(anyhow::anyhow!("Empty Packet"));
+        if decoded.len() < 12 + CHACHA20_POLY1305.tag_len() {
+            return Err(anyhow::anyhow!("Packet too short"));
         }
+        
+        let nonce_bytes: [u8; 12] = decoded[0..12].try_into()
+            .map_err(|_| anyhow::anyhow!("Malformed packet: nonce slice wrong size"))?;
+        let mut in_out = decoded[12..].to_vec();
 
-        let key = decoded[0];
-        let payload = &decoded[1..];
-        let mut decrypted = Vec::with_capacity(payload.len());
-
-        for (i, &b) in payload.iter().enumerate() {
-            let plain_byte = b ^ key ^ (i as u8 % 11);
-            decrypted.push(plain_byte);
+        let unbound_key = UnboundKey::new(&CHACHA20_POLY1305, key)
+            .map_err(|_| anyhow::anyhow!("ChaCha20 key init failed: invalid key size"))?;
+        struct OneNonceSequence(Option<Nonce>);
+        impl NonceSequence for OneNonceSequence {
+            fn advance(&mut self) -> Result<Nonce, ring::error::Unspecified> {
+                self.0.take().ok_or(ring::error::Unspecified)
+            }
         }
+        let nonce = Nonce::try_assume_unique_for_key(&nonce_bytes)
+            .map_err(|_| anyhow::anyhow!("ChaCha20 nonce init failed: invalid nonce size"))?;
+        let mut opening_key = OpeningKey::new(unbound_key, OneNonceSequence(Some(nonce)));
+        
+        let decrypted_data = opening_key.open_in_place(Aad::empty(), &mut in_out)
+            .map_err(|_| anyhow::anyhow!("Decryption failed"))?;
+            
+        Ok(String::from_utf8(decrypted_data.to_vec())?)
+    }
+}
 
-        Ok(String::from_utf8(decrypted)?)
+pub struct EcdhSession {
+    pub private_key: Option<ring::agreement::EphemeralPrivateKey>,
+    pub public_key: Vec<u8>,
+}
+
+impl EcdhSession {
+    pub fn new() -> Self {
+        use ring::agreement;
+        use ring::rand::SystemRandom;
+        let rng = SystemRandom::new();
+        let private_key = agreement::EphemeralPrivateKey::generate(&agreement::X25519, &rng)
+            .expect("ECDH keygen: OS RNG unavailable");
+        let mut public_key = vec![0u8; 32];
+        public_key.copy_from_slice(private_key.compute_public_key()
+            .expect("ECDH pubkey: X25519 compute_public_key is infallible").as_ref());
+        Self { private_key: Some(private_key), public_key }
+    }
+
+    pub fn derive_shared_key(&mut self, peer_pub_key: &[u8]) -> anyhow::Result<[u8; 32]> {
+        use ring::agreement;
+        let peer_pub = agreement::UnparsedPublicKey::new(&agreement::X25519, peer_pub_key);
+        let priv_key = self.private_key.take().ok_or_else(|| anyhow::anyhow!("Session al gebruikt!"))?;
+        
+        agreement::agree_ephemeral(priv_key, &peer_pub, |key_material| {
+            use ring::hkdf;
+            let salt = hkdf::Salt::new(hkdf::HKDF_SHA256, b"HelheimSwarmHandshake");
+            let prk = salt.extract(key_material);
+            let info = [b"session_key".as_ref()];
+            let okm = prk.expand(&info, hkdf::HKDF_SHA256)
+                .expect("HKDF expand: known-good output length");
+            let mut derived = [0u8; 32];
+            okm.fill(&mut derived)
+                .expect("HKDF fill: output length matches HKDF_SHA256 constraint");
+            derived
+        }).map_err(|_| anyhow::anyhow!("ECDH Agreement failed"))
     }
 }
 

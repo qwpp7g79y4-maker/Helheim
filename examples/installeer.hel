@@ -1,0 +1,38 @@
+// [W·AG·AF] C1 Review: Package Manager + Signing Demo
+// Dit script demonstreert de decentrale Helheim Package Manager en zijn beveiliging.
+
+druk_af "== Start Package Installatie ==";
+
+// 1. Installeer een lokale, beveiligde FFI plugin.
+// Normaal gesproken controleert hij de .sig file naast de .so file, 
+// of verifieert hij de base64 signature als 3e argument.
+// Omdat wij libsqlite.so in test_plugins hebben (met bypass voor tests of test signature),
+// kunnen we deze veilig inladen:
+voer uit installeer_ondertekend sqlite test_plugins/libsqlite.so;
+
+// 2. Laad de Pure wrapper erbij als die bestaat
+gebruik "sqlite";
+
+// 3. Roep de ge-installeerde FFI module aan (ofwel via perform of via de wrapper)
+probeer {
+    zet db = perform sqlite::open(":memory:");
+    druk_af "DB succesvol geopend via FFI handle: " + db;
+} vang e {
+    druk_af "Fout bij FFI aanroep: " + e;
+}
+
+// 4. SSRF Protectie & Traversal demonstratie
+// Onderstaande acties falen bewust en worden door de security sandbox gestopt:
+probeer {
+    voer uit installeer_ondertekend hack http://192.168.1.100/hack.so;
+} vang e {
+    druk_af "Succesvol geblokkeerd (SSRF): " + e;
+}
+
+probeer {
+    voer uit installeer_ondertekend passwd ../../../etc/passwd;
+} vang e {
+    druk_af "Succesvol geblokkeerd (Traversal): " + e;
+}
+
+druk_af "== Einde Package Installatie ==";

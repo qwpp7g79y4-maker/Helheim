@@ -1,0 +1,56 @@
+// webserver_demo.hel
+// Helheim HTTP Web Server met effect handlers en actors
+
+gebruik "stdlib/pure/net.hel" als Net;
+gebruik "stdlib/pure/http.hel" als Http;
+
+print "🚀 Starten van de Helheim Web Server op poort 8080...";
+
+// Top-level Effect Dispatcher: alle netwerk effecten afgevangen
+handle Net {
+    luister => {
+        let poort = arg1;
+        geef_terug Net::luister_start(poort);
+    },
+    accepteer => {
+        let listener = arg1;
+        geef_terug Net::accepteer_verbinding(listener);
+    },
+    ontvang => {
+        let socket = arg1;
+        geef_terug Net::lees_data(socket, 1024);
+    },
+    stuur => {
+        let socket = arg1;
+        let data = arg2;
+        Net::verzend_data(socket, data);
+        geef_terug "ok";
+    },
+    sluit => {
+        let socket = arg1;
+        Net::sluit_verbinding(socket);
+        geef_terug "ok";
+    }
+} in {
+    // Echte native perform syntax, afgehandeld in de executor
+    let listener = perform Net.luister(8080);
+    print "✅ Luisteren op 127.0.0.1:8080";
+
+    zolang waar {
+        let socket = perform Net.accepteer(listener);
+        print "📥 Nieuwe verbinding geaccepteerd!";
+
+        spawn {
+            let raw_req = perform Net.ontvang(socket);
+            
+            let req = Http::parse_request(raw_req);
+            let res = Http::response_ok("Hallo Helheim! Geleverd via native top-level effect dispatchers.");
+            
+            perform Net.stuur(socket, res);
+            print "✉️ Response gestuurd naar client.";
+            
+            perform Net.sluit(socket);
+            print "🔌 Verbinding gesloten.";
+        }
+    }
+}

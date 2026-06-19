@@ -22,6 +22,15 @@ async fn main() -> Result<()> {
     // 3. Ignite Core Components
     let discovery = Arc::new(DiscoveryService::new());
     let orchestrator = Arc::new(Orchestrator::new(discovery.clone()));
+    
+    if std::env::var("HELHEIM_TRACE").is_ok() {
+        helheim_core::orchestra::flight_recorder::enable();
+        orchestrator.executor.start_flight_recorder(cfg!(feature = "cuda"), None);
+    }
+    
+    if let Err(e) = orchestrator.bootstrap().await {
+        println!("[SYSTEM]: Warning: StdLib bootstrap failed: {}", e);
+    }
 
     match cli.command {
         Commands::Service { port } => {
@@ -122,8 +131,30 @@ async fn main() -> Result<()> {
                         }
                         if final_input.eq_ignore_ascii_case("help") {
                             print_help();
+                            println!("Extra: rollback N | terug N | undo N  (time-travel state)");
                             continue;
                         }
+
+                        // Time-Travel REPL (Vraag 5)
+                        let lower = final_input.to_lowercase();
+                        if lower.starts_with("rollback ") || lower.starts_with("terug ") || lower.starts_with("undo ") {
+                            let parts: Vec<&str> = final_input.split_whitespace().collect();
+                            if parts.len() > 1 {
+                                if let Ok(steps) = parts[1].parse::<usize>() {
+                                    if orchestrator.rollback(steps) {
+                                        println!("Rolled back {} step(s).", steps);
+                                    } else {
+                                        println!("Cannot rollback that many steps (history too short or 0).");
+                                    }
+                                    continue;
+                                }
+                            }
+                            println!("Usage: rollback <steps> | terug <stappen> | undo <steps>");
+                            continue;
+                        }
+
+                        // Take snapshot BEFORE executing the command so rollback can undo it
+                        orchestrator.snapshot();
 
                         // Orchestrator Execution
                         let ctx = helheim_core::common::context::ExecutionContext::default_privileged();
@@ -169,11 +200,17 @@ async fn main() -> Result<()> {
                         Ok(mut linked_ast) => {
                             if let Err(e) = helheim_core::orchestra::semantic::SemanticAnalyzer::analyze(&mut linked_ast) {
                                 println!("{}", e);
-                                return Ok(());
+                                return Err(anyhow::anyhow!("Semantic Analysis Failed: {}", e));
                             }
                             let ctx = helheim_core::common::context::ExecutionContext::default_privileged();
                             if let Err(e) = orchestrator.execute_ast(linked_ast, ctx).await {
-                                println!("[ERROR]: Runtime Error: {}", e);
+                                let line = orchestrator.memory.resolve_value("__LAST_ERR_LINE__");
+                                let col = orchestrator.memory.resolve_value("__LAST_ERR_COL__");
+                                if !line.is_empty() && !col.is_empty() {
+                                    println!("{}", format!("[ERROR at {}:{}]: {}", line, col, e).red().bold());
+                                } else {
+                                    println!("{}", format!("[ERROR]: Runtime Error: {}", e).red().bold());
+                                }
                             }
                         },
                         Err(e) => println!("[ERROR]: Linker Error: {}", e),
@@ -205,7 +242,7 @@ async fn main() -> Result<()> {
                         Ok(mut linked_ast) => {
                             if let Err(e) = helheim_core::orchestra::semantic::SemanticAnalyzer::analyze(&mut linked_ast) {
                                 println!("{}", format!("[COMPILER ERROR]: Semantic Analysis Failed: {}", e).red().bold());
-                                return Ok(());
+                                return Err(anyhow::anyhow!("Semantic Analysis Failed: {}", e));
                             }
                             
                             // PTX Lowering
@@ -228,6 +265,15 @@ async fn main() -> Result<()> {
                     }
                 },
                 Err(e) => println!("{}", format!("❌ [PARSE ERROR]: {}", e).red().bold()),
+            }
+        }
+        Commands::ResumeContinuation { file, value } => {
+            println!("{}", format!("[RESUME]: Hervat continuation uit {} met waarde '{}'...", file, value).yellow().bold());
+            let ctx = helheim_core::common::context::ExecutionContext::default_privileged();
+            match orchestrator.resume_continuation_from_file(&file, &value, ctx).await {
+                Ok(Some(res)) => println!("{}", format!("✅ [SUCCESS]: Resultaat = {}", res).green().bold()),
+                Ok(None) => println!("{}", "✅ [SUCCESS]: Uitvoering voltooid zonder return waarde.".green().bold()),
+                Err(e) => println!("{}", format!("❌ [RESUME ERROR]: {}", e).red().bold()),
             }
         }
 
@@ -278,7 +324,46 @@ async fn main() -> Result<()> {
             println!("{}", "🚀 UPDATE COMPLETE. RESTARTING HIVE NODE.".green().bold());
             std::process::exit(0);
         }
-
+        Commands::Audit { file } => {
+            println!("{}", format!("🔍 [AUDIT]: Lezen van Flight Recorder data uit '{}'...", file).cyan().bold());
+            if let Ok(content) = tokio::fs::read_to_string(&file).await {
+                println!("{}", "--------------------------------------------------------------------------------".cyan());
+                println!("| {:<15} | {:<20} | {:<16} | {:<15} |", "Tijd (TSC/ns)", "Gebeurtenis", "Locatie (Ln:Col)", "Payload");
+                println!("{}", "--------------------------------------------------------------------------------".cyan());
+                for line in content.lines() {
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
+                        let ts = json["ts"].as_u64().unwrap_or(0);
+                        let kind = json["kind"].as_str().unwrap_or("Unknown");
+                        let node = json["node_id"].as_u64().unwrap_or(0);
+                        let payload = json["payload"].as_u64().unwrap_or(0);
+                        
+                        let display_kind = match kind {
+                            "ExprEvalStart" => kind.green(),
+                            "ExprEvalEnd" => kind.cyan(),
+                            "ActorSend" | "ActorReceive" | "GpuLaunch" => kind.magenta().bold(),
+                            "MigrateCapture" | "MigrateTeleport" | "MigrateResume" => kind.blue().on_white().bold(),
+                            "ErrorPropagated" => kind.red().bold().blink(),
+                            "NetworkConnect" | "NetworkDisconnect" => kind.yellow().bold(),
+                            _ => kind.yellow(),
+                        };
+                        
+                        let line_num = node >> 32;
+                        let col_num = node & 0xFFFFFFFF;
+                        let loc_str = if line_num > 0 && line_num < 1_000_000 {
+                            format!("{}:{}", line_num, col_num)
+                        } else {
+                            format!("H:{:x}", node)
+                        };
+                        
+                        println!("| {:<15} | {:<20} | {:<16} | P:{:<13} |", ts, display_kind, loc_str, payload);
+                    }
+                }
+                println!("{}", "--------------------------------------------------------------------------------".cyan());
+                println!("{}", "✅ Audit log succesvol gevisualiseerd.".green().bold());
+            } else {
+                println!("{}", format!("❌ [AUDIT FOUT]: Kon '{}' niet openen. (Is HELHEIM_TRACE=1 gezet?)", file).red().bold());
+            }
+        }
     }
 
     Ok(())

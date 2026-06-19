@@ -7,7 +7,8 @@ impl Cage {
     /// BANS an IP address using iptables (Requires Root/Sudo)
     /// This is the "Jail" function.
     pub fn drop_ip(ip: &str) -> String {
-        println!(
+        // [W·AG·AF] C1 Review: Zero-Noise Compliance
+        tracing::warn!(
             "{}",
             format!("[SHIELD] 🛡️ ENGAGING CAGE PROTOCOL FOR: {}", ip)
                 .red()
@@ -29,7 +30,8 @@ impl Cage {
 
     /// Logs an IP without banning (Warning Shot)
     pub fn log_ip(ip: &str) -> String {
-        println!(
+        // [W·AG·AF] C1 Review: Zero-Noise Compliance
+        tracing::info!(
             "{}",
             format!("[SHIELD] 👁️ MONITORING SUSPICIOUS ACTIVITY: {}", ip)
                 .yellow()

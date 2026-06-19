@@ -15,11 +15,18 @@ pub use helheim_lang::memory;
 pub use helheim_lang::semantic;
 use crate::cli::intent::{Intent, IntentParser};
 use std::pin::Pin;
+use std::future::Future;
 
 // orchestra/swarm.rs verwijderd — ConsciousWorker/CleanerWorker hoort in helheim-web (sorteerlaag), niet in helheim-core
 pub mod system;
 pub mod distributed;
 pub mod executor;
+pub mod actor;  // Actor / Message-Passing (Vraag 2)
+pub mod flight_recorder;  // Flight Recorder / Zero-Overhead Tracing (Vraag 3)
+pub mod package_manager;    // Package Manager + Signing (Vraag 4)
+pub mod stdlib_manager;
+pub mod effects;
+pub mod continuation;
 
 #[derive(Clone)]
 pub struct Orchestrator {
@@ -42,6 +49,17 @@ impl Orchestrator {
         }
     }
 
+    pub async fn bootstrap(&self) -> Result<(), Box<dyn std::error::Error>> {
+        self.executor.stdlib.bootstrap().await?;
+        // Register pure functions to global memory
+        for module_ref in self.executor.stdlib.pure_modules.iter() {
+            for (name, (params, body)) in &module_ref.value().functions {
+                self.memory.ast_funcs.insert(name.clone(), (params.clone(), body.clone(), true)); // Stdlib funcs are pub
+            }
+        }
+        Ok(())
+    }
+
     pub fn get_var(&self, key: &str) -> Option<String> {
         self.memory.get_var_native(key).map(|v| v.to_string())
     }
@@ -58,6 +76,40 @@ impl Orchestrator {
         self.memory.resolve_value(value)
     }
 
+    // Time-Travel REPL support (Vraag 5)
+    pub fn snapshot(&self) {
+        self.memory.snapshot();
+    }
+
+    pub fn rollback(&self, steps: usize) -> bool {
+        self.memory.rollback(steps)
+    }
+
+    pub async fn resume_continuation_from_file(&self, path: &str, resume_value_str: &str, _ctx: crate::common::context::ExecutionContext) -> Result<Option<String>> {
+        let content = tokio::fs::read_to_string(path).await?;
+        let mut cont: crate::orchestra::continuation::SerializableContinuation = serde_json::from_str(&content)?;
+        
+        // Verificatie van de Swarm Handtekening
+        if let Some(sig_str) = cont.signature.take() {
+            use base64::Engine;
+            let sig_bytes = base64::engine::general_purpose::STANDARD.decode(&sig_str)?;
+            let json_without_sig = serde_json::to_string(&cont)?;
+            if let Some(pub_key) = &cont.source_pubkey {
+                crate::shield::crypto::SwarmSigner::verify_peer(pub_key, json_without_sig.as_bytes(), &sig_bytes)?;
+                tracing::debug!("[SHIELD]: Continuation handtekening geverifieerd. Veilig om te hervatten.");
+            } else {
+                anyhow::bail!("⛔ SHIELD ALARM: Continuation mist public key voor verificatie!");
+            }
+        } else {
+            anyhow::bail!("⛔ SHIELD ALARM: Continuation is niet ondertekend! Hervatten geweigerd.");
+        }
+
+        let resume_val = crate::orchestra::memory::HelheimType::parse(resume_value_str);
+        
+        let mut rx = tokio::sync::mpsc::channel(1).1; // dummy receiver since this is not in an actor loop
+        crate::orchestra::actor::resume_from_serialized(&self.executor, cont, resume_val, self.memory.clone(), &mut rx).await
+    }
+
     pub fn process_command<'a>(
         &'a self,
         input: &'a str,
@@ -67,22 +119,6 @@ impl Orchestrator {
         Box::pin(async move {
             let trimmed = input.trim();
             if trimmed.is_empty() {
-                return Ok(());
-            }
-
-            // Multi-command support (separated by ' ; ')
-            // Note: We use " ; " (with spaces) to avoid splitting inside strings blindly
-            // This allows: "cmd1 ; cmd2"
-            // CRITICAL: Do NOT split if it's a control block (contains braced logic)
-            if trimmed.contains(" ; ")
-                && !trimmed.starts_with("zolang ")
-                && !trimmed.starts_with("als ")
-                && !trimmed.starts_with("functie ")
-            {
-                let commands: Vec<&str> = trimmed.split(" ; ").collect();
-                for cmd in commands {
-                    self.process_command(cmd, ctx.clone()).await?;
-                }
                 return Ok(());
             }
 
@@ -96,7 +132,7 @@ impl Orchestrator {
                 let json = &trimmed["ast_json:".len()..];
                 match serde_json::from_str::<Vec<CodeTaal>>(json) {
                     Ok(ast_vec) => {
-                        println!(
+                        tracing::debug!(
                             "[SWARM RECEIVER]: ast_json ontvangen ({} statements). Directe AST-executie (geen string-parser).",
                             ast_vec.len()
                         );
@@ -106,7 +142,7 @@ impl Orchestrator {
                         return Ok(());
                     }
                     Err(e) => {
-                        eprintln!("[SWARM RECEIVER ERROR]: ast_json deserialisatie mislukt: {}", e);
+                        tracing::error!("[SWARM RECEIVER ERROR]: ast_json deserialisatie mislukt: {}", e);
                         return Ok(());
                     }
                 }
@@ -116,20 +152,20 @@ impl Orchestrator {
                 let json = &trimmed["state_delta:".len()..];
                 match serde_json::from_str::<crate::orchestra::distributed::StateDelta>(json) {
                     Ok(delta) => {
-                        println!("[SWARM RECEIVER]: state_delta ontvangen van {}", delta.source_node);
+                        tracing::debug!("[SWARM RECEIVER]: state_delta ontvangen van {}", delta.source_node);
                         self.distributed.apply_delta(delta);
                         return Ok(());
                     }
                     Err(e) => {
-                        eprintln!("[SWARM RECEIVER ERROR]: state_delta deserialisatie mislukt: {}", e);
+                        tracing::error!("[SWARM RECEIVER ERROR]: state_delta deserialisatie mislukt: {}", e);
                         return Ok(());
                     }
                 }
             }
 
             // Professional log (Flight Recorder)
-            tracing::info!(target: "orchestrator", command = ?trimmed, "Verwerken van instructie.");
-            println!("[EXECUTION]: Verwerken van instructie: '{}'", trimmed);
+            tracing::debug!(target: "orchestrator", command = ?trimmed, "Verwerken van instructie.");
+            tracing::debug!("[EXECUTION]: Verwerken van instructie: '{}'", trimmed);
 
             // --- We delegate 'zet' entirely to the AST Parser so it can evaluate expressions ---
 
@@ -139,25 +175,25 @@ impl Orchestrator {
                     return Err(anyhow::anyhow!("[SECURITY]: Hel-modus vereist Elevated Privileges."));
                 }
                 use colored::*;
-                println!(
+                tracing::debug!(
                     "{}",
                     "================================================="
                         .red()
                         .bold()
                 );
-                println!(
+                tracing::debug!(
                     "{}",
                     " ⚠️ WAARSCHUWING: JE VERLAAT NU DE VEILIGE ZONE. "
                         .red()
                         .bold()
                 );
-                println!(
+                tracing::debug!(
                     "{}",
                     "    Je kunt nu nog terug... je belandt in HEL!   "
                         .red()
                         .bold()
                 );
-                println!(
+                tracing::debug!(
                     "{}",
                     "================================================="
                         .red()
@@ -181,10 +217,10 @@ impl Orchestrator {
 
             if trimmed.starts_with("script:") {
                 let script_content = trimmed[7..].trim();
-                println!("[LANG]: Helheim Script Modus geactiveerd.");
+                tracing::debug!("[LANG]: Helheim Script Modus geactiveerd.");
                 match parser::HelParser::parse(script_content) {
                     Ok(ast) => {
-                        println!(
+                        tracing::debug!(
                             "[LANG]: AST Gegenereerd ({} statements). Linking modules...",
                             ast.len()
                         );
@@ -195,16 +231,16 @@ impl Orchestrator {
                         match linker.link(ast, std::path::Path::new(".")) {
                             Ok(mut linked_ast) => {
                                 if let Err(e) = helheim_lang::semantic::SemanticAnalyzer::analyze(&mut linked_ast) {
-                                    println!("{}", e);
-                                    return Ok(());
+                                    tracing::debug!("{}", e);
+                                    return Err(anyhow::anyhow!("Semantic Analysis Failed: {}", e));
                                 }
-                                println!("[LANG]: Semantic check OK. Uitvoeren...");
+                                tracing::debug!("[LANG]: Semantic check OK. Uitvoeren...");
                                 self.execute_ast(linked_ast, ctx.clone()).await?;
                             }
-                            Err(e) => println!("[ERROR]: Module Linker Fout: {}", e),
+                            Err(e) => tracing::debug!("[ERROR]: Module Linker Fout: {}", e),
                         }
                     }
-                    Err(e) => println!("[ERROR]: Script Parsing Fout: {}", e),
+                    Err(e) => tracing::debug!("[ERROR]: Script Parsing Fout: {}", e),
                 }
                 return Ok(());
             }
@@ -223,15 +259,22 @@ impl Orchestrator {
                     match linker.link(ast, std::path::Path::new(".")) {
                         Ok(mut linked_ast) => {
                             if let Err(e) = helheim_lang::semantic::SemanticAnalyzer::analyze(&mut linked_ast) {
-                                println!("{}", e); 
-                                return Ok(());
+                                tracing::debug!("{}", e); 
+                                return Err(anyhow::anyhow!("Semantic Analysis Failed: {}", e));
                             }
 
                             if let Err(e) = self.execute_ast(linked_ast, ctx.clone()).await {
-                                println!("[ERROR]: {}", e);
+                                let line = self.memory.resolve_value("__LAST_ERR_LINE__");
+                                let col = self.memory.resolve_value("__LAST_ERR_COL__");
+                                if !line.is_empty() && !col.is_empty() {
+                                    use colored::*;
+                                    tracing::debug!("{}", format!("[ERROR at {}:{}]: {}", line, col, e).red().bold());
+                                } else {
+                                    tracing::debug!("[ERROR]: {}", e);
+                                }
                             }
                         }
-                        Err(e) => println!("[ERROR]: Module Linker Fout: {}", e),
+                        Err(e) => tracing::debug!("[ERROR]: Module Linker Fout: {}", e),
                     }
                     return Ok(());
                 }
@@ -248,9 +291,9 @@ impl Orchestrator {
             if trimmed.starts_with("unlock ") {
                 let key = trimmed[7..].trim();
                 if HelheimLock::unlock(key) {
-                    println!("[SECURITY]: Toegang tot native execution geautoriseerd.");
+                    tracing::debug!("[SECURITY]: Toegang tot native execution geautoriseerd.");
                 } else {
-                    println!("[SECURITY]: Autorisatie mislukt. Onjuiste Master Key.");
+                    tracing::debug!("[SECURITY]: Autorisatie mislukt. Onjuiste Master Key.");
                 }
                 return Ok(());
             }
@@ -268,14 +311,14 @@ impl Orchestrator {
                 if !ctx.is_privileged {
                     return Err(anyhow::anyhow!("[SECURITY]: Heavy compute work requires elevated privileges."));
                 }
-                let size = trimmed[13..].trim().parse::<usize>().unwrap_or(8192);
-                println!(
+                let size = trimmed[11..].trim().parse::<usize>().unwrap_or(8192);
+                tracing::debug!(
                     "[HEAVY]: Parallel heavy compute (CPU + GPU) (Size: {})...",
                     size
                 );
                 match crate::gpu::inferno_work_real(size, 0) {
-                    Ok(_) => println!("[HEAVY]: Workload complete."),
-                    Err(e) => println!("[ERROR]: Heavy compute error: {}", e),
+                    Ok(_) => tracing::debug!("[HEAVY]: Workload complete."),
+                    Err(e) => tracing::debug!("[ERROR]: Heavy compute error: {}", e),
                 }
                 return Ok(());
             }
@@ -302,7 +345,7 @@ impl Orchestrator {
 
                 // Bare Metal guarantee / Fallback if discovery is empty
                 if node_weights.is_empty() {
-                    println!("{}", "[WARN]: Discovery Service leeg. Vooringestelde Swarm Nodes inladen (Equal weights)...".yellow());
+                    tracing::debug!("{}", "[WARN]: Discovery Service leeg. Vooringestelde Swarm Nodes inladen (Equal weights)...".yellow());
                     if let Ok(env_nodes) = std::env::var("HELHEIM_NODES") {
                         for ip in env_nodes.split(',') {
                             node_weights.insert(ip.trim().to_string(), 10.0);
@@ -324,10 +367,10 @@ impl Orchestrator {
                 // 3. Compute Global Pool Weight
                 let total_swarm_weight: f64 = node_weights.values().sum();
 
-                println!(
+                tracing::debug!(
                     "[SWARM]: Architecting load-balanced swarm compute..."
                 );
-                println!(
+                tracing::debug!(
                     "[SWARM]: Total Workload: {} | Active Compute Nodes: {} | Global Pool Weight: {:.1}",
                     size,
                     node_weights.len(),
@@ -348,13 +391,13 @@ impl Orchestrator {
 
                     if ip == "LOKAAL" {
                         local_chunk = chunk_size;
-                        println!(
+                        tracing::debug!(
                             "[HIVE]: Master Node allocated {} calculaties ({:.1}% van totaal).",
                             chunk_size,
                             node_share_percentage * 100.0
                         );
                     } else {
-                        println!(
+                        tracing::debug!(
                             "[HIVE]: Slave {} krijgt {} calculaties toegewezen ({:.1}% van totaal)...",
                             ip,
                             chunk_size,
@@ -362,12 +405,12 @@ impl Orchestrator {
                         );
                         let payload = format!("heavy_work {}", chunk_size);
                         dispatch_tasks.push(tokio::spawn(async move {
-                            println!("🚀 Dispatching workload to {}...", ip);
+                            tracing::debug!("🚀 Dispatching workload to {}...", ip);
                             match crate::network::hsp_node::SwarmEngine::dispatch(&ip, 9003, &payload)
                                 .await
                             {
-                                Ok(res) => println!("✅ [HIVE]: Node {} gereed: {}", ip, res),
-                                Err(e) => println!("❌ [HIVE]: Node {} gefaald: {}", ip, e),
+                                Ok(res) => tracing::debug!("✅ [HIVE]: Node {} gereed: {}", ip, res),
+                                Err(e) => tracing::debug!("❌ [HIVE]: Node {} gefaald: {}", ip, e),
                             }
                         }));
                     }
@@ -375,7 +418,7 @@ impl Orchestrator {
 
                 // Execute local share natively
                 if local_chunk > 0 {
-                    println!(
+                    tracing::debug!(
                         "[HIVE]: Master Node start lokale Native execution (Size: {})...",
                         local_chunk
                     );
@@ -383,7 +426,7 @@ impl Orchestrator {
                         .process_command(&format!("heavy_work {}", local_chunk), ctx.clone())
                         .await
                     {
-                        println!("[ERROR]: Master Node failed: {}", e);
+                        tracing::debug!("[ERROR]: Master Node failed: {}", e);
                     }
                 }
 
@@ -392,7 +435,7 @@ impl Orchestrator {
                     let _ = task.await;
                 }
 
-                println!(
+                tracing::debug!(
                     "{}",
                     "[SWARM]: Global compute complete."
                         .green()
@@ -412,20 +455,20 @@ impl Orchestrator {
                     (args_part.parse().unwrap_or(8192), 0)
                 };
 
-                println!(
+                tracing::debug!(
                     "[COMPUTE]: Starten van GPU acceleratie (Buffer {}, Device {})...",
                     size, device_id
                 );
                 match crate::gpu::gpu_work_real(size, device_id) {
-                    Ok(_) => println!("[COMPUTE]: GPU taak voltooid."),
-                    Err(e) => println!("[ERROR]: GPU Fout: {}", e),
+                    Ok(_) => tracing::debug!("[COMPUTE]: GPU taak voltooid."),
+                    Err(e) => tracing::debug!("[ERROR]: GPU Fout: {}", e),
                 }
                 return Ok(());
             }
 
             if trimmed.starts_with("gpu infer ") {
                 let prompt = trimmed[10..].trim().trim_matches('"');
-                println!("[BRAIN]: Sending prompt to Helheim Brain: '{}'", prompt);
+                tracing::debug!("[BRAIN]: Sending prompt to Helheim Brain: '{}'", prompt);
 
                 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
                 use tokio::net::UnixStream;
@@ -439,7 +482,7 @@ impl Orchestrator {
                     Ok(mut stream) => {
                         let req_str = request.to_string();
                         if let Err(e) = stream.write_all(req_str.as_bytes()).await {
-                            println!("[ERROR]: Failed to send request: {}", e);
+                            tracing::debug!("[ERROR]: Failed to send request: {}", e);
                             return Ok(());
                         }
 
@@ -467,14 +510,14 @@ impl Orchestrator {
                                     }
                                 }
                                 Err(e) => {
-                                    println!("\n[ERROR]: Stream error: {}", e);
+                                    tracing::debug!("\n[ERROR]: Stream error: {}", e);
                                     break;
                                 }
                             }
                         }
-                        println!();
+                        tracing::debug!("");
                     }
-                    Err(e) => println!(
+                    Err(e) => tracing::debug!(
                         "[ERROR]: Brain not connected (Is helheim_brain running?): {}",
                         e
                     ),
@@ -484,9 +527,9 @@ impl Orchestrator {
 
             if trimmed.starts_with("shield encrypt ") {
                 let data = trimmed[15..].trim();
-                println!("[SECURITY]: Data encryptie in uitvoering...");
+                tracing::debug!("[SECURITY]: Data encryptie in uitvoering...");
                 let result = crate::shield::shield_encrypt_helheim(data);
-                println!("[SECURITY]: Resultaat: {}", result);
+                tracing::debug!("[SECURITY]: Resultaat: {}", result);
                 return Ok(());
             }
 
@@ -498,14 +541,14 @@ impl Orchestrator {
 
                     // Handle 'allemaal' broadcast
                     if targets.contains(&"allemaal") {
-                        println!("[NET]: Broadcast modus ('allemaal') gedetecteerd...");
+                        tracing::debug!("[NET]: Broadcast modus ('allemaal') gedetecteerd...");
                         if let Ok(peers) = self.discovery.peers.lock() {
                             for ip in peers.keys() {
                                 final_targets.push(ip.clone());
                             }
                         }
                         if final_targets.is_empty() {
-                            println!("[WARN]: Geen peers bekend in Discovery Service.");
+                            tracing::debug!("[WARN]: Geen peers bekend in Discovery Service.");
                         }
                     } else {
                         for t in targets {
@@ -513,7 +556,7 @@ impl Orchestrator {
                         }
                     }
 
-                    println!(
+                    tracing::debug!(
                         "[NET]: Swarm Dispatch geactiveerd voor {} targets...",
                         final_targets.len()
                     );
@@ -527,12 +570,12 @@ impl Orchestrator {
                         )
                         .await
                         {
-                            Ok(resp) => println!("✅ {}", resp),
-                            Err(e) => println!("❌ Fout: {}", e),
+                            Ok(resp) => tracing::debug!("✅ {}", resp),
+                            Err(e) => tracing::debug!("❌ Fout: {}", e),
                         }
                     }
                 } else {
-                    println!(
+                    tracing::debug!(
                         "[ERROR]: Syntax fout. Gebruik: stuur [bericht] naar [node1] [node2]..."
                     );
                 }
@@ -541,7 +584,7 @@ impl Orchestrator {
 
             if trimmed.starts_with("synthesis ") {
                 let _json_seed = trimmed[10..].trim();
-                println!("[SYNTHESIS]: Ontvangen van Code-Taal DNA...");
+                tracing::debug!("[SYNTHESIS]: Ontvangen van Code-Taal DNA...");
 
                 // In productie zouden we serde_json gebruiken om de string te parsen.
                 // Voor deze demo simuleren we een MatMul seed.
@@ -551,16 +594,16 @@ impl Orchestrator {
                     k: 1024,
                 };
 
-                println!("[SYNTHESIS]: Synthetiseren van abstracte logica naar 'Pure Metal'...");
+                tracing::debug!("[SYNTHESIS]: Synthetiseren van abstracte logica naar 'Pure Metal'...");
                 match KernelSynthesisEngine::synthesize(seed) {
                     Ok(ptx) => {
-                        println!("[SYNTHESIS]: Succesvol gegenereerde PTX (Machine Code):");
-                        println!("--- BEGIN PTX SNAPSHOT ---");
-                        println!("{}", ptx.trim());
-                        println!("--- END PTX SNAPSHOT ---");
-                        println!("[SYNTHESIS]: Klaar voor native lowering.");
+                        tracing::debug!("[SYNTHESIS]: Succesvol gegenereerde PTX (Machine Code):");
+                        tracing::debug!("--- BEGIN PTX SNAPSHOT ---");
+                        tracing::debug!("{}", ptx.trim());
+                        tracing::debug!("--- END PTX SNAPSHOT ---");
+                        tracing::debug!("[SYNTHESIS]: Klaar voor native lowering.");
                     }
-                    Err(e) => println!("[ERROR]: Synthesis Fout: {}", e),
+                    Err(e) => tracing::debug!("[ERROR]: Synthesis Fout: {}", e),
                 }
                 return Ok(());
             }
@@ -579,8 +622,8 @@ impl Orchestrator {
                 }
                 use crate::std::fs::FileManager;
                 match FileManager::read(path) {
-                    Ok(content) => println!("[FS]: Inhoud van '{}':\n{}", path, content),
-                    Err(e) => println!("[ERROR]: FS Fout: {}", e),
+                    Ok(content) => tracing::debug!("[FS]: Inhoud van '{}':\n{}", path, content),
+                    Err(e) => tracing::debug!("[ERROR]: FS Fout: {}", e),
                 }
                 return Ok(());
             }
@@ -599,11 +642,11 @@ impl Orchestrator {
                     }
                     use crate::std::fs::FileManager;
                     match FileManager::write(path, content) {
-                        Ok(_) => println!("[FS]: Succesvol geschreven naar '{}'.", path),
-                        Err(e) => println!("[ERROR]: FS Fout: {}", e),
+                        Ok(_) => tracing::debug!("[FS]: Succesvol geschreven naar '{}'.", path),
+                        Err(e) => tracing::debug!("[ERROR]: FS Fout: {}", e),
                     }
                 } else {
-                    println!("[ERROR]: Syntax fout. Gebruik: schrijf [tekst] naar [bestand]");
+                    tracing::debug!("[ERROR]: Syntax fout. Gebruik: schrijf [tekst] naar [bestand]");
                 }
                 return Ok(());
             }
@@ -614,10 +657,10 @@ impl Orchestrator {
                 }
                 let cmd = trimmed[9..].trim();
                 use crate::std::sys::SystemManager;
-                println!("[SYS]: Uitvoeren van shell commando: '{}'...", cmd);
+                tracing::debug!("[SYS]: Uitvoeren van shell commando: '{}'...", cmd);
                 match SystemManager::execute(cmd) {
-                    Ok(out) => println!("{}", out),
-                    Err(e) => println!("[ERROR]: SYS Fout: {}", e),
+                    Ok(out) => tracing::debug!("{}", out),
+                    Err(e) => tracing::debug!("[ERROR]: SYS Fout: {}", e),
                 }
                 return Ok(());
             }
@@ -630,16 +673,16 @@ impl Orchestrator {
                     }
                 }
                 use crate::std::http::HttpManager;
-                println!("[HTTP]: Ophalen van '{}'...", url);
+                tracing::debug!("[HTTP]: Ophalen van '{}'...", url);
                 match HttpManager::get(url) {
                     Ok(body) => {
-                        println!("[HTTP]: Response ({} bytes):", body.len());
-                        println!("{}", body.lines().take(10).collect::<Vec<_>>().join("\n")); // Preview first 10 lines
+                        tracing::debug!("[HTTP]: Response ({} bytes):", body.len());
+                        tracing::debug!("{}", body.lines().take(10).collect::<Vec<_>>().join("\n")); // Preview first 10 lines
                         if body.lines().count() > 10 {
-                            println!("... (truncated)");
+                            tracing::debug!("... (truncated)");
                         }
                     }
-                    Err(e) => println!("[ERROR]: HTTP Fout: {}", e),
+                    Err(e) => tracing::debug!("[ERROR]: HTTP Fout: {}", e),
                 }
                 return Ok(());
             }
@@ -648,10 +691,10 @@ impl Orchestrator {
             if trimmed.starts_with("wacht ") {
                 let seconds_str = trimmed[6..].trim();
                 if let Ok(seconds) = seconds_str.parse::<u64>() {
-                    println!("[SYSTEM]: Slaapmodus voor {} seconden...", seconds);
+                    tracing::debug!("[SYSTEM]: Slaapmodus voor {} seconden...", seconds);
                     tokio::time::sleep(tokio::time::Duration::from_secs(seconds)).await;
                 } else {
-                    println!("[ERROR]: Ongeldige tijdsduur. Gebruik: wacht [seconden]");
+                    tracing::debug!("[ERROR]: Ongeldige tijdsduur. Gebruik: wacht [seconden]");
                 }
                 return Ok(());
             }
@@ -660,10 +703,10 @@ impl Orchestrator {
             if trimmed.starts_with("installeer ") {
                 let package = trimmed[11..].trim().trim_matches('"');
                 use crate::std::pkg::PackageManager;
-                println!("[PKG]: Verzoek tot installatie van '{}'...", package);
+                tracing::debug!("[PKG]: Verzoek tot installatie van '{}'...", package);
                 match PackageManager::install(package) {
-                    Ok(msg) => println!("[PKG]: {}", msg),
-                    Err(e) => println!("[ERROR]: Installatie Fout: {}", e),
+                    Ok(msg) => tracing::debug!("[PKG]: {}", msg),
+                    Err(e) => tracing::debug!("[ERROR]: Installatie Fout: {}", e),
                 }
                 return Ok(());
             }
@@ -671,7 +714,7 @@ impl Orchestrator {
             // Intent Parser (Social/Meta)
             match IntentParser::parse(trimmed) {
                 Intent::Send { target, payload } => {
-                    println!(
+                    tracing::debug!(
                         "[INTENT]: Gedetecteerd: STUREN naar '{}' met inhoud '{}'",
                         target, payload
                     );
@@ -680,7 +723,7 @@ impl Orchestrator {
                     return Ok(());
                 }
                 Intent::SetVar { name, value } => {
-                    println!(
+                    tracing::debug!(
                         "[INTENT]: Gedetecteerd: VARIABELE ZETTEN '{}' = '{}'",
                         name, value
                     );
@@ -689,7 +732,7 @@ impl Orchestrator {
                     return Ok(());
                 }
                 Intent::MatMul { size } => {
-                    println!("[INTENT]: Detected matrix kernel (size: {})", size);
+                    tracing::debug!("[INTENT]: Detected matrix kernel (size: {})", size);
                     let ast = vec![CodeTaal::MatMul {
                         m: size,
                         n: size,
@@ -699,37 +742,37 @@ impl Orchestrator {
                     return Ok(());
                 }
                 Intent::Fix => {
-                    println!(
+                    tracing::debug!(
                         "[INTENT]: Je wilt iets oplossen. Initiëren van 'Recovery Protocol'..."
                     );
-                    println!("[ACTION]: Resetting Rune Engine & GPU State...");
-                    println!("✅ Systeem hersteld. Alle parameters staan weer op groen.");
+                    tracing::debug!("[ACTION]: Resetting Rune Engine & GPU State...");
+                    tracing::debug!("✅ Systeem hersteld. Alle parameters staan weer op groen.");
                     return Ok(());
                 }
                 Intent::Diagnosis => {
-                    println!("[INTENT]: Je vraagt om status. Draaien van systeem-diagnose...");
+                    tracing::debug!("[INTENT]: Je vraagt om status. Draaien van systeem-diagnose...");
                     self.list_nodes();
-                    println!("[STATUS]: GPU is 100% operationeel.");
+                    tracing::debug!("[STATUS]: GPU is 100% operationeel.");
                     return Ok(());
                 }
                 Intent::Speed => {
-                    println!("[INTENT]: Overclock profile loaded. Speed increased.");
+                    tracing::debug!("[INTENT]: Overclock profile loaded. Speed increased.");
 
                     return Ok(());
                 }
                 Intent::Update => {
-                    println!("[INTENT]: Controleren op updates voor Helheim Cluster...");
-                    println!("[PKG-MAN]: Index bijwerken... OK.");
-                    println!(
+                    tracing::debug!("[INTENT]: Controleren op updates voor Helheim Cluster...");
+                    tracing::debug!("[PKG-MAN]: Index bijwerken... OK.");
+                    tracing::debug!(
                         "[PKG-MAN]: Geen kritieke updates beschikbaar. Je draait versie v1.0 (Python Killer)."
                     );
                     return Ok(());
                 }
                 Intent::Research => {
-                    println!("[INTENT]: Diepgaande analyse gestart ('Deep Dive')...");
-                    println!("[LOGS]: Scannen van systeemlogboeken (laatste 24u)...");
-                    println!("[LOGS]: No irregularities found in kernel ringbuffer.");
-                    println!(
+                    tracing::debug!("[INTENT]: Diepgaande analyse gestart ('Deep Dive')...");
+                    tracing::debug!("[LOGS]: Scannen van systeemlogboeken (laatste 24u)...");
+                    tracing::debug!("[LOGS]: No irregularities found in kernel ringbuffer.");
+                    tracing::debug!(
                         "[ANALYSE]: Conclusie: Het probleem zit waarschijnlijk tussen toetsenbord en stoel. 😉"
                     );
                     return Ok(());
@@ -739,7 +782,7 @@ impl Orchestrator {
                     let func_body = self.memory.func_store.get(trimmed).map(|v| v.value().clone());
 
                     if let Some(body) = func_body {
-                        println!("[EXECUTION]: Uitvoeren van functie '{}'...", trimmed);
+                        tracing::debug!("[EXECUTION]: Uitvoeren van functie '{}'...", trimmed);
                         self.process_command(&body, ctx.clone()).await?;
                         return Ok(());
                     }
@@ -757,12 +800,12 @@ impl Orchestrator {
 
     fn list_nodes(&self) {
         let peers = self.discovery.peers.lock().unwrap();
-        println!(
+        tracing::debug!(
             "[NETWORK]: Gedetecteerde actieve nodes in Orchestrator netwerk: {}",
             peers.len()
         );
         for (ip, caps) in peers.iter() {
-            println!(
+            tracing::debug!(
                 "  > Node ID: {} | Performance: {:.2} GFLOPS | Native-GPU: {}",
                 ip, caps.estimated_cpu_gflops, caps.has_cuda
             );
@@ -771,18 +814,19 @@ impl Orchestrator {
 
     fn execute_native(&self, cmd: &str) -> Result<()> {
         if !HelheimLock::is_authorized() {
-            println!("[ALERT]: Native execution is locked. Authorization required.");
+            tracing::debug!("[ALERT]: Native execution is locked. Authorization required.");
             return Ok(());
         }
 
-        println!("[NATIVE]: Low-level instruction...");
+        tracing::debug!("[NATIVE]: Low-level instruction...");
         unsafe {
             match RuneEngine::execute_raw_rune(cmd) {
-                Ok(res) => println!("{}", res),
-                Err(e) => println!("[ERROR]: Low-level kernel execution error: {}", e),
+                Ok(res) => tracing::debug!("{}", res),
+                Err(e) => tracing::debug!("[ERROR]: Low-level kernel execution error: {}", e),
             }
         }
         Ok(())
     }
 
 }
+pub mod tcp_resources;

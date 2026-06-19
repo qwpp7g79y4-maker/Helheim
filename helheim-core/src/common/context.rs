@@ -5,6 +5,7 @@ pub struct ExecutionContext {
     pub is_privileged: bool,
     pub is_distributed: bool,
     pub start_time: Instant,
+    pub current_module: Option<String>,
 }
 
 impl ExecutionContext {
@@ -13,6 +14,7 @@ impl ExecutionContext {
             is_privileged: true,
             is_distributed: false,
             start_time: Instant::now(),
+            current_module: None,
         }
     }
 
@@ -21,6 +23,7 @@ impl ExecutionContext {
             is_privileged: false,
             is_distributed: false,
             start_time: Instant::now(),
+            current_module: None,
         }
     }
 

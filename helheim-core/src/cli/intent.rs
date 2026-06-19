@@ -27,7 +27,7 @@ impl IntentParser {
         // 1. Check Fuzzy Send: "Ey stuur 'hallo' even naar server"
         // Regex: (stuur|zend) <payload> (naar|aan) <target>
         // Note: (?i) makes it case insensitive
-        let re_send = Regex::new(r"(?i)(?:stuur|zend)\s+(.+)\s+(?:naar|aan)\s+(.+)").unwrap();
+        let re_send = Regex::new(r"(?i)(?:stuur|zend|send)\s+(.+)\s+(?:naar|aan|to)\s+(.+)").unwrap();
         if let Some(caps) = re_send.captures(normalized) {
             let payload = caps
                 .get(1)
@@ -46,7 +46,7 @@ impl IntentParser {
         }
 
         // 2. Check Fuzzy Set: "Zet x op 10" or "Maak x gelijk aan 10"
-        let re_set = Regex::new(r"(?i)(?:zet|maak)\s+(\w+)\s+(?:op|gelijk aan|=)\s+(.+)").unwrap();
+        let re_set = Regex::new(r"(?i)(?:zet|maak|set|let)\s+(\w+)\s+(?:op|gelijk aan|=|to)\s+(.+)").unwrap();
         if let Some(caps) = re_set.captures(normalized) {
             let name = caps.get(1).map_or("", |m| m.as_str()).to_string();
             let value = caps
@@ -60,10 +60,11 @@ impl IntentParser {
 
         // 3. Matrix Kernels: "matmul 2048"
         let re_matmul = Regex::new(r"(?i)matmul\s+(\d+)").unwrap();
-        if let Some(caps) = re_matmul.captures(normalized)
-            && let Ok(size) = caps[1].parse::<usize>() {
+        if let Some(caps) = re_matmul.captures(normalized) {
+            if let Ok(size) = caps[1].parse::<usize>() {
                 return Intent::MatMul { size };
             }
+        }
 
         // 3. Simple Keyword Matching
         let lower = normalized.to_lowercase();
@@ -82,7 +83,6 @@ impl IntentParser {
 
         if lower.contains("los op")
             || lower.contains("heractiveer")
-            || lower.contains("maak")
             || lower.contains("fix")
         {
             return Intent::Fix;

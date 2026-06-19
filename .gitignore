@@ -71,3 +71,13 @@ CONCEPTS/
 *.bak.*
 *.orig
 *.old
+
+# Specific Internal Documents (do not export)
+HELHEIM_VERBETERINGEN.md
+GROK_BUILD_SYSTEM_PROMPT.md
+HANDOFF.md
+HELHEIM_ROADMAP_v2.md
+helheim-cli/helheim-logs/
+audit_trail.jsonl
+*.sqlite
+zis6cXhp

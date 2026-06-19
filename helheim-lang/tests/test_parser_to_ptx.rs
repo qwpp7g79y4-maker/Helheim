@@ -12,7 +12,8 @@ fn test_helheim_language_to_ptx() {
 
     // 1. Parsing
     println!("--- STAP 1: PARSEN VAN HELHEIM CODE ---");
-    let ast = HelParser::parse(code).expect("Failed to parse code");
+    let mut ast = HelParser::parse(code).expect("Failed to parse code");
+    ast.retain(|n| !matches!(n, CodeTaal::LocationMarker { .. }));
     println!("{:#?}", ast);
 
     // 2. Synthese
@@ -47,7 +48,8 @@ fn test_helheim_control_flow_to_ptx() {
         }
     "#;
 
-    let ast = HelParser::parse(code).expect("Failed to parse code");
+    let mut ast = HelParser::parse(code).expect("Failed to parse code");
+    ast.retain(|n| !matches!(n, CodeTaal::LocationMarker { .. }));
     
     if let CodeTaal::GpuKernel(ref kernel) = ast[0] {
         let ptx = KernelSynthesisEngine::synthesize_gpu_kernel(kernel).expect("PTX Synthesis failed");
@@ -85,7 +87,8 @@ fn test_io_keywords_and_semantic_and_general_ptx_lowering() {
         zet y = haal url_var;
     "#;
 
-    let ast = HelParser::parse(code).expect("I/O keywords must parse");
+    let mut ast = HelParser::parse(code).expect("I/O keywords must parse");
+    ast.retain(|n| !matches!(n, CodeTaal::LocationMarker { .. }));
     assert!(ast.iter().any(|n| matches!(n, CodeTaal::HttpOp { .. })));
     assert!(ast.iter().any(|n| matches!(n, CodeTaal::FileOp { action, .. } if action == "read")));
     assert!(ast.iter().any(|n| matches!(n, CodeTaal::FileOp { action, .. } if action == "write")));
