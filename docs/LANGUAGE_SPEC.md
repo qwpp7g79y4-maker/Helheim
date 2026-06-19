@@ -13,7 +13,7 @@ De taal compileert via een Abstract Syntax Tree (AST) naar:
 - **PTX** — NVIDIA GPU assembly (sm_80, Ampere)
 - **CPU executor** — directe interpretatie voor host-side operaties
 
-CodeTaal is een **algemene taal**. GPU-compute, SNN en tensors zijn toepassingslagen — geen kern.
+CodeTaal is een **algemene taal**. GPU-compute en tensors zijn toepassingslagen — geen kern.
 
 ---
 
@@ -280,7 +280,7 @@ perform Actor.spawn("{
 
 Alle types zijn sterk getypeerd in de AST. Geen runtime type-guessing.  
 Strings zijn host-side — geen directe PTX register representatie.  
-Lists zijn algemeen bruikbaar. Gebruik als spike-tensor is een SNN-toepassingskeuze.
+Lists zijn algemeen bruikbaar.
 
 ---
 
@@ -442,29 +442,14 @@ endif_1:
 
 ---
 
-## 10. SNN als Toepassingslaag
 
-SNN (Spiking Neural Networks) is **geen kern van de taal**. Het is één mogelijke toepassing.
-
-De taal biedt:
-- `List` en `MatrixLiteral` — kunnen spike-tensors bevatten, maar zijn niet SNN-specifiek
-- Bitwise operatoren (`&`, `|`, `^`, `<<`, `>>`) — nuttig voor spike-packing, ook algemeen bruikbaar
-- `popc` — popcount instructie, direct naar `popc.b32` PTX — voor vuurdrempels in SNN
-
-SNN-specifieke logica (astrocyten, hormonen, droomtoestand, CANN) leeft in **Nexus Brain** — een apart project dat CodeTaal scripts aanroept als uitvoeringslaag.
-
-> Helheim taal = taal. Nexus = gebruiker van die taal. Niet omgekeerd.
-
----
-
-## 11. Bekende Beperkingen & Open Werk
+## 10. Bekende Beperkingen & Open Werk
 
 | Item | Status | Toelichting |
 |---|---|---|
 | Kernel caching | Uitgeschakeld | `CodeTaal` mist `Eq + Hash` door `Float` |
 | `ForEach` PTX lowering | Open | Fase 3+ |
 | String in PTX | Niet ondersteund | Host-side only by design |
-| `ModelDef` / `ModelInit` | Gedefinieerd in AST | Phase 9 (NEXUS) |
 | `Chaos` kernel | Stub | Placeholder, oneindige loops / registerdruk |
 
 ---
