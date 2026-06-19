@@ -70,4 +70,15 @@ cargo run --bin helheim-gateway
 
 See `CHEATSHEET.md` for syntax examples and core concepts.
 
+---
+
+### The Origin Story 
+Helheim wasn't born in a corporate boardroom; it was born out of sheer frustration. I am an architect at heart, not a line-by-line typist. I see systems as massive interconnected patterns, fueled by an ADHD brain that processes architecture faster than traditional coding environments allow. 
+
+Existing languages forced me into their rigid structures. I needed a language that mapped directly to my way of thinking—a hyper-fast, bare-metal "Motor Cortex" where logic goes straight to the hardware. So, together with a specialized team of AI agents executing the heavy lifting under my architectural direction, I built it myself.
+
+The goal? Making distributed computing truly accessible. A world where code teleports to the data, instead of the other way around. This didn't exist yet, so here it is.
+
+— **Pepijn (PEPAI)** | *pep_ai@icloud.com*
+
 ## License — BSL 1.1 © PEPAI
