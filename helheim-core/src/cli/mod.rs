@@ -4,7 +4,7 @@ pub mod intent;
 #[derive(Parser, Debug)]
 #[command(
     name = "helheim",
-    about = "Helheim CLI - de taal die Python obsolete maakt"
+    about = "Helheim CLI - High-Performance Motor Cortex"
 )]
 pub struct Cli {
     #[command(subcommand)]
