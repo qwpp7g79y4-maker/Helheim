@@ -40,15 +40,15 @@ druk_af "Lanceren van 10 MASSIVE parallelle zoektochten zonder GIL lock...";
 probeer {
     tegelijkertijd {
         roep_aan zoek_priem 800;
-        roep_aan zoek_priem 800;
-        roep_aan zoek_priem 800;
-        roep_aan zoek_priem 800;
-        roep_aan zoek_priem 800;
-        roep_aan zoek_priem 800;
-        roep_aan zoek_priem 800;
-        roep_aan zoek_priem 800;
-        roep_aan zoek_priem 800;
-        roep_aan zoek_priem 800;
+        roep_aan zoek_priem 850;
+        roep_aan zoek_priem 900;
+        roep_aan zoek_priem 950;
+        roep_aan zoek_priem 1000;
+        roep_aan zoek_priem 1050;
+        roep_aan zoek_priem 1100;
+        roep_aan zoek_priem 1150;
+        roep_aan zoek_priem 1200;
+        roep_aan zoek_priem 1250;
     }
     druk_af "[SUCCES]: Alle 10 cores hebben onafhankelijk en tegelijkertijd hun berekening afgerond!";
 } vang err {
