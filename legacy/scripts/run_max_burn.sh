@@ -2,7 +2,7 @@
 echo "🔥 STARTING MAXIMUM TOTAL SYSTEM OVERDRIVE 🔥"
 echo "WARNING: This will put 100% load on CPU, RTX 3060, and RTX 5060 Ti."
 
-cd /home/bitboi/dev_2/Helheim
+cd "$(dirname "$0")/../.."
 
 echo "🛠️ Compiling binary..."
 cargo build --release --features cuda > /dev/null 2>&1

@@ -6,7 +6,6 @@ Helheim core is klaar. Dit zijn resten uit de bouwfase.
 ## planning/
 | Bestand | Was in |
 |---|---|
-| ARTISJOK_REMOVAL_LOG.md | Helheim/ (root) |
 | LANGUAGE_COMPLETION_CHECKLIST.md | Helheim/ (root) |
 | PRIORITY1_FUNCTIONS_WATERDICHT_PLAN.md | Helheim/ (root) |
 | PROGRAMMEERTAAL_AFRONDEN_PLAN.md | Helheim/ (root) |
@@ -28,18 +27,12 @@ Helheim core is klaar. Dit zijn resten uit de bouwfase.
 | test_import.hel | Helheim/ (root) | Import test |
 | test_loop.hel | Helheim/ (root) | Loop test |
 | test_pi.hel | Helheim/ (root) | Pi berekening test |
-| test_snn_cortex.hel | Helheim/ (root) | SNN cortex test — hoort bij NEXUS/Antigravity |
 
 ## scripts/
 | Bestand | Was in | Wat |
 |---|---|---|
 | patch_errors.py | Helheim/ (root) | Tijdelijk patch script |
 | run_max_burn.sh | Helheim/ (root) | Max burn shell script |
-
-## docs/
-| Bestand | Was in | Wat |
-|---|---|---|
-| MOTOR_CORTEX.md | docs/ (root) | Duplicaat — origineel staat in CONCEPTS/ |
 
 ## examples/
 | Bestand | Was in | Wat |
@@ -49,9 +42,3 @@ Helheim core is klaar. Dit zijn resten uit de bouwfase.
 | language/ | examples/language/ | Experimenten, .bak, .sh, gen.txt, score.txt |
 | benchmark_swarm_compute.hel | examples/ | Swarm concept, niet geïmplementeerd |
 
-## Naar CONCEPTS/ verplaatst (Antigravity/NEXUS domein)
-| Bestand | Was in |
-|---|---|
-| snn/ | examples/snn/ |
-| swarm/ | examples/swarm/ |
-| helheim_nexus_breach.hel | examples/language/ |

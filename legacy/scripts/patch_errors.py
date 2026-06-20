@@ -1,6 +1,7 @@
 import re
 
-file_path = '/home/bitboi/dev_2/Helheim/helheim-lang/src/parser.rs'
+import os
+file_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../helheim-lang/src/parser.rs'))
 with open(file_path, 'r') as f:
     content = f.read()
 
