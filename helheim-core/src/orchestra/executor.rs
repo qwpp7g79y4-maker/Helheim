@@ -165,8 +165,8 @@ impl Executor {
                 }
                 
                 // Vraag 6: Delimited Continuations. Sla de rest van het block op zodat perform het kan vangen.
-                let remaining = statements[i + 1..].to_vec();
-                crate::orchestra::continuation::set_rest_ast(&self.memory, &remaining);
+                let remaining = &statements[i + 1..];
+                crate::orchestra::continuation::set_rest_ast(&self.memory, remaining);
                 if let Err(e) = ctx.check_timeout() {
                     return Err(e);
                 }
@@ -840,8 +840,10 @@ impl Executor {
                         }
                         let should_run = self.evaluate_ast_condition(&condition, ctx.clone()).await;
                         if should_run {
+                            let mut rest = statements.split_off(pc - 1);
+                            rest[0] = CodeTaal::Loop { condition: condition.clone(), body: body.clone() };
                             stack.push(crate::orchestra::trampoline::EvalFrame::Statements {
-                                statements: statements[pc - 1..].to_vec(),
+                                statements: rest,
                                 pc: 0, // Loop back to evaluate condition again
                                 ctx: ctx.clone(),
                             })?;
@@ -871,7 +873,7 @@ impl Executor {
                     } => {
                         let json_val = self.evaluate_ast_expr(&iterable, ctx.clone()).await.unwrap_or_default();
                         let mut clone_statements = Vec::new();
-                        if let CodeTaal::Block { statements } = *body.clone() {
+                        if let CodeTaal::Block { statements } = *body {
                             clone_statements = statements;
                         }
 
@@ -912,7 +914,7 @@ impl Executor {
                         else_block,
                     } => {
                         stack.push(crate::orchestra::trampoline::EvalFrame::Statements {
-                            statements: statements[pc..].to_vec(),
+                            statements: statements.split_off(pc),
                             pc: 0,
                             ctx: ctx.clone(),
                         })?;
@@ -1048,14 +1050,14 @@ impl Executor {
                             }
                             Err(e) => {
                                 tracing::debug!("[EXECUTOR]: GPU lowered launch not taken ({}), falling back to interpreter", e);
-                                if let CodeTaal::Block { statements: inner_statements } = &stmt {
+                                if let CodeTaal::Block { statements: inner_statements } = stmt {
                                     stack.push(crate::orchestra::trampoline::EvalFrame::Statements {
-                                        statements: statements[pc..].to_vec(),
+                                        statements: statements.split_off(pc),
                                         pc: 0,
                                         ctx: ctx.clone(),
                                     })?;
                                     stack.push(crate::orchestra::trampoline::EvalFrame::Statements {
-                                        statements: inner_statements.clone(),
+                                        statements: inner_statements,
                                         pc: 0,
                                         ctx: ctx.clone(),
                                     })?;
