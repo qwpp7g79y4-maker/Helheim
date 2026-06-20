@@ -18,8 +18,12 @@ impl TrampolineStack {
         Self { frames: Vec::new() }
     }
 
-    pub fn push(&mut self, frame: EvalFrame) {
+    pub fn push(&mut self, frame: EvalFrame) -> anyhow::Result<()> {
+        if self.frames.len() >= 10_000 {
+            return Err(anyhow::anyhow!("ExecutionError::StackOverflow"));
+        }
         self.frames.push(frame);
+        Ok(())
     }
 
     pub fn pop(&mut self) -> Option<EvalFrame> {

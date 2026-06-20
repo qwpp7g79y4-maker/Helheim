@@ -134,14 +134,15 @@ impl Executor {
         initial_ctx: crate::common::context::ExecutionContext,
     ) -> Pin<Box<dyn Future<Output = Result<Option<String>>> + Send + '_>> {
         Box::pin(async move {
-            let mut stack: Vec<crate::orchestra::trampoline::EvalFrame> = vec![crate::orchestra::trampoline::EvalFrame::Statements {
+            let mut stack = crate::orchestra::trampoline::TrampolineStack::new();
+            stack.push(crate::orchestra::trampoline::EvalFrame::Statements {
                 statements: initial_ast,
                 pc: 0,
                 ctx: initial_ctx,
-            }];
+            })?;
 
             while let Some(frame) = stack.pop() {
-                let (statements, mut pc, ctx): (Vec<helheim_lang::ast::CodeTaal>, usize, crate::common::context::ExecutionContext) = match frame {
+                let (mut statements, mut pc, ctx): (Vec<helheim_lang::ast::CodeTaal>, usize, crate::common::context::ExecutionContext) = match frame {
                     crate::orchestra::trampoline::EvalFrame::Statements { statements, pc, ctx } => (statements, pc, ctx),
                 };
 
@@ -149,8 +150,7 @@ impl Executor {
                 while pc < statements.len() {
                     if break_inner { break; }
                     let i = pc;
-                    let ast = &statements;
-                    let stmt = statements[pc].clone();
+                    let stmt = std::mem::replace(&mut statements[pc], helheim_lang::ast::CodeTaal::LocationMarker { line: 0, col: 0 });
                     pc += 1;
                     
                     if let CodeTaal::LocationMarker { line, col } = stmt {
@@ -165,7 +165,7 @@ impl Executor {
                 }
                 
                 // Vraag 6: Delimited Continuations. Sla de rest van het block op zodat perform het kan vangen.
-                let remaining = ast[i + 1..].to_vec();
+                let remaining = statements[i + 1..].to_vec();
                 crate::orchestra::continuation::set_rest_ast(&self.memory, &remaining);
                 if let Err(e) = ctx.check_timeout() {
                     return Err(e);
@@ -841,24 +841,24 @@ impl Executor {
                         let should_run = self.evaluate_ast_condition(&condition, ctx.clone()).await;
                         if should_run {
                             stack.push(crate::orchestra::trampoline::EvalFrame::Statements {
-                                statements: statements.clone(),
-                                pc: pc - 1, // Loop back to evaluate condition again
+                                statements: statements[pc - 1..].to_vec(),
+                                pc: 0, // Loop back to evaluate condition again
                                 ctx: ctx.clone(),
-                            });
+                            })?;
                             match *body {
                                 CodeTaal::Block { statements: inner } => {
                                     stack.push(crate::orchestra::trampoline::EvalFrame::Statements {
                                         statements: inner,
                                         pc: 0,
                                         ctx: ctx.clone(),
-                                    });
+                                    })?;
                                 }
                                 other => {
                                     stack.push(crate::orchestra::trampoline::EvalFrame::Statements {
                                         statements: vec![other],
                                         pc: 0,
                                         ctx: ctx.clone(),
-                                    });
+                                    })?;
                                 }
                             }
                             break_inner = true;
@@ -912,22 +912,22 @@ impl Executor {
                         else_block,
                     } => {
                         stack.push(crate::orchestra::trampoline::EvalFrame::Statements {
-                            statements: statements.clone(),
-                            pc,
+                            statements: statements[pc..].to_vec(),
+                            pc: 0,
                             ctx: ctx.clone(),
-                        });
+                        })?;
                         if self.evaluate_ast_condition(&condition, ctx.clone()).await {
                             stack.push(crate::orchestra::trampoline::EvalFrame::Statements {
                                 statements: vec![*then],
                                 pc: 0,
                                 ctx: ctx.clone(),
-                            });
+                            })?;
                         } else if let Some(else_b) = else_block {
                             stack.push(crate::orchestra::trampoline::EvalFrame::Statements {
                                 statements: vec![*else_b],
                                 pc: 0,
                                 ctx: ctx.clone(),
-                            });
+                            })?;
                         }
                         break_inner = true;
                     }
@@ -1050,15 +1050,15 @@ impl Executor {
                                 tracing::debug!("[EXECUTOR]: GPU lowered launch not taken ({}), falling back to interpreter", e);
                                 if let CodeTaal::Block { statements: inner_statements } = &stmt {
                                     stack.push(crate::orchestra::trampoline::EvalFrame::Statements {
-                                        statements: statements.clone(),
-                                        pc,
+                                        statements: statements[pc..].to_vec(),
+                                        pc: 0,
                                         ctx: ctx.clone(),
-                                    });
+                                    })?;
                                     stack.push(crate::orchestra::trampoline::EvalFrame::Statements {
                                         statements: inner_statements.clone(),
                                         pc: 0,
                                         ctx: ctx.clone(),
-                                    });
+                                    })?;
                                     break_inner = true;
                                 }
                             }
