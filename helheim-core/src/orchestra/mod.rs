@@ -27,6 +27,7 @@ pub mod package_manager;    // Package Manager + Signing (Vraag 4)
 pub mod stdlib_manager;
 pub mod effects;
 pub mod continuation;
+pub mod trampoline;
 
 #[derive(Clone)]
 pub struct Orchestrator {

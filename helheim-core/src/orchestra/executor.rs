@@ -130,17 +130,34 @@ impl Executor {
 
     fn execute_ast_internal(
         &self,
-        ast: Vec<CodeTaal>,
-        ctx: crate::common::context::ExecutionContext,
+        initial_ast: Vec<CodeTaal>,
+        initial_ctx: crate::common::context::ExecutionContext,
     ) -> Pin<Box<dyn Future<Output = Result<Option<String>>> + Send + '_>> {
         Box::pin(async move {
-            for i in 0..ast.len() {
-                let stmt = ast[i].clone();
-                if let CodeTaal::LocationMarker { line, col } = stmt {
-                    self.memory.set_var_native("__LAST_ERR_LINE__".to_string(), crate::orchestra::memory::HelheimType::String(line.to_string()));
-                    self.memory.set_var_native("__LAST_ERR_COL__".to_string(), crate::orchestra::memory::HelheimType::String(col.to_string()));
-                    continue;
-                }
+            let mut stack: Vec<crate::orchestra::trampoline::EvalFrame> = vec![crate::orchestra::trampoline::EvalFrame::Statements {
+                statements: initial_ast,
+                pc: 0,
+                ctx: initial_ctx,
+            }];
+
+            while let Some(frame) = stack.pop() {
+                let (statements, mut pc, ctx): (Vec<helheim_lang::ast::CodeTaal>, usize, crate::common::context::ExecutionContext) = match frame {
+                    crate::orchestra::trampoline::EvalFrame::Statements { statements, pc, ctx } => (statements, pc, ctx),
+                };
+
+                let mut break_inner = false;
+                while pc < statements.len() {
+                    if break_inner { break; }
+                    let i = pc;
+                    let ast = &statements;
+                    let stmt = statements[pc].clone();
+                    pc += 1;
+                    
+                    if let CodeTaal::LocationMarker { line, col } = stmt {
+                        self.memory.set_var_native("__LAST_ERR_LINE__".to_string(), crate::orchestra::memory::HelheimType::String(line.to_string()));
+                        self.memory.set_var_native("__LAST_ERR_COL__".to_string(), crate::orchestra::memory::HelheimType::String(col.to_string()));
+                        continue;
+                    }
                 
                 // Phase 2: Consume Gas for every executed statement
                 if let Err(e) = ctx.consume_gas(1) {
@@ -818,20 +835,33 @@ impl Executor {
                         }
                     }
                     CodeTaal::Loop { condition, body } => {
-                        loop {
-                            if let Err(e) = ctx.check_timeout() {
-                                return Err(e);
+                        if let Err(e) = ctx.check_timeout() {
+                            return Err(e);
+                        }
+                        let should_run = self.evaluate_ast_condition(&condition, ctx.clone()).await;
+                        if should_run {
+                            stack.push(crate::orchestra::trampoline::EvalFrame::Statements {
+                                statements: statements.clone(),
+                                pc: pc - 1, // Loop back to evaluate condition again
+                                ctx: ctx.clone(),
+                            });
+                            match *body {
+                                CodeTaal::Block { statements: inner } => {
+                                    stack.push(crate::orchestra::trampoline::EvalFrame::Statements {
+                                        statements: inner,
+                                        pc: 0,
+                                        ctx: ctx.clone(),
+                                    });
+                                }
+                                other => {
+                                    stack.push(crate::orchestra::trampoline::EvalFrame::Statements {
+                                        statements: vec![other],
+                                        pc: 0,
+                                        ctx: ctx.clone(),
+                                    });
+                                }
                             }
-                            let should_run = self.evaluate_ast_condition(&condition, ctx.clone()).await;
-                            if !should_run {
-                                break;
-                            }
-
-                            // Gas limits will naturally catch infinite loops via propagate_return (which calls execute_ast_internal)
-                            // or via evaluate_ast_condition. No more arbitrary iteration limits.
-                            if let Some(ret) = self.propagate_return(&body, ctx.clone()).await? {
-                                return Ok(Some(ret));
-                            }
+                            break_inner = true;
                         }
                     }
                     CodeTaal::ForEach {
@@ -881,15 +911,25 @@ impl Executor {
                         then,
                         else_block,
                     } => {
+                        stack.push(crate::orchestra::trampoline::EvalFrame::Statements {
+                            statements: statements.clone(),
+                            pc,
+                            ctx: ctx.clone(),
+                        });
                         if self.evaluate_ast_condition(&condition, ctx.clone()).await {
-                            if let Some(ret) = self.propagate_return(&then, ctx.clone()).await? {
-                                return Ok(Some(ret));
-                            }
+                            stack.push(crate::orchestra::trampoline::EvalFrame::Statements {
+                                statements: vec![*then],
+                                pc: 0,
+                                ctx: ctx.clone(),
+                            });
                         } else if let Some(else_b) = else_block {
-                            if let Some(ret) = self.propagate_return(&else_b, ctx.clone()).await? {
-                                return Ok(Some(ret));
-                            }
+                            stack.push(crate::orchestra::trampoline::EvalFrame::Statements {
+                                statements: vec![*else_b],
+                                pc: 0,
+                                ctx: ctx.clone(),
+                            });
                         }
+                        break_inner = true;
                     }
                     CodeTaal::ArrayPush { array_name, value } => {
                         let args = vec![array_name.clone(), value.clone()];
@@ -1008,10 +1048,18 @@ impl Executor {
                             }
                             Err(e) => {
                                 tracing::debug!("[EXECUTOR]: GPU lowered launch not taken ({}), falling back to interpreter", e);
-                                if let CodeTaal::Block { statements } = &stmt {
-                                    if let Some(ret) = Box::pin(self.execute_ast(statements.clone(), ctx.clone())).await? {
-                                        return Ok(Some(ret));
-                                    }
+                                if let CodeTaal::Block { statements: inner_statements } = &stmt {
+                                    stack.push(crate::orchestra::trampoline::EvalFrame::Statements {
+                                        statements: statements.clone(),
+                                        pc,
+                                        ctx: ctx.clone(),
+                                    });
+                                    stack.push(crate::orchestra::trampoline::EvalFrame::Statements {
+                                        statements: inner_statements.clone(),
+                                        pc: 0,
+                                        ctx: ctx.clone(),
+                                    });
+                                    break_inner = true;
                                 }
                             }
                         }
@@ -1576,6 +1624,7 @@ impl Executor {
                         }
                     }
                     _ => tracing::debug!("[AST]: Instructie nog niet geïmplementeerd: {:?}", stmt),
+                }
                 }
             }
             Ok(None)
