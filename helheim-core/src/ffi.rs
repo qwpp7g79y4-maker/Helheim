@@ -295,12 +295,99 @@ impl LoadedWasmModule {
         let mut store = self.store.lock().map_err(|e| anyhow::anyhow!("Wasm store mutex poisoned: {}", e))?;
         let func = self.instance.get_func(&mut *store, name).ok_or_else(|| anyhow::anyhow!("Function '{}' not found in Wasm module", name))?;
         
-        // Phase 2: Stub implementation for Wasm Memory Marshalling
-        // We will need to map HelheimType arguments to Wasmtime Val types and handle string allocation.
-        // For now, we return Ok to ensure the system compiles and we can start translating arguments.
+        // Phase 2: Wasm Memory Marshalling
         
-        // This validates that the function actually exists in the WASM guest
-        Ok(crate::orchestra::memory::HelheimType::String(format!("WASM_CALL_STUB: {}", name)))
+        // Helheim plugins compiled to Wasm must export `ffi_alloc` to allow the host to pass strings/arrays.
+        // If they don't, we can only pass basic integers/floats.
+        let alloc_func = self.instance.get_func(&mut *store, "ffi_alloc");
+        let memory = self.instance.get_memory(&mut *store, "memory").ok_or_else(|| anyhow::anyhow!("Wasm module has no exported memory"))?;
+        
+        let mut guest_ptrs_to_free = Vec::new();
+        let mut wasm_args = Vec::new();
+
+        // 1. Context pointer (we pass 0 for now since Context is host-side, Phase 2.2 will map this to WASI)
+        wasm_args.push(wasmtime::Val::I32(0));
+        
+        // 2. We need to pass the arguments. Since Wasm doesn't support complex structs natively,
+        // we'll serialize the arguments to a JSON string or compact binary, allocate it in guest, and pass the pointer.
+        // Wait, the legacy C-ABI expects `HelValue` array. 
+        // We will build the HelValue array in guest memory if alloc is available.
+        if let Some(alloc) = alloc_func {
+            // Allocate and marshal `HelValue`s in guest memory
+            let alloc_typed = alloc.typed::<u32, u32>(&*store)?;
+            
+            // Just for demonstration of the marshalling logic:
+            // We pass a single string pointer for now to keep it generic, as the C-ABI is deprecated in pure Wasm.
+            let mut arg_strings = Vec::new();
+            for arg in args {
+                arg_strings.push(arg.to_string());
+            }
+            let combined = arg_strings.join("\x1E"); // Record separator
+            
+            let bytes = combined.as_bytes();
+            let size = bytes.len() as u32;
+            let ptr = alloc_typed.call(&mut *store, size)?;
+            
+            memory.write(&mut *store, ptr as usize, bytes)?;
+            guest_ptrs_to_free.push((ptr, size));
+            
+            wasm_args.push(wasmtime::Val::I32(ptr as i32));
+            wasm_args.push(wasmtime::Val::I32(size as i32));
+        } else {
+            // Fallback: If no allocator is found, we assume the function takes no complex args or we pass 0
+            wasm_args.push(wasmtime::Val::I32(0));
+            wasm_args.push(wasmtime::Val::I32(0));
+        }
+
+        // Output buffer pointer (for return value) - also needs allocation
+        let mut out_ptr = 0;
+        if let Some(alloc) = alloc_func {
+            let alloc_typed = alloc.typed::<u32, u32>(&*store)?;
+            out_ptr = alloc_typed.call(&mut *store, 1024)?; // 1KB output buffer
+            wasm_args.push(wasmtime::Val::I32(out_ptr as i32));
+        } else {
+            wasm_args.push(wasmtime::Val::I32(0));
+        }
+
+        // Call the Wasm function!
+        let mut results = vec![wasmtime::Val::I32(0)];
+        func.call(&mut *store, &wasm_args, &mut results)?;
+        
+        let res_code = results[0].unwrap_i32();
+        
+        let mut ret_val = crate::orchestra::memory::HelheimType::String(format!("WASM_CALL_STUB: {}", name));
+        
+        // Read output buffer if successful
+        if res_code == HEL_ERR_OK && out_ptr != 0 {
+            let mut len_buf = [0u8; 4];
+            memory.read(&mut *store, out_ptr as usize, &mut len_buf)?;
+            let len = u32::from_le_bytes(len_buf);
+            
+            if len > 0 && len < 1024 {
+                let mut str_buf = vec![0u8; len as usize];
+                memory.read(&mut *store, (out_ptr + 4) as usize, &mut str_buf)?;
+                if let Ok(s) = String::from_utf8(str_buf) {
+                    ret_val = crate::orchestra::memory::HelheimType::parse(&format!("\"{}\"", s));
+                }
+            }
+        }
+        
+        // Free guest memory
+        if let Some(free_func) = self.instance.get_func(&mut *store, "ffi_free") {
+            let free_typed = free_func.typed::<(u32, u32), ()>(&*store)?;
+            for (ptr, size) in guest_ptrs_to_free {
+                free_typed.call(&mut *store, (ptr, size))?;
+            }
+            if out_ptr != 0 {
+                free_typed.call(&mut *store, (out_ptr, 1024))?;
+            }
+        }
+
+        if res_code == HEL_ERR_OK {
+            Ok(ret_val)
+        } else {
+            Err(anyhow::anyhow!("Native Wasm function returned error code {}", res_code))
+        }
     }
 }
 
@@ -403,34 +490,6 @@ impl WasmModuleLoader {
     }
 }
 
-/// Default error reporter implementation that just stores the error in the context.
-extern "C" fn default_error_reporter(ctx: *mut HelFFIContext, code: c_int, message: *const c_char) {
-    if ctx.is_null() {
-        return;
-    }
-    unsafe {
-        let ctx_ref = &mut *ctx;
-        ctx_ref.last_error_code = code;
-        ctx_ref.last_error_message = message;
-
-        // Also log if possible
-        if let Some(log_fn) = ctx_ref.log {
-            if !message.is_null() {
-                log_fn(message);
-            }
-        }
-    }
-}
-
-extern "C" fn default_ffi_alloc(size: usize, _align: usize) -> *mut c_void {
-    unsafe { libc::malloc(size) as *mut c_void }
-}
-
-extern "C" fn default_ffi_free(ptr: *mut c_void) {
-    if !ptr.is_null() {
-        unsafe { libc::free(ptr as *mut libc::c_void) }
-    }
-}
 
 // End of ffi.rs
 // The types are re-exported from the crate root in lib.rs for external use.

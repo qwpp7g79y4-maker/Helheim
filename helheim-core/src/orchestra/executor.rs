@@ -615,7 +615,7 @@ impl Executor {
                                     }
                                     _ => {
                                         // Let evaluate_ast_expr handle it cleanly so that nested Ops and logic work
-                                        self.evaluate_ast_expr(&*value, ctx.clone()).await.unwrap_or_default()
+                                        self.evaluate_ast_expr(&*value, ctx.clone()).await?
                                     }
                                 }
                             }
@@ -1955,7 +1955,9 @@ impl Executor {
                                 }
 
                                 // Phase 2: Wasm Sandboxing Call
-                                match module.call_function(name.as_str(), &ht_args) {
+                                // Wasm exports usually don't have ::, they use _ as separator (e.g. math_sin)
+                                let export_name = name.replace("::", "_");
+                                match module.call_function(&export_name, &ht_args) {
                                     Ok(ret_ht) => {
                                         ffi_result = Some(Ok(ret_ht.to_string()));
                                     }
