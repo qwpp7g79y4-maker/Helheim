@@ -7,6 +7,7 @@ pub enum EvalFrame {
         pc: usize,
         ctx: ExecutionContext,
     },
+    PopScope,
 }
 
 pub struct TrampolineStack {
@@ -19,7 +20,7 @@ impl TrampolineStack {
     }
 
     pub fn push(&mut self, frame: EvalFrame) -> anyhow::Result<()> {
-        if self.frames.len() >= 10_000 {
+        if self.frames.len() >= 50_000 {
             return Err(anyhow::anyhow!("ExecutionError::StackOverflow"));
         }
         self.frames.push(frame);

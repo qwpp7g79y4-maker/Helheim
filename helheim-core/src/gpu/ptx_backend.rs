@@ -32,6 +32,9 @@ pub struct PtxBackend {
 
 impl PtxBackend {
     pub fn new() -> anyhow::Result<Self> {
+        if std::env::var("HELHEIM_DISABLE_CUDA").is_ok() {
+            return Err(anyhow::anyhow!("CUDA explicitly disabled by environment variable HELHEIM_DISABLE_CUDA"));
+        }
         let device_id: usize = std::env::var("HELHEIM_GPU_DEVICE")
             .ok().and_then(|v| v.parse().ok())
             .unwrap_or(1);
@@ -270,10 +273,12 @@ impl GpuBackend for PtxBackend {
         let mut out_buf = {
             let mut pool_guard = self.result_pool.lock()
                 .map_err(|e| GpuError::Internal(format!("Result pool lock poisoned: {}", e)))?;
-            pool_guard.pop().unwrap_or_else(|| {
-                // Fallback alloc if pool is empty
-                stream.alloc_zeros::<f32>(1024).unwrap()
-            })
+            if let Some(buf) = pool_guard.pop() {
+                buf
+            } else {
+                stream.alloc_zeros::<f32>(1024)
+                    .map_err(|e| GpuError::Internal(format!("Fallback alloc failed: {}", e)))?
+            }
         };
 
         // Prepare input args in the same order as emitted in lower_general_with_context (sorted names)

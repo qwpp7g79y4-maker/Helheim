@@ -20,7 +20,7 @@ pub trait HelheimComponent {
 pub mod wasm_compat {
     pub fn log(s: &str) {
         // [PARKED] Phase 2: Implement web_sys::console::log_1 binding here.
-        println!("[WASM LOG]: {}", s);
+        tracing::debug!("[WASM LOG]: {}", s);
     }
 }
 

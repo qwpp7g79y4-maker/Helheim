@@ -58,11 +58,13 @@ async fn main() {
                     std::env::var("HELHEIM_ALLOWED_ORIGINS")
                         .unwrap_or_else(|_| "http://localhost:3000,http://127.0.0.1:3000".to_string())
                         .split(',')
+                        .filter(|s| *s != "*") // Reject wildcards
                         .filter_map(|s| s.trim().parse::<axum::http::HeaderValue>().ok())
                         .collect::<Vec<_>>()
                 )
-                .allow_methods(vec![axum::http::Method::GET, axum::http::Method::POST])
+                .allow_methods(vec![axum::http::Method::GET, axum::http::Method::POST, axum::http::Method::OPTIONS])
                 .allow_headers(vec![axum::http::header::CONTENT_TYPE, axum::http::header::AUTHORIZATION])
+                .allow_credentials(true) // Strict CORS demands credentials mapping if required
         )
         .layer(TraceLayer::new_for_http())
         .fallback_service(

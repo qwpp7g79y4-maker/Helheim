@@ -447,7 +447,7 @@ impl PtxGenerator {
         // Load context inputs into registers and register them for VarGet.
         // Int and Bool → .b32 integer registers. Floats → f32.
         for name in &input_params {
-            let val = context.get(name).unwrap();
+            let val = context.get(name).ok_or_else(|| anyhow::anyhow!("Ontbrekende variabele in context: {}", name))?;
             match val {
                 LiteralValue::Int(_) => {
                     // integers → b32 register
@@ -823,62 +823,116 @@ pub fn collect_free_variables(code: &CodeTaal) -> std::collections::HashSet<Stri
 }
 
 fn collect_free_vars_impl(
-    code: &CodeTaal,
+    root: &CodeTaal,
     defined: &mut std::collections::HashSet<String>,
     used: &mut std::collections::HashSet<String>,
 ) {
-    match code {
-        CodeTaal::VarGet { name } => {
-            used.insert(name.clone());
-        }
-        CodeTaal::VarDef { name, value } => {
-            defined.insert(name.clone());
-            collect_free_vars_impl(value, defined, used);
-        }
-        CodeTaal::Block { statements } | CodeTaal::Concurrent { statements } => {
-            let mut local_defined = std::collections::HashSet::new();
-            for stmt in statements {
-                collect_free_vars_impl(stmt, &mut local_defined, used);
+    let mut stack = vec![root];
+    
+    while let Some(code) = stack.pop() {
+        match code {
+            CodeTaal::VarGet { name } => {
+                used.insert(name.clone());
             }
-            // merge locals into outer defined for this scope
-            for d in local_defined {
-                defined.insert(d);
+            CodeTaal::VarDef { name, value } => {
+                defined.insert(name.clone());
+                stack.push(&**value);
             }
-        }
-        CodeTaal::If { condition, then, else_block } => {
-            collect_free_vars_impl(condition, defined, used);
-            collect_free_vars_impl(then, defined, used);
-            if let Some(e) = else_block {
-                collect_free_vars_impl(e, defined, used);
+            CodeTaal::Block { statements } | CodeTaal::Concurrent { statements } => {
+                for stmt in statements.iter().rev() {
+                    stack.push(stmt);
+                }
             }
-        }
-        CodeTaal::Loop { condition, body } => {
-            collect_free_vars_impl(condition, defined, used);
-            collect_free_vars_impl(body, defined, used);
-        }
-        CodeTaal::FunctionDef { body, .. } => {
-            // params would be defined inside, but for simplicity treat body
-            collect_free_vars_impl(body, defined, used);
-        }
-        CodeTaal::Return { value } => {
-            if let Some(v) = value {
-                collect_free_vars_impl(v, defined, used);
+            CodeTaal::If { condition, then, else_block } => {
+                if let Some(e) = else_block {
+                    stack.push(&**e);
+                }
+                stack.push(&**then);
+                stack.push(&**condition);
             }
-        }
-        CodeTaal::Op { left, right, .. } => {
-            collect_free_vars_impl(left, defined, used);
-            collect_free_vars_impl(right, defined, used);
-        }
-        CodeTaal::FileOp { path, content, .. } => {
-            collect_free_vars_impl(path, defined, used);
-            if let Some(c) = content {
-                collect_free_vars_impl(c, defined, used);
+            CodeTaal::Loop { condition, body } => {
+                stack.push(&**body);
+                stack.push(&**condition);
             }
+            CodeTaal::ForEach { iterable, body, .. } => {
+                stack.push(&**body);
+                stack.push(&**iterable);
+            }
+            CodeTaal::FunctionDef { body, .. } => {
+                stack.push(&**body);
+            }
+            CodeTaal::Return { value } => {
+                if let Some(v) = value {
+                    stack.push(&**v);
+                }
+            }
+            CodeTaal::Op { left, right, .. } => {
+                stack.push(&**right);
+                stack.push(&**left);
+            }
+            CodeTaal::FileOp { path, content, .. } => {
+                if let Some(c) = content {
+                    stack.push(&**c);
+                }
+                stack.push(&**path);
+            }
+            CodeTaal::HttpOp { url, .. } => {
+                stack.push(&**url);
+            }
+            CodeTaal::TryCatch { try_block, catch_block, .. } => {
+                stack.push(&**catch_block);
+                stack.push(&**try_block);
+            }
+            CodeTaal::Daemon { body } => {
+                stack.push(&**body);
+            }
+            CodeTaal::Spawn { body, .. } => {
+                stack.push(&**body);
+            }
+            CodeTaal::Receive { timeout, body, .. } => {
+                stack.push(&**body);
+                if let Some(t) = timeout {
+                    stack.push(&**t);
+                }
+            }
+            CodeTaal::SendMessage { target, message } => {
+                stack.push(&**message);
+                stack.push(&**target);
+            }
+            CodeTaal::Handle { body, handlers, .. } => {
+                stack.push(&**body);
+                for (_, h) in handlers.iter().rev() {
+                    stack.push(&**h);
+                }
+            }
+            CodeTaal::Perform { args, .. } => {
+                for a in args.iter().rev() {
+                    stack.push(a);
+                }
+            }
+            CodeTaal::Resume { continuation, value } => {
+                stack.push(&**value);
+                stack.push(&**continuation);
+            }
+            CodeTaal::InlineAssembly { inputs, fallback, .. } => {
+                if let Some(f) = fallback {
+                    stack.push(&**f);
+                }
+                for (_, a) in inputs.iter().rev() {
+                    stack.push(&**a);
+                }
+            }
+            CodeTaal::TcpListen { addr } => stack.push(&**addr),
+            CodeTaal::TcpAccept { listener } => stack.push(&**listener),
+            CodeTaal::TcpConnect { addr } => stack.push(&**addr),
+            CodeTaal::TcpSend { socket, data } => { stack.push(&**data); stack.push(&**socket); },
+            CodeTaal::TcpReceive { socket, max_bytes } => {
+                if let Some(m) = max_bytes { stack.push(&**m); }
+                stack.push(&**socket);
+            },
+            CodeTaal::TcpClose { socket } => stack.push(&**socket),
+            _ => {}
         }
-        CodeTaal::HttpOp { url, .. } => {
-            collect_free_vars_impl(url, defined, used);
-        }
-        _ => {}
     }
 }
 

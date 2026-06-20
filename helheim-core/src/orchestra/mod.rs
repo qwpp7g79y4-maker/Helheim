@@ -55,7 +55,7 @@ impl Orchestrator {
         // Register pure functions to global memory
         for module_ref in self.executor.stdlib.pure_modules.iter() {
             for (name, (params, body)) in &module_ref.value().functions {
-                self.memory.ast_funcs.insert(name.clone(), (params.clone(), body.clone(), true)); // Stdlib funcs are pub
+                self.memory.register_ast_function(Some(module_ref.key()), name.clone(), params.clone(), body.clone(), true); // Stdlib funcs are pub
             }
         }
         Ok(())
@@ -800,7 +800,13 @@ impl Orchestrator {
     
 
     fn list_nodes(&self) {
-        let peers = self.discovery.peers.lock().unwrap();
+        let peers = match self.discovery.peers.lock() {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::error!("Peers lock poisoned: {}", e);
+                return;
+            }
+        };
         tracing::debug!(
             "[NETWORK]: Gedetecteerde actieve nodes in Orchestrator netwerk: {}",
             peers.len()

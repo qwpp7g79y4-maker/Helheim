@@ -1,9 +1,8 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::collections::HashMap;
 use std::sync::Arc;
 use dashmap::DashMap;
 
-use crate::ffi::WasmModuleLoader;
 use helheim_lang::ast::CodeTaal;
 use helheim_lang::parser::HelParser;
 
@@ -14,17 +13,14 @@ pub struct PureModule {
 
 pub struct StdLibManager {
     pub pure_modules: DashMap<String, PureModule>,
-    pub native_modules: Arc<tokio::sync::Mutex<WasmModuleLoader>>,
+    pub package_manager: Arc<crate::orchestra::package_manager::PackageManager>,
 }
 
 impl StdLibManager {
-    pub fn new() -> Self {
+    pub fn new(package_manager: Arc<crate::orchestra::package_manager::PackageManager>) -> Self {
         Self {
             pure_modules: DashMap::new(),
-            native_modules: Arc::new(tokio::sync::Mutex::new(WasmModuleLoader::new(vec![
-                PathBuf::from("stdlib/lib"),
-                PathBuf::from("test_plugins"),
-            ]))),
+            package_manager,
         }
     }
 
@@ -73,7 +69,6 @@ impl StdLibManager {
         // Native modules
         let lib_dir = Path::new("stdlib/lib");
         if lib_dir.exists() && lib_dir.is_dir() {
-            let mut loader = self.native_modules.lock().await;
             for entry in std::fs::read_dir(lib_dir)? {
                 let entry = entry?;
                 let path = entry.path();
@@ -85,10 +80,10 @@ impl StdLibManager {
                                 stem.strip_prefix("lib").unwrap_or(stem)
                             );
                         
-                        // Let WasmModuleLoader handle the full load
-                        match loader.load(&lib_name, std::ptr::null_mut()) {
+                        // Pass loading to PackageManager as a trusted local module
+                        match self.package_manager.import_local_trusted(&lib_name, &path).await {
                             Ok(_) => {
-                                // Loader already prints the success message
+                                // Handled via tracing info internally
                             }
                             Err(e) => {
                                 tracing::error!("[STDLIB]: Fout bij laden native plugin '{}': {}", path.display(), e);

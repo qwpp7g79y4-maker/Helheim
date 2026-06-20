@@ -13,14 +13,15 @@ async fn test_wasm_ffi_sandboxing_math() {
     
     // Configure StdLibManager to search in our actual library directory
     {
-        let mut loader = orchestrator.executor.stdlib.native_modules.lock().await;
         // The project root during tests is `helheim-core`. 
         // Our math.wasm is in `../stdlib/lib/math.wasm`
         let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         path.push("..");
         path.push("stdlib");
         path.push("lib");
-        loader.add_search_path(path);
+        orchestrator.executor.package_manager.add_search_path(path.clone()).await;
+        path.push("math.wasm");
+        orchestrator.executor.package_manager.import_local_trusted("math", &path).await.expect("Failed to import math.wasm");
     }
 
     let script = r#"

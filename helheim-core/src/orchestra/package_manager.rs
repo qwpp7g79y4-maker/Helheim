@@ -44,26 +44,29 @@ pub struct PackageManifest {
 pub struct PackageManager {
     verified_cache: Arc<DashMap<String, VerifiedModule>>,
     loader: Arc<tokio::sync::Mutex<WasmModuleLoader>>,
+    search_paths: Vec<PathBuf>,
 }
 
 impl PackageManager {
     pub fn new(search_paths: Vec<PathBuf>) -> Self {
         Self {
             verified_cache: Arc::new(DashMap::new()),
-            loader: Arc::new(tokio::sync::Mutex::new(WasmModuleLoader::new(search_paths))),
+            loader: Arc::new(tokio::sync::Mutex::new(WasmModuleLoader::new(search_paths.clone()))),
+            search_paths,
         }
     }
 
+    // DEMO ONLY - nooit in productie aanroepen.
     pub fn sign(manifest: &PackageManifest, data: &[u8], _private_key: &[u8]) -> Vec<u8> {
         // For demo we use ring to create a signature.
         // Real flow: use the master private key offline, embed only public in HelSigner.
         use ring::signature::Ed25519KeyPair;
         // NOTE: In real deployment the private key never lives in the binary.
         // This is only for the sketch.
-        let pkcs8 = Ed25519KeyPair::generate_pkcs8(&ring::rand::SystemRandom::new()).unwrap();
-        let key_pair = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
+        let pkcs8 = Ed25519KeyPair::generate_pkcs8(&ring::rand::SystemRandom::new()).expect("Systeem RNG niet beschikbaar");
+        let key_pair = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).expect("Generatie van keypair faalde");
         
-        let manifest_json = serde_json::to_vec(manifest).unwrap();
+        let manifest_json = serde_json::to_vec(manifest).expect("Failed to serialize manifest");
         let mut signed_payload = Vec::with_capacity(manifest_json.len() + data.len());
         signed_payload.extend_from_slice(&manifest_json);
         signed_payload.extend_from_slice(data);
@@ -79,15 +82,12 @@ impl PackageManager {
 
     /// Fetch a package from local filesystem, HTTP, or Swarm.
     /// `source` can be:
-    ///   - local path to .so or .hel
+    ///   - local package name or relative path
     ///   - http://... 
     ///   - swarm:node_id/package_name  (uses DistributedMemory)
     async fn fetch(&self, source: &str, _distributed: &DistributedMemory) -> Result<(Vec<u8>, PackageManifest, Vec<u8>)> {
         if source.starts_with("swarm:") {
             // [PARKED] Phase 2 - HSP P2P packages
-            // P2P package fetching over HSP is explicitly parked for Phase 15.
-            // Future implementation will query the DistributedMemory Swarm DHT to locate the package
-            // and stream the chunks securely.
             anyhow::bail!("[PARKED] P2P package fetching over HSP ('swarm://') is explicitly parked for a future Swarm release.");
         } else if source.starts_with("http") || source.starts_with("https") {
             // [W·AG·AF] SSRF Protection: Restrict HTTP fetching to official registries only
@@ -98,11 +98,37 @@ impl PackageManager {
             let (manifest, sig, data) = self.parse_signed_blob(&resp)?;
             Ok((data, manifest, sig))
         } else {
-            // [W·AG·AF] C1 Review: Prevent Path Traversal
-            if source.contains("..") || source.starts_with('/') {
-                anyhow::bail!("Path traversal detected. Packages must be loaded from local relative paths.");
+            // Package resolving using configured search paths
+            if source.contains("..") || source.starts_with('/') || source.contains('\\') || source.contains(':') {
+                anyhow::bail!("Path traversal detected. Package source '{}' must be a valid package name or relative filename, not an absolute path or traversal sequence.", source);
             }
-            let path = PathBuf::from(source);
+            
+            let mut found_path = None;
+            for base in &self.search_paths {
+                let candidate = base.join(source);
+                
+                // Extra security: Ensure the resolved path is strictly inside the search path
+                if let Ok(canonical_base) = std::fs::canonicalize(base) {
+                    if let Ok(canonical_candidate) = std::fs::canonicalize(&candidate) {
+                        if canonical_candidate.starts_with(&canonical_base) && canonical_candidate.is_file() {
+                            found_path = Some(candidate);
+                            break;
+                        }
+                    } else if candidate.is_file() {
+                        // Fallback if canonicalize fails but file exists (e.g. symlinks)
+                        // Make sure the absolute path still starts with the base absolute path
+                        let abs_candidate = std::env::current_dir().unwrap_or_default().join(&candidate);
+                        let abs_base = std::env::current_dir().unwrap_or_default().join(base);
+                        if abs_candidate.starts_with(&abs_base) {
+                            found_path = Some(candidate);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            let path = found_path.ok_or_else(|| anyhow::anyhow!("Package '{}' not found in any search path.", source))?;
+            
             let mut data = fs::read(&path).await?;
             let sig_path = path.with_extension("sig");
             let sig = if sig_path.exists() {
@@ -117,7 +143,7 @@ impl PackageManager {
                 }
             };
             let manifest = self.try_parse_manifest(&data).unwrap_or_else(|| PackageManifest {
-                name: path.file_stem().unwrap().to_string_lossy().to_string(),
+                name: path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "unknown".to_string()),
                 version: "0.0.0".into(),
                 kind: if path.extension().map_or(false, |e| e == "wasm") { "wasm".into() } else { "hel".into() },
                 description: None,
@@ -238,13 +264,52 @@ impl PackageManager {
     pub async fn load_verified_native(
         &self,
         name: &str,
-        user_data: *mut std::ffi::c_void,
+        user_data_addr: usize,
     ) -> Result<Arc<crate::ffi::LoadedWasmModule>> {
         if self.verified_cache.get(name).is_none() {
             anyhow::bail!("Package '{}' has not been imported and verified yet. Use installeer_ondertekend first.", name);
         }
 
         let mut loader = self.loader.lock().await;
-        loader.load(name, user_data)
+        loader.load(name, user_data_addr as *mut std::ffi::c_void)
+    }
+    /// Eagerly loads a local native module without signature verification.
+    /// ONLY for use by the core engine (e.g., loading standard libraries).
+    pub async fn import_local_trusted(&self, name: &str, path: &std::path::Path) -> Result<VerifiedModule> {
+        let data = tokio::fs::read(path).await?;
+        let verified = VerifiedModule {
+            name: name.to_string(),
+            version: "1.0.0".to_string(),
+            data,
+            signature: vec![],
+            is_native: true, // Native wasm
+        };
+
+        self.verified_cache.insert(name.to_string(), verified.clone());
+
+        let mut loader = self.loader.lock().await;
+        // Dummy user_data, real callers will provide it when running functions
+        let _ = loader.load(name, std::ptr::null_mut())?;
+
+        tracing::info!("[PACKAGE] Trusted internal module '{}' ingeladen.", name);
+        Ok(verified)
+    }
+
+    /// Add a search path to the internal WasmModuleLoader
+    pub async fn add_search_path(&self, path: std::path::PathBuf) {
+        let mut loader = self.loader.lock().await;
+        loader.add_search_path(path);
+    }
+
+    /// Proxy to get a loaded Wasm module
+    pub async fn get_native(&self, name: &str) -> Option<Arc<crate::ffi::LoadedWasmModule>> {
+        let loader = self.loader.lock().await;
+        loader.get(name)
+    }
+
+    /// Proxy to reload a Wasm module (hot-reloading)
+    pub async fn reload_native(&self, name: &str, user_data_addr: usize) -> Result<Arc<crate::ffi::LoadedWasmModule>> {
+        let mut loader = self.loader.lock().await;
+        loader.reload(name, user_data_addr as *mut std::ffi::c_void)
     }
 }

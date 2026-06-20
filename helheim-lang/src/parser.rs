@@ -81,19 +81,20 @@ impl HelParser {
 
     pub fn parse(input: &str) -> Result<Vec<CodeTaal>> {
         let tokens = Self::tokenize(input);
-        let mut iter = tokens.into_iter().peekable();
-        let mut ast = Vec::new();
-
-        while iter.peek().is_some() {
-            // Inject line/col marker
-            if let Some(tok) = iter.peek() {
-                ast.push(CodeTaal::LocationMarker { line: tok.line, col: tok.column });
-            }
-            if let Some(stmt) = Self::parse_statement(input, &mut iter)? {
-                ast.push(stmt);
+        let mut tokens_with_braces = vec![Token { kind: TokenKind::LBrace, value: "{".to_string(), line: 0, column: 0 }];
+        for t in tokens {
+            if t.value != "" || !matches!(t.kind, TokenKind::Eof) {
+                tokens_with_braces.push(t);
             }
         }
-        Ok(ast)
+        tokens_with_braces.push(Token { kind: TokenKind::RBrace, value: "}".to_string(), line: 0, column: 0 });
+        
+        let mut iter = tokens_with_braces.into_iter().peekable();
+        if let CodeTaal::Block { statements } = Self::parse_block(input, &mut iter)? {
+            Ok(statements)
+        } else {
+            Ok(vec![])
+        }
     }
 
     fn parse_statement(
@@ -209,10 +210,10 @@ impl HelParser {
                     return Err(anyhow::anyhow!("Fout op regel {}: Verwachte waarde voor '{}'", token.line, name));
                 } else if val_tokens.len() == 1 {
                     let v = &val_tokens[0].value;
-                    if v.parse::<i64>().is_ok() {
-                        Box::new(CodeTaal::Literal(LiteralValue::Int(v.parse().unwrap())))
-                    } else if v.parse::<f64>().is_ok() {
-                        Box::new(CodeTaal::Literal(LiteralValue::Float(v.parse().unwrap())))
+                    if let Ok(num) = v.parse::<i64>() {
+                        Box::new(CodeTaal::Literal(LiteralValue::Int(num)))
+                    } else if let Ok(num) = v.parse::<f64>() {
+                        Box::new(CodeTaal::Literal(LiteralValue::Float(num)))
                     } else if v.starts_with("b\"") {
                         let inner = v.trim_start_matches('b').trim_matches('"').to_string();
                         Box::new(CodeTaal::Literal(LiteralValue::Bytes(inner.into_bytes())))
@@ -301,44 +302,6 @@ impl HelParser {
                     iterator: iterator.value.clone(),
                     iterable: iterable_ast,
                     body: body_ast,
-                }))
-            }
-            "als" | "if" => {
-                let mut condition_tokens = Vec::new();
-                while let Some(t) = iter.peek() {
-                    if t == "dan" || t == "then" {
-                        iter.next();
-                        break;
-                    } // Consume 'dan' or 'then'
-                    if t == "{" {
-                        break;
-                    } // Fallback if 'dan' is missing
-                    condition_tokens.push(iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde van het script"))?);
-                }
-                
-                let cond_ast = if condition_tokens.is_empty() {
-                    return Err(Self::format_parse_error(input, &token, "Verwachte conditie voor 'als'"));
-                } else {
-                    let mut expr_iter = condition_tokens.into_iter().peekable();
-                    Box::new(Self::parse_expression(input, &mut expr_iter, 0)?)
-                };
-
-                let body_ast = Box::new(Self::parse_block(input, iter)?);
-
-                // Optioneel 'anders'/'else' blok vangen
-                let mut else_block = None;
-                if let Some(next_token) = iter.peek() {
-                    if next_token == "anders" || next_token == "else" {
-                        // Consume 'anders'
-                        iter.next();
-                        else_block = Some(Box::new(Self::parse_block(input, iter)?));
-                    }
-                }
-
-                Ok(Some(CodeTaal::If {
-                    condition: cond_ast,
-                    then: body_ast,
-                    else_block,
                 }))
             }
             "tegelijkertijd" | "concurrent" | "async" => {
@@ -603,7 +566,7 @@ impl HelParser {
                 if let Some(t) = next {
                     if !t.value.starts_with('{') && !t.value.contains("=>") {
                         // treat as name if not immediately a block
-                        let name_tok = iter.next().unwrap();
+                        let name_tok = iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Verwacht actor naam na 'spawn'"))?;
                         name = Some(name_tok.value.clone());
                     }
                 }
@@ -695,7 +658,28 @@ impl HelParser {
                         args.push(Self::parse_expression(input, iter, 0)?);
                     }
                 }
-                Ok(Some(CodeTaal::Perform { effect, operation, args }))
+                
+                if let Some((ns, eff)) = effect.split_once("::") {
+                    Ok(Some(CodeTaal::QualifiedPerform {
+                        ns: ns.to_string(),
+                        effect: eff.to_string(),
+                        operation,
+                        args,
+                    }))
+                } else if let Some((ns, eff)) = effect.split_once('.') {
+                    Ok(Some(CodeTaal::QualifiedPerform {
+                        ns: ns.to_string(),
+                        effect: eff.to_string(),
+                        operation,
+                        args,
+                    }))
+                } else {
+                    Ok(Some(CodeTaal::Perform {
+                        effect,
+                        operation,
+                        args,
+                    }))
+                }
             }
             "handle" | "handel_af" => {
                 let effect = iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Verwacht effect naam"))?.value;
@@ -710,7 +694,8 @@ impl HelParser {
                         iter.next();
                         break;
                     }
-                    let op_name = iter.next().unwrap().value;
+                    let op_tok = iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde in handler"))?;
+                    let op_name = op_tok.value;
                     let arrow = iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Verwacht '=>'"))?;
                     if arrow.value != "=>" {
                         return Err(Self::format_parse_error(input, &arrow, "Verwacht '=>'"));
@@ -760,7 +745,8 @@ impl HelParser {
                 if let Some(t) = iter.peek() {
                     let v = t.value.as_str();
                     if v != "{" && v != "in" && v != "invoer" && v != "out" && v != "uitvoer" && v != "clobber" {
-                        target = iter.next().unwrap().value.clone();
+                        let t_next = iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde voor target"))?;
+                        target = t_next.value.clone();
                     }
                 }
 
@@ -781,7 +767,8 @@ impl HelParser {
                                 iter.next();
                                 continue;
                             }
-                            let name = iter.next().unwrap().value.clone();
+                            let name_tok = iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde in inputs"))?;
+                            let name = name_tok.value.clone();
                             let eq = iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Verwacht '=' na in-variabele"))?;
                             if eq.value != "=" { return Err(Self::format_parse_error(input, &eq, "Verwacht '='")); }
                             let expr = Self::parse_expression(input, iter, 0)?;
@@ -800,7 +787,8 @@ impl HelParser {
                                 iter.next();
                                 continue;
                             }
-                            outputs.push(iter.next().unwrap().value.clone());
+                            let out_tok = iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde in outputs"))?;
+                            outputs.push(out_tok.value.clone());
                         }
                     } else if t.value == "clobber" {
                         iter.next(); // consume 'clobber'
@@ -815,7 +803,8 @@ impl HelParser {
                                 iter.next();
                                 continue;
                             }
-                            clobbers.push(iter.next().unwrap().value.clone().trim_matches('"').to_string());
+                            let clobber_tok = iter.next().ok_or_else(|| Self::format_parse_error(input, &token, "Onverwacht einde in clobbers"))?;
+                            clobbers.push(clobber_tok.value.clone().trim_matches('"').to_string());
                         }
                     } else {
                         let err_t = t.clone();
@@ -1194,7 +1183,14 @@ impl HelParser {
                         if c == "," { iter.next(); }
                     }
                 }
-                Ok(Some(CodeTaal::FunctionCall { name, args }))            }
+                if let Some((ns, func)) = name.split_once("::") {
+                    Ok(Some(CodeTaal::QualifiedCall { ns: ns.to_string(), name: func.to_string(), args }))
+                } else if let Some((ns, func)) = name.split_once('.') {
+                    Ok(Some(CodeTaal::QualifiedCall { ns: ns.to_string(), name: func.to_string(), args }))
+                } else {
+                    Ok(Some(CodeTaal::FunctionCall { name, args }))
+                }
+            }
             "rune" => {
                 let mut rune_tokens = vec!["rune".to_string()];
                 while let Some(t) = iter.peek() {
@@ -1270,27 +1266,109 @@ impl HelParser {
     }
 
     fn parse_block(input: &str, iter: &mut Peekable<std::vec::IntoIter<Token>>) -> Result<CodeTaal> {
-        // Verwacht dat huidige token '{' al geconsumed is of dat we er voor staan?
-        // In parse_statement kijken we met peek.
-        // Als we hier aangeroepen worden vanuit 'zolang', staan we VOOR de '{'.
         let start = iter.next().ok_or(anyhow::anyhow!("Fout: Verwacht '{{'"))?;
         if start != "{" {
             return Err(Self::format_parse_error(input, &start, "Verwacht '{{'"));
         }
 
-        let mut statements = Vec::new();
-        while let Some(token) = iter.peek() {
-            if token == "}" {
+        enum Frame {
+            Block { statements: Vec<CodeTaal> },
+            IfThen { condition: Box<CodeTaal>, statements: Vec<CodeTaal> },
+            IfElse { condition: Box<CodeTaal>, then_block: Box<CodeTaal>, statements: Vec<CodeTaal> },
+        }
+
+        let mut stack = vec![Frame::Block { statements: Vec::new() }];
+
+        while let Some(tok_ref) = iter.peek() {
+            let tok = tok_ref.clone();
+            if tok.value == "}" {
                 iter.next(); // Consume '}'
-                return Ok(CodeTaal::Block { statements });
+                let top = stack.pop().ok_or_else(|| Self::format_parse_error(input, &tok, "Onverwacht '}'"))?;
+                let completed = match top {
+                    Frame::Block { statements } => CodeTaal::Block { statements },
+                    Frame::IfThen { condition, statements } => {
+                        let then_block = CodeTaal::Block { statements };
+                        if let Some(next) = iter.peek() {
+                            if next.value == "anders" || next.value == "else" {
+                                iter.next(); // Consume 'anders'
+                                let start_else = iter.next().ok_or_else(|| anyhow::anyhow!("Verwacht '{{' na anders"))?;
+                                if start_else.value != "{" {
+                                    return Err(Self::format_parse_error(input, &start_else, "Verwacht '{{'"));
+                                }
+                                stack.push(Frame::IfElse { condition, then_block: Box::new(then_block), statements: Vec::new() });
+                                continue;
+                            }
+                        }
+                        CodeTaal::If { condition, then: Box::new(then_block), else_block: None }
+                    }
+                    Frame::IfElse { condition, then_block, statements } => {
+                        CodeTaal::If { condition, then: then_block, else_block: Some(Box::new(CodeTaal::Block { statements })) }
+                    }
+                };
+
+                if stack.is_empty() {
+                    return Ok(completed);
+                } else {
+                    match stack.last_mut().ok_or_else(|| Self::format_parse_error(input, &tok, "Onverwacht '}' (lege stack)"))? {
+                        Frame::Block { statements } => statements.push(completed),
+                        Frame::IfThen { statements, .. } => statements.push(completed),
+                        Frame::IfElse { statements, .. } => statements.push(completed),
+                    }
+                }
+                continue;
             }
+
+            if tok.value == "{" {
+                iter.next(); // Consume '{'
+                stack.push(Frame::Block { statements: Vec::new() });
+                continue;
+            }
+
+            if tok.value == "als" || tok.value == "if" {
+                let token = iter.next().unwrap();
+                let mut condition_tokens = Vec::new();
+                while let Some(t) = iter.peek() {
+                    if t.value == "dan" || t.value == "then" {
+                        iter.next();
+                        break;
+                    }
+                    if t.value == "{" {
+                        break;
+                    }
+                    condition_tokens.push(iter.next().unwrap());
+                }
+                let cond_ast = if condition_tokens.is_empty() {
+                    return Err(Self::format_parse_error(input, &token, "Verwachte conditie voor 'als'"));
+                } else {
+                    let mut expr_iter = condition_tokens.into_iter().peekable();
+                    Box::new(Self::parse_expression(input, &mut expr_iter, 0)?)
+                };
+                let open = iter.next().ok_or_else(|| anyhow::anyhow!("Verwacht '{{' na als conditie"))?;
+                if open.value != "{" {
+                    return Err(Self::format_parse_error(input, &open, "Verwacht '{{'"));
+                }
+                stack.push(Frame::IfThen { condition: cond_ast, statements: Vec::new() });
+                continue;
+            }
+
+            // Location marker
+            let loc = CodeTaal::LocationMarker { line: tok.line, col: tok.column };
+            match stack.last_mut().ok_or_else(|| Self::format_parse_error(input, &tok, "Geen scope voor locatie-marker"))? {
+                Frame::Block { statements } => statements.push(loc),
+                Frame::IfThen { statements, .. } => statements.push(loc),
+                Frame::IfElse { statements, .. } => statements.push(loc),
+            }
+
             if let Some(stmt) = Self::parse_statement(input, iter)? {
-                statements.push(stmt);
+                match stack.last_mut().ok_or_else(|| Self::format_parse_error(input, &tok, "Geen scope voor statement"))? {
+                    Frame::Block { statements } => statements.push(stmt),
+                    Frame::IfThen { statements, .. } => statements.push(stmt),
+                    Frame::IfElse { statements, .. } => statements.push(stmt),
+                }
             }
         }
-        Err(anyhow::anyhow!(
-            "Fout: Onverwacht einde bestand, sluitende '}}' mist."
-        ))
+        
+        Err(anyhow::anyhow!("Fout: Onverwacht einde bestand, sluitende '}}' mist."))
     }
 }
 
@@ -1567,7 +1645,23 @@ impl HelParser {
                             args.push(Self::parse_expression(input, iter, 0)?);
                         }
                     }
-                    return Ok(CodeTaal::Perform { effect, operation, args });
+                    if let Some((ns, eff)) = effect.split_once("::") {
+                        return Ok(CodeTaal::QualifiedPerform {
+                            ns: ns.to_string(),
+                            effect: eff.to_string(),
+                            operation,
+                            args,
+                        });
+                    } else if let Some((ns, eff)) = effect.split_once('.') {
+                        return Ok(CodeTaal::QualifiedPerform {
+                            ns: ns.to_string(),
+                            effect: eff.to_string(),
+                            operation,
+                            args,
+                        });
+                    } else {
+                        return Ok(CodeTaal::Perform { effect, operation, args });
+                    }
                 }
                 "roep_aan" | "invoke" | "call" => {
                     iter.next(); // consume keyword
@@ -1582,7 +1676,13 @@ impl HelParser {
                             if c.value == "," { iter.next(); }
                         }
                     }
-                    return Ok(CodeTaal::FunctionCall { name, args });
+                    if let Some((ns, func)) = name.split_once("::") {
+                        return Ok(CodeTaal::QualifiedCall { ns: ns.to_string(), name: func.to_string(), args });
+                    } else if let Some((ns, func)) = name.split_once('.') {
+                        return Ok(CodeTaal::QualifiedCall { ns: ns.to_string(), name: func.to_string(), args });
+                    } else {
+                        return Ok(CodeTaal::FunctionCall { name, args });
+                    }
                 }
                 "haal" | "fetch" => {
                     iter.next(); // consume keyword
@@ -1763,15 +1863,15 @@ impl HelParser {
                                     iter.next();
                                     continue;
                                 }
-                                let sitem = iter.next().unwrap();
+                                let sitem = iter.next().ok_or_else(|| anyhow::anyhow!("Onverwacht einde in 2D array"))?;
                                 let slit = if sitem.value == "waar" || sitem.value == "true" {
                                     LiteralValue::Bool(true)
                                 } else if sitem.value == "onwaar" || sitem.value == "false" {
                                     LiteralValue::Bool(false)
-                                } else if sitem.value.parse::<i64>().is_ok() {
-                                    LiteralValue::Int(sitem.value.parse().unwrap())
-                                } else if sitem.value.parse::<f64>().is_ok() {
-                                    LiteralValue::Float(sitem.value.parse().unwrap())
+                                } else if let Ok(num) = sitem.value.parse::<i64>() {
+                                    LiteralValue::Int(num)
+                                } else if let Ok(num) = sitem.value.parse::<f64>() {
+                                    LiteralValue::Float(num)
                                 } else if sitem.value.starts_with("\"") {
                                     if sitem.value.starts_with("b\"") {
                                 let inner = sitem.value.trim_start_matches('b').trim_matches('"').to_string();
@@ -1800,15 +1900,15 @@ impl HelParser {
                             iter.next();
                             continue;
                         }
-                        let item_tok = iter.next().unwrap();
+                        let item_tok = iter.next().ok_or_else(|| anyhow::anyhow!("Onverwacht einde in lijst"))?;
                         let lit = if item_tok.value == "waar" || item_tok.value == "true" {
                             LiteralValue::Bool(true)
                         } else if item_tok.value == "onwaar" || item_tok.value == "false" {
                             LiteralValue::Bool(false)
-                        } else if item_tok.value.parse::<i64>().is_ok() {
-                            LiteralValue::Int(item_tok.value.parse().unwrap())
-                        } else if item_tok.value.parse::<f64>().is_ok() {
-                            LiteralValue::Float(item_tok.value.parse().unwrap())
+                        } else if let Ok(num) = item_tok.value.parse::<i64>() {
+                            LiteralValue::Int(num)
+                        } else if let Ok(num) = item_tok.value.parse::<f64>() {
+                            LiteralValue::Float(num)
                         } else if item_tok.value.starts_with("\"") {
                             if item_tok.value.starts_with("b\"") {
                                 let inner = item_tok.value.trim_start_matches('b').trim_matches('"').to_string();
@@ -1860,7 +1960,7 @@ impl HelParser {
                         let call = if name == "popc" || name == "popcount" {
                             if args.len() == 1 {
                                 CodeTaal::Op {
-                                    left: Box::new(args.into_iter().next().unwrap()),
+                                    left: Box::new(args.into_iter().next().ok_or_else(|| anyhow::anyhow!("Ontbrekend argument voor popc"))?),
                                     op: "popc".to_string(),
                                     right: Box::new(CodeTaal::Literal(LiteralValue::Int(0))),
                                 }

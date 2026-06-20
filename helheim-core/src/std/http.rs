@@ -9,8 +9,11 @@ impl HttpManager {
     /// Haalt content van een URL (GET request).
     /// Voorbeeld: get("https://api.ipify.org")
     pub fn get(url: &str) -> Result<String> {
-        // Ureq is synchroon en blokkeert, wat prima is voor CLI scripts.
-        let mut resp = ureq::get(url)
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .timeout_global(Some(std::time::Duration::from_secs(10)))
+            .build()
+            .into();
+        let mut resp = agent.get(url)
             .call()
             .map_err(|e| anyhow!("HTTP Fout bij verbinden met '{}': {}", url, e))?;
 

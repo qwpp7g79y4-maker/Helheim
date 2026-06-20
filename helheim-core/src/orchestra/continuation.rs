@@ -15,6 +15,7 @@ pub struct SerializableContinuation {
     pub lamport: u64,
     pub resource_requirements: Vec<String>,
     pub signature: Option<String>,
+    pub is_privileged: bool,
 }
 
 pub fn generate_continuation_id() -> u64 {
@@ -37,6 +38,7 @@ pub fn capture_continuation(
     memory: &MemoryManager,
     effect: &str,
     distributed: &crate::orchestra::distributed::DistributedMemory,
+    is_privileged: bool,
 ) -> anyhow::Result<SerializableContinuation> {
     // Weiger migrate als er open handles zijn
     let open_handles: Vec<u64> = crate::orchestra::tcp_resources::RESOURCE_TABLE
@@ -68,6 +70,7 @@ pub fn capture_continuation(
         lamport: distributed.bump(),
         resource_requirements: vec![],
         signature: None,
+        is_privileged,
     };
     
     // Cryptografische ondertekening (Swarm Node Security)

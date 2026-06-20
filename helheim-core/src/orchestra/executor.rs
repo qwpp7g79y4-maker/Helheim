@@ -32,9 +32,12 @@ pub struct Executor {
 
 impl Executor {
     pub fn new(memory: Arc<MemoryManager>, discovery: Arc<crate::network::DiscoveryService>, distributed: Arc<crate::orchestra::distributed::DistributedMemory>) -> Self {
-        let stdlib = Arc::new(crate::orchestra::stdlib_manager::StdLibManager::new());
+        let package_manager = Arc::new(crate::orchestra::package_manager::PackageManager::new(vec![
+            std::path::PathBuf::from("stdlib/lib"),
+            std::path::PathBuf::from("test_plugins"),
+        ]));
+        let stdlib = Arc::new(crate::orchestra::stdlib_manager::StdLibManager::new(package_manager.clone()));
         let actor_registry = Arc::new(crate::orchestra::actor::ActorRegistry::new());
-        let package_manager = Arc::new(crate::orchestra::package_manager::PackageManager::new(vec![])); // search paths can be configured later
 
         Self { memory, discovery, distributed, stdlib, actor_registry, package_manager }
     }
@@ -144,6 +147,10 @@ impl Executor {
             while let Some(frame) = stack.pop() {
                 let (mut statements, mut pc, ctx): (Vec<helheim_lang::ast::CodeTaal>, usize, crate::common::context::ExecutionContext) = match frame {
                     crate::orchestra::trampoline::EvalFrame::Statements { statements, pc, ctx } => (statements, pc, ctx),
+                    crate::orchestra::trampoline::EvalFrame::PopScope => {
+                        self.memory.pop_scope();
+                        continue;
+                    }
                 };
 
                 let mut break_inner = false;
@@ -216,9 +223,18 @@ impl Executor {
 
                         // 2. Execute on Hardware
                         tracing::debug!("[GPU]: Launching Kernel on Nvidia RTX 5060 Ti...");
-                        let id_a = crate::gpu::gpu_alloc_tensor_random(m, k).unwrap_or(0);
-                        let id_b = crate::gpu::gpu_alloc_tensor_random(k, n).unwrap_or(0);
-                        let id_c = crate::gpu::gpu_alloc_tensor_empty(m, n).unwrap_or(0);
+                        let id_a = match crate::gpu::gpu_alloc_tensor_random(m, k) {
+                            Ok(id) => id,
+                            Err(e) => { tracing::error!("[GPU]: Tensor A allocatie gefaald: {}", e); return Err(anyhow::anyhow!("GPU allocatie gefaald: {}", e)); }
+                        };
+                        let id_b = match crate::gpu::gpu_alloc_tensor_random(k, n) {
+                            Ok(id) => id,
+                            Err(e) => { tracing::error!("[GPU]: Tensor B allocatie gefaald: {}", e); return Err(anyhow::anyhow!("GPU allocatie gefaald: {}", e)); }
+                        };
+                        let id_c = match crate::gpu::gpu_alloc_tensor_empty(m, n) {
+                            Ok(id) => id,
+                            Err(e) => { tracing::error!("[GPU]: Tensor C allocatie gefaald: {}", e); return Err(anyhow::anyhow!("GPU allocatie gefaald: {}", e)); }
+                        };
                         match crate::gpu::gpu_execute_raw_ptx_ids(&ptx, id_a, id_b, id_c, m, n, k) {
                             Ok(gflops) => tracing::debug!(
                                 "[GPU]: ✅ Execution Complete. Performance: {:.2} GFLOPS",
@@ -342,7 +358,7 @@ impl Executor {
                             _ => tracing::debug!("[TCP ERROR]: Onbekende TCP actie '{}'", action),
                         }
                     }
-                    CodeTaal::FunctionCall { .. } => {
+                    CodeTaal::FunctionCall { .. } | CodeTaal::QualifiedCall { .. } => {
                         let _ = self.evaluate_ast_expr(&stmt, ctx.clone()).await?;
                     }
                     // === TOP-LEVEL EFFECT DISPATCHER (Stap B) ===
@@ -374,10 +390,10 @@ impl Executor {
                         let handler_var = format!("__effect_handler_{}_{}", full_effect, operation);
                         if let Some(HelheimType::String(ast_str)) = self.memory.get_var_native(&handler_var) {
                             if let Ok(handler_ast) = serde_json::from_str::<CodeTaal>(&ast_str) {
-                                let continuation = crate::orchestra::continuation::capture_continuation(&stmt, &self.memory, &effect, &self.distributed)?;
+                                let continuation = crate::orchestra::continuation::capture_continuation(&stmt, &self.memory, &effect, &self.distributed, ctx.is_privileged)?;
                                 
                                 let _guard = crate::orchestra::memory::ScopeGuard::new(&self.memory);
-                                let json_str = serde_json::to_string(&continuation).unwrap_or_default();
+                                let json_str = serde_json::to_string(&continuation).map_err(|e| anyhow::anyhow!("Continuation serialization fail: {}", e))?;
                                 let b64_str = base64::engine::general_purpose::STANDARD.encode(json_str);
                                 self.memory.set_var_native("resume_k".to_string(), HelheimType::String(b64_str));
                                 
@@ -405,12 +421,12 @@ impl Executor {
                                 }
                                 ("Actor", "spawn") => {
                                     if args.len() >= 1 {
-                                        let code = self.evaluate_ast_expr(&args[0], ctx.clone()).await.unwrap_or_default().trim_matches('"').to_string();
+                                        let code = self.evaluate_ast_expr(&args[0], ctx.clone()).await?.trim_matches('"').to_string();
                                         let body_ast = helheim_lang::parser::HelParser::parse(&code).unwrap_or_default();
                                         
                                         let mut strategy_str = "Stop".to_string();
                                         if args.len() == 2 {
-                                            strategy_str = self.evaluate_ast_expr(&args[1], ctx.clone()).await.unwrap_or_default().trim_matches('"').to_string();
+                                            strategy_str = self.evaluate_ast_expr(&args[1], ctx.clone()).await?.trim_matches('"').to_string();
                                         }
 
                                         let temp_stmt = CodeTaal::Spawn { name: None, body: Box::new(CodeTaal::Block { statements: body_ast }) };
@@ -437,8 +453,8 @@ impl Executor {
                                 }
                                 ("Asm", "inline") => {
                                     if args.len() >= 2 {
-                                        let target = self.evaluate_ast_expr(&args[0], ctx.clone()).await.unwrap_or_default().trim_matches('"').to_string();
-                                        let code = self.evaluate_ast_expr(&args[1], ctx.clone()).await.unwrap_or_default().trim_matches('"').to_string();
+                                        let target = self.evaluate_ast_expr(&args[0], ctx.clone()).await?.trim_matches('"').to_string();
+                                        let code = self.evaluate_ast_expr(&args[1], ctx.clone()).await?.trim_matches('"').to_string();
                                         let temp_stmt = CodeTaal::InlineAssembly { target, code, inputs: vec![], outputs: vec![], clobbers: vec![], fallback: None };
                                         let _ = self.execute_ast(vec![temp_stmt], ctx.clone()).await;
                                     } else {
@@ -447,11 +463,11 @@ impl Executor {
                                 }
                                 ("Swarm", "dispatch") => {
                                     if args.len() >= 3 {
-                                        let ip = self.evaluate_ast_expr(&args[0], ctx.clone()).await.unwrap_or_default().trim_matches('"').to_string();
-                                        let port_str = self.evaluate_ast_expr(&args[1], ctx.clone()).await.unwrap_or_default().trim_matches('"').to_string();
+                                        let ip = self.evaluate_ast_expr(&args[0], ctx.clone()).await?.trim_matches('"').to_string();
+                                        let port_str = self.evaluate_ast_expr(&args[1], ctx.clone()).await?.trim_matches('"').to_string();
                                         let port: u16 = port_str.parse().unwrap_or(8080);
                                         
-                                        let payload = self.evaluate_ast_expr(&args[2], ctx.clone()).await.unwrap_or_default();
+                                        let payload = self.evaluate_ast_expr(&args[2], ctx.clone()).await?;
                                         
                                         let _ = crate::network::hsp_node::SwarmEngine::dispatch(&ip, port, &payload).await;
                                     } else {
@@ -460,8 +476,8 @@ impl Executor {
                                 }
                                 ("Swarm", "migrate") => {
                                     if args.len() >= 2 {
-                                        let ip = self.evaluate_ast_expr(&args[0], ctx.clone()).await.unwrap_or_default().trim_matches('"').to_string();
-                                        let port_str = self.evaluate_ast_expr(&args[1], ctx.clone()).await.unwrap_or_default().trim_matches('"').to_string();
+                                        let ip = self.evaluate_ast_expr(&args[0], ctx.clone()).await?.trim_matches('"').to_string();
+                                        let port_str = self.evaluate_ast_expr(&args[1], ctx.clone()).await?.trim_matches('"').to_string();
                                         let port: u16 = port_str.parse().unwrap_or(8080);
 
                                         // Monnikenwerk 1.3: Check voor `Migratie.voor_vertrek` handler vóór capture
@@ -479,7 +495,144 @@ impl Executor {
                                             }
                                         }
 
-                                        let continuation = crate::orchestra::continuation::capture_continuation(&stmt, &self.memory, effect, &self.distributed)?;
+                                        let continuation = crate::orchestra::continuation::capture_continuation(&stmt, &self.memory, effect, &self.distributed, ctx.is_privileged)?;
+                                        let wrapper = serde_json::json!({
+                                            "type": "TeleportContinuation",
+                                            "continuation": continuation
+                                        });
+                                        let payload_str = wrapper.to_string();
+                                        crate::trace_event!(crate::orchestra::flight_recorder::TraceKind::MigrateCapture, crate::orchestra::flight_recorder::node_id_for(&stmt, Some(&self.memory)), payload_str.len() as u64);
+
+                                        match crate::network::hsp_node::SwarmEngine::dispatch(&ip, port, &payload_str).await {
+                                            Ok(_) => {
+                                                crate::trace_event!(crate::orchestra::flight_recorder::TraceKind::MigrateTeleport, crate::orchestra::flight_recorder::node_id_for(&stmt, Some(&self.memory)), 1);
+                                                return Ok(None); // Teleport success, abort local execution
+                                            },
+                                            Err(e) => {
+                                                crate::trace_event!(crate::orchestra::flight_recorder::TraceKind::MigrateTeleport, crate::orchestra::flight_recorder::node_id_for(&stmt, Some(&self.memory)), 0);
+                                                return Err(self.enrich_error(anyhow::anyhow!("Teleport failed: {}", e), &stmt));
+                                            }
+                                        }
+                                    }
+                                    return Err(anyhow::anyhow!("Swarm.migrate vereist target_ip, target_port"));
+                                }
+                                _ => {
+                                    tracing::debug!("[EFFECT ERROR] No handler and no native fallback for {}.{}", effect, operation);
+                                }
+                            }
+                        }
+                    }
+CodeTaal::QualifiedPerform { ref ns, ref effect, ref operation, ref args } => {
+                        let full_effect = format!("{}::{}", ns, effect);
+                        let handler_var = format!("__effect_handler_{}_{}", full_effect, operation);
+                        if let Some(HelheimType::String(ast_str)) = self.memory.get_var_native(&handler_var) {
+                            if let Ok(handler_ast) = serde_json::from_str::<CodeTaal>(&ast_str) {
+                                let continuation = crate::orchestra::continuation::capture_continuation(&stmt, &self.memory, &effect, &self.distributed, ctx.is_privileged)?;
+                                
+                                let _guard = crate::orchestra::memory::ScopeGuard::new(&self.memory);
+                                let json_str = serde_json::to_string(&continuation).map_err(|e| anyhow::anyhow!("Continuation serialization fail: {}", e))?;
+                                let b64_str = base64::engine::general_purpose::STANDARD.encode(json_str);
+                                self.memory.set_var_native("resume_k".to_string(), HelheimType::String(b64_str));
+                                
+                                for (idx, arg) in args.iter().enumerate() {
+                                    if let Ok(arg_val) = self.evaluate_ast_expr(arg, ctx.clone()).await {
+                                        self.memory.set_var_native(format!("arg{}", idx + 1), HelheimType::parse(&arg_val));
+                                    }
+                                }
+                                
+                                let _ = self.execute_ast(vec![handler_ast], ctx.clone()).await;
+                            }
+                        } else {
+                            let base_effect = effect.rsplit("::").next().unwrap_or(effect);
+                            match (base_effect, operation.as_str()) {
+                                ("Tcp", _) => {
+                                    let _ = self.evaluate_tcp_primitive(&operation, &stmt, &self.memory, ctx.clone()).await;
+                                }
+                                ("Actor", "send") => {
+                                    if args.len() == 2 {
+                                        let temp_stmt = CodeTaal::SendMessage { target: Box::new(args[0].clone()), message: Box::new(args[1].clone()) };
+                                        let _ = self.execute_ast(vec![temp_stmt], ctx.clone()).await;
+                                    } else {
+                                        return Err(anyhow::anyhow!("Arity mismatch for Actor::send: expected 2, got {}", args.len()));
+                                    }
+                                }
+                                ("Actor", "spawn") => {
+                                    if args.len() >= 1 {
+                                        let code = self.evaluate_ast_expr(&args[0], ctx.clone()).await?.trim_matches('"').to_string();
+                                        let body_ast = helheim_lang::parser::HelParser::parse(&code).unwrap_or_default();
+                                        
+                                        let mut strategy_str = "Stop".to_string();
+                                        if args.len() == 2 {
+                                            strategy_str = self.evaluate_ast_expr(&args[1], ctx.clone()).await?.trim_matches('"').to_string();
+                                        }
+
+                                        let temp_stmt = CodeTaal::Spawn { name: None, body: Box::new(CodeTaal::Block { statements: body_ast }) };
+                                        
+                                        let _guard = crate::orchestra::memory::ScopeGuard::new(&self.memory);
+                                        self.memory.set_var_native("__supervision_strategy".to_string(), crate::orchestra::memory::HelheimType::String(strategy_str));
+                                        
+                                        let _ = self.execute_ast(vec![temp_stmt], ctx.clone()).await;
+                                    } else {
+                                        return Err(anyhow::anyhow!("Arity mismatch for Actor::spawn: expected 1 or 2, got {}", args.len()));
+                                    }
+                                }
+                                ("Trace", "record") => {
+                                    if args.len() == 3 {
+                                        if let (Ok(k), Ok(n), Ok(p)) = (self.evaluate_ast_expr(&args[0], ctx.clone()).await, self.evaluate_ast_expr(&args[1], ctx.clone()).await, self.evaluate_ast_expr(&args[2], ctx.clone()).await) {
+                                            if let (Ok(kind), Ok(node), Ok(payload)) = (k.parse::<u8>(), n.parse::<u64>(), p.parse::<u64>()) {
+                                                let trace_kind = unsafe { std::mem::transmute::<u8, crate::orchestra::flight_recorder::TraceKind>(kind.min(11)) };
+                                                crate::orchestra::flight_recorder::record(trace_kind, node, payload);
+                                            }
+                                        }
+                                    } else {
+                                        return Err(anyhow::anyhow!("Arity mismatch for Trace::record: expected 3, got {}", args.len()));
+                                    }
+                                }
+                                ("Asm", "inline") => {
+                                    if args.len() >= 2 {
+                                        let target = self.evaluate_ast_expr(&args[0], ctx.clone()).await?.trim_matches('"').to_string();
+                                        let code = self.evaluate_ast_expr(&args[1], ctx.clone()).await?.trim_matches('"').to_string();
+                                        let temp_stmt = CodeTaal::InlineAssembly { target, code, inputs: vec![], outputs: vec![], clobbers: vec![], fallback: None };
+                                        let _ = self.execute_ast(vec![temp_stmt], ctx.clone()).await;
+                                    } else {
+                                        return Err(anyhow::anyhow!("Arity mismatch for Asm::inline: expected at least 2, got {}", args.len()));
+                                    }
+                                }
+                                ("Swarm", "dispatch") => {
+                                    if args.len() >= 3 {
+                                        let ip = self.evaluate_ast_expr(&args[0], ctx.clone()).await?.trim_matches('"').to_string();
+                                        let port_str = self.evaluate_ast_expr(&args[1], ctx.clone()).await?.trim_matches('"').to_string();
+                                        let port: u16 = port_str.parse().unwrap_or(8080);
+                                        
+                                        let payload = self.evaluate_ast_expr(&args[2], ctx.clone()).await?;
+                                        
+                                        let _ = crate::network::hsp_node::SwarmEngine::dispatch(&ip, port, &payload).await;
+                                    } else {
+                                        return Err(anyhow::anyhow!("Arity mismatch for Swarm::dispatch: expected at least 3, got {}", args.len()));
+                                    }
+                                }
+                                ("Swarm", "migrate") => {
+                                    if args.len() >= 2 {
+                                        let ip = self.evaluate_ast_expr(&args[0], ctx.clone()).await?.trim_matches('"').to_string();
+                                        let port_str = self.evaluate_ast_expr(&args[1], ctx.clone()).await?.trim_matches('"').to_string();
+                                        let port: u16 = port_str.parse().unwrap_or(8080);
+
+                                        // Monnikenwerk 1.3: Check voor `Migratie.voor_vertrek` handler vóór capture
+                                        let handler_var = "__effect_handler_Migratie_voor_vertrek";
+                                        if let Some(HelheimType::String(ast_str)) = self.memory.get_var_native(handler_var) {
+                                            if let Ok(handler_ast) = serde_json::from_str::<CodeTaal>(&ast_str) {
+                                                tracing::debug!("[MIGRATIE]: 'voor_vertrek' handler gevonden, executing...");
+                                                let _guard = crate::orchestra::memory::ScopeGuard::new(&self.memory);
+                                                let res = self.execute_ast(vec![handler_ast], ctx.clone()).await;
+                                                if let Err(e) = res {
+                                                    // [W·AG·AF] C1 Review: Error propagation from voor_vertrek blocks teleport
+                                                    tracing::error!("[MIGRATIE] 'voor_vertrek' gecrasht. Teleportatie geannuleerd: {}", e);
+                                                    return Err(self.enrich_error(e, &stmt));
+                                                }
+                                            }
+                                        }
+
+                                        let continuation = crate::orchestra::continuation::capture_continuation(&stmt, &self.memory, effect, &self.distributed, ctx.is_privileged)?;
                                         let wrapper = serde_json::json!({
                                             "type": "TeleportContinuation",
                                             "continuation": continuation
@@ -510,7 +663,7 @@ impl Executor {
                         if let Ok(cont_b64) = self.evaluate_ast_expr(&continuation, ctx.clone()).await {
                             if let Ok(cont_bytes) = base64::engine::general_purpose::STANDARD.decode(cont_b64.trim_matches('"')) {
                                 if let Ok(cont) = serde_json::from_slice::<crate::orchestra::continuation::SerializableContinuation>(&cont_bytes) {
-                                    let resume_val_str = self.evaluate_ast_expr(&value, ctx.clone()).await.unwrap_or_default();
+                                    let resume_val_str = self.evaluate_ast_expr(&value, ctx.clone()).await?;
                                     let resume_val = HelheimType::parse(&resume_val_str);
                                     self.memory.restore_snapshot(&cont.captured_memory);
                                     
@@ -553,7 +706,7 @@ impl Executor {
                         new_ctx.current_module = Some(ns);
                         let _ = self.execute_ast(body, new_ctx).await;
                     }
-                    CodeTaal::Gebruik { path, module_naam: _ } => {
+                    CodeTaal::Gebruik { ref path, module_naam: _ } => {
                         let clean_path = path.trim_matches('"').to_string();
                         if clean_path.ends_with(".hel") {
                             // Lees en parse the .hel file
@@ -581,13 +734,17 @@ impl Executor {
                                 tracing::debug!("[MODULE ERROR]: Kan bestand '{}' niet inlezen.", clean_path);
                             }
                         } else {
-                            let mut loader = self.stdlib.native_modules.lock().await;
-                            match loader.load(&clean_path, std::ptr::null_mut()) {
+                            if !ctx.is_privileged {
+                                return Err(self.enrich_error(anyhow::anyhow!("[SECURITY]: Ongeldige bevoegdheid: Sandbox mag geen native/WASM modules laden"), &stmt));
+                            }
+                            
+                            // 5.4: Native module signing integratie - Gebruik package_manager ipv directe WasmModuleLoader bypass
+                            match self.package_manager.load_verified_native(&clean_path, 0).await {
                                 Ok(_module) => {
                                     tracing::info!("[AST]: Wasm module ingeladen vanaf '{}'.", clean_path);
                                 }
                                 Err(e) => {
-                                    tracing::debug!("[EXECUTOR]: Warning: CodeTaal::Gebruik for '{}' native load failed: {}", path, e);
+                                    tracing::debug!("[EXECUTOR]: Warning: CodeTaal::Gebruik for '{}' native load failed (not installed/verified?): {}", clean_path, e);
                                 }
                             }
                         }
@@ -685,7 +842,7 @@ impl Executor {
                                     },
                                 }).collect();
                                 self.memory.set_var_native(name.clone(), HelheimType::List(json_items.clone()));
-                                if ctx.is_distributed { self.distributed.set_global(&name, serde_json::to_string(&json_items).unwrap_or_default()); }
+                                if ctx.is_distributed { self.distributed.set_global(&name, serde_json::to_string(&json_items).map_err(|e| anyhow::anyhow!("State sync fail: {}", e))?); }
                                 format!("[{}]", string_items.join(", "))
                             }
                             CodeTaal::MatrixLiteral { rows } => {
@@ -713,7 +870,7 @@ impl Executor {
                                     }
                                 }
                                 self.memory.set_var_native(name.clone(), HelheimType::List(flat.clone()));
-                                if ctx.is_distributed { self.distributed.set_global(&name, serde_json::to_string(&flat).unwrap_or_default()); }
+                                if ctx.is_distributed { self.distributed.set_global(&name, serde_json::to_string(&flat).map_err(|e| anyhow::anyhow!("State sync fail: {}", e))?); }
                                 format!("[{}]", string_items.join(", "))
                             }
                             CodeTaal::Block { .. } => {
@@ -740,14 +897,8 @@ impl Executor {
                                     }
                                 }
                             }
-                            CodeTaal::FunctionCall { .. } => {
-                                match self.evaluate_ast_expr(&**value, ctx.clone()).await {
-                                    Ok(v) => v,
-                                    Err(e) => {
-                                        tracing::debug!("[DEBUG VARDEF]: evaluate_ast_expr failed: {}", e);
-                                        "".to_string()
-                                    }
-                                }
+                            CodeTaal::FunctionCall { .. } | CodeTaal::QualifiedCall { .. } => {
+                                self.evaluate_ast_expr(&**value, ctx.clone()).await?
                             }
                             CodeTaal::Perform { effect, operation, args } => {
                                 let full_effect = if let Some(ns) = &ctx.current_module {
@@ -758,9 +909,31 @@ impl Executor {
                                 let handler_var = format!("__effect_handler_{}_{}", full_effect, operation);
                                 if let Some(HelheimType::String(ast_str)) = self.memory.get_var_native(&handler_var) {
                                     if let Ok(handler_ast) = serde_json::from_str::<CodeTaal>(&ast_str) {
-                                        let continuation = crate::orchestra::continuation::capture_continuation(&stmt, &self.memory, effect, &self.distributed)?;
+                                        let continuation = crate::orchestra::continuation::capture_continuation(&stmt, &self.memory, effect, &self.distributed, ctx.is_privileged)?;
                                         let _guard = crate::orchestra::memory::ScopeGuard::new(&self.memory);
-                                        let json_str = serde_json::to_string(&continuation).unwrap_or_default();
+                                        let json_str = serde_json::to_string(&continuation).map_err(|e| anyhow::anyhow!("Continuation serialization fail: {}", e))?;
+                                        let b64_str = base64::engine::general_purpose::STANDARD.encode(json_str);
+                                        self.memory.set_var_native("resume_k".to_string(), HelheimType::String(b64_str));
+                                        for (idx, arg) in args.iter().enumerate() {
+                                            if let Ok(arg_val) = self.evaluate_ast_expr(arg, ctx.clone()).await {
+                                                self.memory.set_var_native(format!("arg{}", idx + 1), HelheimType::parse(&arg_val));
+                                            }
+                                        }
+                                        let res = self.execute_ast(vec![handler_ast], ctx.clone()).await;
+                                        // STOP outer loop since resume handles the rest!
+                                        return res;
+                                    }
+                                }
+                                "".to_string()
+                            }
+                            CodeTaal::QualifiedPerform { ns, effect, operation, args } => {
+                                let full_effect = format!("{}::{}", ns, effect);
+                                let handler_var = format!("__effect_handler_{}_{}", full_effect, operation);
+                                if let Some(HelheimType::String(ast_str)) = self.memory.get_var_native(&handler_var) {
+                                    if let Ok(handler_ast) = serde_json::from_str::<CodeTaal>(&ast_str) {
+                                        let continuation = crate::orchestra::continuation::capture_continuation(&stmt, &self.memory, effect, &self.distributed, ctx.is_privileged)?;
+                                        let _guard = crate::orchestra::memory::ScopeGuard::new(&self.memory);
+                                        let json_str = serde_json::to_string(&continuation).map_err(|e| anyhow::anyhow!("Continuation serialization fail: {}", e))?;
                                         let b64_str = base64::engine::general_purpose::STANDARD.encode(json_str);
                                         self.memory.set_var_native("resume_k".to_string(), HelheimType::String(b64_str));
                                         for (idx, arg) in args.iter().enumerate() {
@@ -776,13 +949,7 @@ impl Executor {
                                 "".to_string()
                             }
                             _ => {
-                                match self.evaluate_ast_expr(&**value, ctx.clone()).await {
-                                    Ok(v) => v,
-                                    Err(e) => {
-                                        tracing::debug!("[DEBUG VARDEF]: fallback evaluate_ast_expr failed on {:?}: {}", value, e);
-                                        "".to_string()
-                                    }
-                                }
+                                self.evaluate_ast_expr(&**value, ctx.clone()).await?
                             }
                         };
                         
@@ -796,8 +963,7 @@ impl Executor {
                                 if parts.len() > 2 {
                                     args = parts[2..].iter().map(|t| t.value.clone()).collect();
                                 }
-                                evaluated_value =
-                                    self.execute_function_call(&func_name, args, ctx.clone()).await?;
+                                evaluated_value = self.execute_function_call("", &func_name, args, ctx.clone()).await?;
                             }
                         } else if let Some(prompt) = ["vraag ", "ask ", "prompt ", "input "]
                             .iter().find_map(|&pfx| clean_val.strip_prefix(pfx)) {
@@ -838,7 +1004,7 @@ impl Executor {
                         if let Err(e) = ctx.check_timeout() {
                             return Err(e);
                         }
-                        let should_run = self.evaluate_ast_condition(&condition, ctx.clone()).await;
+                        let should_run = self.evaluate_ast_condition(&condition, ctx.clone()).await?;
                         if should_run {
                             let mut rest = statements.split_off(pc - 1);
                             rest[0] = CodeTaal::Loop { condition: condition.clone(), body: body.clone() };
@@ -871,7 +1037,7 @@ impl Executor {
                         iterable,
                         body,
                     } => {
-                        let json_val = self.evaluate_ast_expr(&iterable, ctx.clone()).await.unwrap_or_default();
+                        let json_val = self.evaluate_ast_expr(&iterable, ctx.clone()).await?;
                         let mut clone_statements = Vec::new();
                         if let CodeTaal::Block { statements } = *body {
                             clone_statements = statements;
@@ -918,7 +1084,7 @@ impl Executor {
                             pc: 0,
                             ctx: ctx.clone(),
                         })?;
-                        if self.evaluate_ast_condition(&condition, ctx.clone()).await {
+                        if self.evaluate_ast_condition(&condition, ctx.clone()).await? {
                             stack.push(crate::orchestra::trampoline::EvalFrame::Statements {
                                 statements: vec![*then],
                                 pc: 0,
@@ -935,11 +1101,11 @@ impl Executor {
                     }
                     CodeTaal::ArrayPush { array_name, value } => {
                         let args = vec![array_name.clone(), value.clone()];
-                        let _ = self.execute_function_call("voeg_toe", args, ctx.clone()).await?;
+                        let _ = self.execute_function_call("", "voeg_toe", args, ctx.clone()).await?;
                     }
                     CodeTaal::ArrayRemove { array_name, index } => {
                         let args = vec![array_name.clone(), index.clone()];
-                        let _ = self.execute_function_call("verwijder", args, ctx.clone()).await?;
+                        let _ = self.execute_function_call("", "verwijder", args, ctx.clone()).await?;
                     }
                     CodeTaal::Concurrent { statements } => {
                         tracing::debug!(
@@ -1125,10 +1291,10 @@ impl Executor {
 
                     CodeTaal::SendMessage { target, message } => {
                         // Evaluate target (can be ID literal, name string, or expression)
-                        let target_val = self.evaluate_ast_expr(&target, ctx.clone()).await.unwrap_or_default();
+                        let target_val = self.evaluate_ast_expr(&target, ctx.clone()).await?;
                         let target_str = target_val.to_string();
 
-                        let msg_val = self.evaluate_ast_expr(&message, ctx.clone()).await.unwrap_or_default();
+                        let msg_val = self.evaluate_ast_expr(&message, ctx.clone()).await?;
 
                         // Fast local path (HelValueWrapper::Local) - zero copy via channel
                         // Remote detection can use discovery or explicit syntax later
@@ -1143,12 +1309,10 @@ impl Executor {
                         }
                     }
 
-                    CodeTaal::Receive { var: _, timeout: _, body } => {
+                    CodeTaal::Receive { var: _, timeout: _, body: _ } => {
                         // Receive is meant to be executed inside a dedicated actor task (see actor.rs run_actor).
-                        // When encountered in main executor we fall back to just executing the body
-                        // (real blocking await on mailbox happens in the per-actor green thread).
-                        tracing::debug!("[ACTOR] Receive in main executor context - executing body directly (full await only inside spawned actors)");
-                        let _ = self.execute_ast(vec![(*body).clone()], ctx.clone()).await;
+                        tracing::warn!("[ACTOR] Receive in main executor context - dit is ongeldig en wordt gestopt.");
+                        return Err(anyhow::anyhow!("'ontvang' (Receive) statement is alleen geldig binnen een gespawnde acteur."));
                     }
 
 
@@ -1415,7 +1579,7 @@ impl Executor {
                         }
                         if let Some(output) = system::SystemManager::try_execute_native(&self.memory, "systeem.shell", &args, &ctx).await? {
                             if !output.is_empty() {
-                                println!("{}", output);
+                                tracing::info!("{}", output);
                             }
                         }
                         // Recursively call process_command for legacy support
@@ -1427,8 +1591,7 @@ impl Executor {
                             tracing::debug!("[SECURITY]: tcp_luister vereist elevated privileges.");
                             continue;
                         }
-                        let addr_str = self.evaluate_ast_expr(&addr, ctx.clone()).await
-                            .unwrap_or_default();
+                        let addr_str = self.evaluate_ast_expr(&addr, ctx.clone()).await?;
                         let addr_str = addr_str.trim_matches('"').to_string();
                         match tokio::net::TcpListener::bind(&addr_str).await {
                             Ok(listener) => {
@@ -1451,7 +1614,7 @@ impl Executor {
                             tracing::debug!("[SECURITY]: tcp_accepteer vereist elevated privileges.");
                             continue;
                         }
-                        let handle_str = self.evaluate_ast_expr(&listener, ctx.clone()).await.unwrap_or_default();
+                        let handle_str = self.evaluate_ast_expr(&listener, ctx.clone()).await?;
                         if let Some(id_str) = handle_str.strip_prefix("handle(tcp_listener:") {
                             if let Ok(id) = id_str.trim_end_matches(')').parse::<u64>() {
                                 if let Some(res) = crate::orchestra::tcp_resources::RESOURCE_TABLE.get(&id) {
@@ -1488,8 +1651,7 @@ impl Executor {
                             tracing::debug!("[SECURITY]: tcp_verbind vereist elevated privileges.");
                             continue;
                         }
-                        let addr_str = self.evaluate_ast_expr(&addr, ctx.clone()).await
-                            .unwrap_or_default();
+                        let addr_str = self.evaluate_ast_expr(&addr, ctx.clone()).await?;
                         let addr_str = addr_str.trim_matches('"').to_string();
                         match tokio::net::TcpStream::connect(&addr_str).await {
                             Ok(stream) => {
@@ -1512,10 +1674,8 @@ impl Executor {
                             tracing::debug!("[SECURITY]: tcp_stuur vereist elevated privileges.");
                             continue;
                         }
-                        let handle_str = self.evaluate_ast_expr(&socket, ctx.clone()).await
-                            .unwrap_or_default();
-                        let data_val = self.evaluate_ast_expr(&data, ctx.clone()).await
-                            .unwrap_or_default();
+                        let handle_str = self.evaluate_ast_expr(&socket, ctx.clone()).await?;
+                        let data_val = self.evaluate_ast_expr(&data, ctx.clone()).await?;
                         let data_bytes = data_val.trim_matches('"').as_bytes().to_vec();
 
                         let id: Option<u64> = handle_str.trim_matches('"')
@@ -1552,11 +1712,9 @@ impl Executor {
                             tracing::debug!("[SECURITY]: tcp_ontvang vereist elevated privileges.");
                             continue;
                         }
-                        let handle_str = self.evaluate_ast_expr(&socket, ctx.clone()).await
-                            .unwrap_or_default();
+                        let handle_str = self.evaluate_ast_expr(&socket, ctx.clone()).await?;
                         let max = if let Some(mb) = max_bytes {
-                            self.evaluate_ast_expr(&mb, ctx.clone()).await
-                                .unwrap_or_default()
+                            self.evaluate_ast_expr(&mb, ctx.clone()).await?
                                 .parse::<usize>()
                                 .unwrap_or(4096)
                         } else { 4096 };
@@ -1609,8 +1767,7 @@ impl Executor {
                             tracing::debug!("[SECURITY]: tcp_sluit vereist elevated privileges.");
                             continue;
                         }
-                        let handle_str = self.evaluate_ast_expr(&socket, ctx.clone()).await
-                            .unwrap_or_default();
+                        let handle_str = self.evaluate_ast_expr(&socket, ctx.clone()).await?;
                         let id: Option<u64> = handle_str.trim_matches('"')
                             .strip_prefix("handle(tcp:")
                             .and_then(|s| s.strip_suffix(')'))
@@ -1769,7 +1926,7 @@ impl Executor {
         }
     }
 
-    async fn execute_function_call(&self, name: &str, args: Vec<String>, ctx: crate::common::context::ExecutionContext) -> Result<String> {
+    async fn execute_function_call(&self, ns: &str, name: &str, args: Vec<String>, ctx: crate::common::context::ExecutionContext) -> Result<String> {
         if (name == "tekst" || name == "text" || name == "str") && args.len() == 1 {
             let inner_val = self.memory.resolve_value(&args[0]);
             return Ok(inner_val.trim_matches('"').to_string());
@@ -1785,9 +1942,11 @@ impl Executor {
 
         // --- NATIVE MODULE HOT RELOAD ---
         if name == "systeem.herlaad_module" && args.len() == 1 {
+            if !ctx.is_privileged {
+                return Err(anyhow::anyhow!("[SECURITY]: Ongeldige bevoegdheid: Sandbox mag geen modules herladen"));
+            }
             let mod_name = self.memory.resolve_value(&args[0]).trim_matches('"').to_string();
-            let mut loader = self.stdlib.native_modules.lock().await;
-            match loader.reload(&mod_name, std::ptr::null_mut()) {
+            match self.package_manager.reload_native(&mod_name, 0).await {
                 Ok(_module) => {
                     tracing::info!("[AST]: Externe Wasm module '{}' klaar voor gebruik.", mod_name);
                     return Ok("waar".to_string());
@@ -1800,38 +1959,48 @@ impl Executor {
         }
 
         // 1. Try Native System Library
-        if let Some(res) = system::SystemManager::try_execute_native(&self.memory, name, &args, &ctx).await? {
+        let full_name = if ns.is_empty() { name.to_string() } else { format!("{}.{}", ns, name) };
+        if let Some(res) = system::SystemManager::try_execute_native(&self.memory, &full_name, &args, &ctx).await? {
             return Ok(res);
         }
 
         // 2. Try User-Defined AST Function (pure CodeTaal general path)
-        let mut func_tuple = self.memory.ast_funcs.get(name).map(|v| v.value().clone());
-
-        // If not found exactly, and we are inside a module, try looking up locally
-        if func_tuple.is_none() && !name.contains("::") {
-            if let Some(ns) = &ctx.current_module {
-                let scoped_name = format!("{}::{}", ns, name);
-                func_tuple = self.memory.ast_funcs.get(&scoped_name).map(|v| v.value().clone());
+        let mut func_tuple = None;
+        let mut target_ns = ns.to_string();
+        
+        // If ns was explicitly provided, use it. Otherwise try global, then fallback to current_module.
+        if ns.is_empty() {
+            if let Some(global_ns_map) = self.memory.ast_funcs.get("") {
+                func_tuple = global_ns_map.get(name).map(|v| v.value().clone());
+            }
+            if func_tuple.is_none() {
+                if let Some(current_ns) = &ctx.current_module {
+                    target_ns = current_ns.clone();
+                    if let Some(local_ns_map) = self.memory.ast_funcs.get(current_ns) {
+                        func_tuple = local_ns_map.get(name).map(|v| v.value().clone());
+                    }
+                }
+            }
+        } else {
+            if let Some(ns_map) = self.memory.ast_funcs.get(ns) {
+                func_tuple = ns_map.get(name).map(|v| v.value().clone());
             }
         }
 
         if let Some((params, body, is_pub)) = func_tuple {
             // Visibility (pub/private) enforcement [W·AG·AF]
-            // If the caller explicitly used `Namespace::func`, we enforce `is_pub`
-            // unless the caller is already inside `Namespace`.
-            if let Some((func_ns, _)) = name.rsplit_once("::") {
-                if !is_pub {
-                    let mut allowed = false;
-                    if let Some(current_ns) = &ctx.current_module {
-                        if current_ns == func_ns {
-                            allowed = true;
-                        }
-                    }
-                    if !allowed {
-                        return Err(anyhow::anyhow!("Fout: Functie '{}' is privaat voor module '{}' en kan niet van buitenaf worden aangeroepen", name, func_ns));
+            if !target_ns.is_empty() && !is_pub {
+                let mut allowed = false;
+                if let Some(current_ns) = &ctx.current_module {
+                    if current_ns == &target_ns {
+                        allowed = true;
                     }
                 }
+                if !allowed {
+                    return Err(anyhow::anyhow!("Functie '{}::{}' is privé en kan niet van buiten de module worden aangeroepen.", target_ns, name));
+                }
             }
+
             let mut resolved_args = Vec::new();
             for i in 0..params.len() {
                 if i < args.len() {
@@ -1906,9 +2075,9 @@ impl Executor {
         );
         false
     }
-    async fn evaluate_ast_condition(&self, cond: &CodeTaal, ctx: crate::common::context::ExecutionContext) -> bool {
-        let evaluated = self.evaluate_ast_expr(cond, ctx).await.unwrap_or_default();
-        self.evaluate_condition(&evaluated).await
+    async fn evaluate_ast_condition(&self, cond: &CodeTaal, ctx: crate::common::context::ExecutionContext) -> Result<bool> {
+        let evaluated = self.evaluate_ast_expr(cond, ctx).await?;
+        Ok(self.evaluate_condition(&evaluated).await)
     }
 
     pub fn evaluate_ast_expr<'a>(&'a self, expr: &'a CodeTaal, ctx: crate::common::context::ExecutionContext) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>> {
@@ -1987,16 +2156,13 @@ impl Executor {
                 CodeTaal::FunctionCall { name, args } => {
                     let mut resolved_args = Vec::new();
                     for a in args {
-                        resolved_args.push(self.evaluate_ast_expr(a, ctx.clone()).await.unwrap_or_default());
+                        resolved_args.push(self.evaluate_ast_expr(a, ctx.clone()).await?);
                     }
 
                     // Native FFI Dispatch intercept
                     let mut ffi_result = None;
                     if let Some((mod_name, _func_name)) = name.rsplit_once("::") {
-                        let module_opt = {
-                            let loader = self.stdlib.native_modules.lock().await;
-                            loader.get(mod_name)
-                        };
+                        let module_opt = self.package_manager.get_native(mod_name).await;
                         
                         if let Some(module) = module_opt {
                                 // Convert Helheim strings to internal types for Wasm
@@ -2022,7 +2188,39 @@ impl Executor {
                     if let Some(res) = ffi_result {
                         res
                     } else {
-                        self.execute_function_call(name, resolved_args, ctx).await
+                        self.execute_function_call("", name, resolved_args, ctx).await
+                    }
+                }
+                CodeTaal::QualifiedCall { ns, name, args } => {
+                    let mut resolved_args = Vec::new();
+                    for a in args {
+                        resolved_args.push(self.evaluate_ast_expr(a, ctx.clone()).await?);
+                    }
+
+                    // Native FFI Dispatch intercept
+                    let mut ffi_result = None;
+                    let module_opt = self.package_manager.get_native(ns).await;
+                    
+                    if let Some(module) = module_opt {
+                            let mut ht_args = Vec::new();
+                            for arg in &resolved_args {
+                                ht_args.push(crate::orchestra::memory::HelheimType::parse(arg));
+                            }
+                            let export_name = format!("{}_{}", ns, name);
+                            match module.call_function(&export_name, &ht_args) {
+                                Ok(ret_ht) => {
+                                    ffi_result = Some(Ok(ret_ht.to_string()));
+                                }
+                                Err(e) => {
+                                    ffi_result = Some(Err(anyhow::anyhow!("[WASM FFI ERROR] {}::{}: {}", ns, name, e)));
+                                }
+                            }
+                    }
+
+                    if let Some(res) = ffi_result {
+                        res
+                    } else {
+                        self.execute_function_call(ns, name, resolved_args, ctx).await
                     }
                 }
                 CodeTaal::TcpConnect { addr } => {
@@ -2203,7 +2401,7 @@ impl Executor {
                             "[AST]: Tensor Activering (ReLU) gedetecteerd op {}x{}...",
                             m, n
                         );
-                        let out_id = crate::gpu::gpu_alloc_tensor_empty(m, n).unwrap_or(0);
+                        let out_id = match crate::gpu::gpu_alloc_tensor_empty(m, n) { Ok(id) => id, Err(e) => return format!("ERROR: GPU Allocatie gefaald: {}", e) };
                         let ptx = crate::orchestra::synthesis::KernelSynthesisEngine::synthesize(
                             CodeTaal::TensorRelu { m, n },
                         )
@@ -2259,7 +2457,7 @@ impl Executor {
                         "[AST]: Tensor vermenigvuldiging gedetecteerd. Matrix {}x{} * {}x{}...",
                         m, k1, k2, n
                     );
-                    let out_id = crate::gpu::gpu_alloc_tensor_empty(m, n).unwrap_or(0);
+                    let out_id = match crate::gpu::gpu_alloc_tensor_empty(m, n) { Ok(id) => id, Err(e) => return format!("ERROR: GPU Allocatie gefaald: {}", e) };
                     let ptx = crate::orchestra::synthesis::KernelSynthesisEngine::synthesize(
                         CodeTaal::MatMul { m, n, k: k1 },
                     )
@@ -2317,7 +2515,7 @@ impl Executor {
                         "[AST]: Tensor Optelling gedetecteerd. Matrix {}x{} + {}x{}...",
                         m1, n1, m2, n2
                     );
-                    let out_id = crate::gpu::gpu_alloc_tensor_empty(m1, n1).unwrap_or(0);
+                    let out_id = match crate::gpu::gpu_alloc_tensor_empty(m1, n1) { Ok(id) => id, Err(e) => return format!("ERROR: GPU Allocatie gefaald: {}", e) };
                     let ptx = crate::orchestra::synthesis::KernelSynthesisEngine::synthesize(
                         CodeTaal::TensorAdd { m: m1, n: n1 },
                     )

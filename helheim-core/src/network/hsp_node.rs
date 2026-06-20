@@ -9,9 +9,14 @@ pub struct SwarmEngine;
 
 lazy_static::lazy_static! {
     static ref CONNECTIONS: DashMap<String, (tokio::net::TcpStream, [u8; 32])> = DashMap::new();
+    static ref LAST_SEEN_LAMPORT: DashMap<String, u64> = DashMap::new();
 }
 
 impl SwarmEngine {
+    pub fn clear_pool() {
+        CONNECTIONS.clear();
+        LAST_SEEN_LAMPORT.clear();
+    }
     /// Start de Async Swarm Listener (TCP)
     /// Non-blocking, draait op de achtergrond.
     pub async fn ignite(
@@ -55,13 +60,16 @@ impl SwarmEngine {
                             let mut buf = vec![0; 1024 * 1024]; // 1MB buffer
 
                             loop {
-                                // 1. Read Payload
-                                match socket.read(&mut buf).await {
-                                    Ok(n) if n == 0 => {
+                                // 1. Read Payload (timeout per-iteratie)
+                                let read_fut = socket.read(&mut buf);
+                                let read_res = tokio::time::timeout(std::time::Duration::from_secs(30), read_fut).await;
+                                
+                                match read_res {
+                                    Ok(Ok(n)) if n == 0 => {
                                         tracing::debug!("💤 Swarm Node losgekoppeld: {}", addr);
                                         return; // Connection gracefully closed
                                     }
-                                    Ok(n) => {
+                                    Ok(Ok(n)) => {
                                         let raw_payload = String::from_utf8_lossy(&buf[..n]);
 
                                         // [HSP] Decryptie Layer met Session Key
@@ -110,18 +118,50 @@ impl SwarmEngine {
                                                                 }
                                                                 
                                                                 if valid_signature {
+                                                                    let mut is_replay = false;
+                                                                    if let Some(pub_key) = &cont.source_pubkey {
+                                                                        let peer_id = hex::encode(pub_key);
+                                                                        if let Some(mut last_seen) = LAST_SEEN_LAMPORT.get_mut(&peer_id) {
+                                                                            if cont.lamport <= *last_seen {
+                                                                                is_replay = true;
+                                                                            } else {
+                                                                                *last_seen = cont.lamport;
+                                                                            }
+                                                                        } else {
+                                                                            LAST_SEEN_LAMPORT.insert(peer_id, cont.lamport);
+                                                                        }
+                                                                    }
+
+                                                                    if is_replay {
+                                                                        tracing::error!("TeleportContinuation geweigerd: Replay attack (oude lamport clock)!");
+                                                                        let payload = crate::shield::HelheimShield::encrypt_packet_with_key("SWARM_ERR_REPLAY", &session_key);
+                                                                        let _ = socket.write_all(payload.as_bytes()).await;
+                                                                        continue;
+                                                                    }
+
                                                                     tracing::debug!("[SWARM]: 🌟 Geldige TeleportContinuation ontvangen van {}. Hervatten...", cont.source_node);
                                                                     
                                                                     let isolated_memory = helheim_lang::memory::MemoryManager::spawn_isolated(&cont.captured_memory);
-                                                                    // We voeren het uit met privileges omdat het afkomstig is van een geverifieerde, trusted node in het Swarm netwerk
-                                                                    let resume_ctx = crate::common::context::ExecutionContext::default_privileged();
+                                                                    let resume_ctx = if cont.is_privileged {
+                                                                        crate::common::context::ExecutionContext::default_privileged()
+                                                                    } else {
+                                                                        crate::common::context::ExecutionContext::sandbox()
+                                                                    };
                                                                     let isolated_executor = crate::orchestra::executor::Executor::new(
                                                                         isolated_memory,
                                                                         orchestrator_clone.discovery.clone(),
                                                                         orchestrator_clone.distributed.clone(),
                                                                     );
                                                                     use base64::Engine;
-                                                                    let b64_cont = base64::engine::general_purpose::STANDARD.encode(serde_json::to_string(&cont).unwrap_or_default());
+                                                                    let b64_cont = match serde_json::to_string(&cont) {
+                                                                        Ok(json_str) => base64::engine::general_purpose::STANDARD.encode(json_str),
+                                                                        Err(e) => {
+                                                                            tracing::error!("TeleportContinuation serialisatie gefaald: {}", e);
+                                                                            let payload = crate::shield::HelheimShield::encrypt_packet_with_key("SWARM_ERR_INTERNAL", &session_key);
+                                                                            let _ = socket.write_all(payload.as_bytes()).await;
+                                                                            continue;
+                                                                        }
+                                                                    };
                                                                     let resume_stmt = helheim_lang::ast::CodeTaal::Resume {
                                                                         continuation: Box::new(helheim_lang::ast::CodeTaal::Literal(helheim_lang::ast::LiteralValue::String(format!("\"{}\"", b64_cont)))),
                                                                         value: Box::new(helheim_lang::ast::CodeTaal::Literal(helheim_lang::ast::LiteralValue::String(String::new()))),
@@ -171,8 +211,12 @@ impl SwarmEngine {
                                             ),
                                         }
                                     }
-                                    Err(e) => {
+                                    Ok(Err(e)) => {
                                         tracing::error!("Stream Error: {}", e);
+                                        return;
+                                    }
+                                    Err(_) => {
+                                        tracing::error!("Swarm Node iteratie timeout (30s) overschreden: {}", addr);
                                         return;
                                     }
                                 }
@@ -192,7 +236,10 @@ impl SwarmEngine {
 
         // Helper voor connectie + ECDH Handshake (Client)
         async fn connect_and_handshake(addr: &str) -> Result<(TcpStream, [u8; 32])> {
-            let mut stream = TcpStream::connect(addr).await
+            let stream_future = TcpStream::connect(addr);
+            let mut stream = tokio::time::timeout(std::time::Duration::from_secs(5), stream_future)
+                .await
+                .map_err(|_| anyhow::anyhow!("Timeout connecting to {}", addr))?
                 .map_err(|e| anyhow::anyhow!("Connection Failed: {}", e))?;
                 
             let mut ecdh = crate::shield::EcdhSession::new();

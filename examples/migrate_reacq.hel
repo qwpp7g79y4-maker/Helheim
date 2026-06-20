@@ -37,10 +37,10 @@ probeer {
             hervat("ok");
         }
     } in {
-        druk_af "Start teleportatie naar " + doel_ip + ":" + doel_poort + "...";
+        druk_af "Start teleportatie naar 127.0.0.1:9055...";
         
         // Dit triggert het serialize & stuur proces
-        perform Swarm::migrate(doel_ip, doel_poort);
+        perform Swarm.migrate(doel_ip, doel_poort);
         
         // Vanaf hier zijn we 'fysiek' (in het netwerk) aanwezig op de nieuwe node!
         druk_af "Hallo vanaf Node B! Ik ben succesvol geteleporteerd en mijn state is hersteld.";

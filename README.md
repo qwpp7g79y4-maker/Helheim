@@ -1,6 +1,6 @@
-# Helheim Engine v2.0 (Alpha)
+# Helheim Engine v0.1.0
 
-> Alpha release. See LICENSE for usage terms.
+> v0.1.0 — See LICENSE for usage terms.
 
 **Helheim** is a bare-metal, distributed, and zero-overhead execution engine for the CodeTaal (Dutch syntax) language, designed from the ground up for high-performance and robust system orchestration.
 
@@ -16,7 +16,7 @@
 
 ### Wat is Helheim?
 Helheim is meer dan een scripttaal. Het is een "Motor Cortex" voor je systeem:
-- **Zero-Overhead FFI**: Direct inladen van C/C++ libraries zonder wrapper-overhead.
+- **Zero-Overhead Wasm Sandboxing**: Cryptografisch geverifieerde plugins met strikte geheugen- en ABI-isolatie via Wasmtime.
 - **Algebraïsche Effect Handlers**: Scheid logica van I/O (zoals netwerk of file access) via krachtige `perform` en `handle` blokken.
 - **Actor Model & Supervisor (Swarm)**: Ingebouwd lokaal (zero-copy MPSC) en gedistribueerd berichtenverkeer voor extreem parallelle taken. 100% Actor-Supervisor capabel met ingebouwde faalstrategieën (Escalate, Restart, Stop).
 - **Continuations & Distributed Teleportation**: Pauzeer en verplaats actieve processen naadloos tussen verschillende machines (`perform Swarm::migrate`).
@@ -46,7 +46,7 @@ Zie `CHEATSHEET.md` voor de syntax en veelgebruikte concepten.
 
 ### What is Helheim?
 Helheim is a bare-metal, high-performance execution engine parsing a Dutch-syntax language (CodeTaal). It's designed as the "Motor Cortex" for complex, distributed systems:
-- **Zero-Overhead FFI**: Load C/C++ libraries directly without wrapper-overhead.
+- **Zero-Overhead Wasm Sandboxing**: Cryptographically verified plugins with strict memory and ABI isolation via Wasmtime.
 - **Algebraic Effect Handlers**: Cleanly separate logic from side-effects (like I/O) using `perform` and `handle`.
 - **Actor Model & Supervisor (Swarm)**: First-class support for local (zero-copy MPSC) and remote message passing for massive concurrency. 100% Actor-Supervisor capable with built-in failure strategies (Escalate, Restart, Stop).
 - **Continuations & Distributed Teleportation**: Seamlessly pause and migrate active processes across different machines (`perform Swarm::migrate`).

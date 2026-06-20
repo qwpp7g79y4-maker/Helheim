@@ -99,6 +99,12 @@ pub enum CodeTaal {
         name: String,
         args: Vec<CodeTaal>,
     },
+    /// First-class namespaced function call: Ns.func(args) or Ns::func(args)
+    QualifiedCall {
+        ns: String,
+        name: String,
+        args: Vec<CodeTaal>,
+    },
     /// Improved: return value is now an optional expression instead of String.
     Return {
         value: Option<Box<CodeTaal>>,
@@ -218,6 +224,13 @@ pub enum CodeTaal {
     Perform {
         effect: String,           // "Tcp"
         operation: String,        // "send"
+        args: Vec<CodeTaal>,
+    },
+    /// First-class namespaced perform: Ns::Effect::operation
+    QualifiedPerform {
+        ns: String,
+        effect: String,
+        operation: String,
         args: Vec<CodeTaal>,
     },
     /// Handle effects (delimited continuation)

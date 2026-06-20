@@ -120,11 +120,11 @@ impl CpuBackend {
 
                         // Clone A and B to avoid DashMap deadlocks when updating C
                         let tensor_a = {
-                            let a_ref = self.tensors.get(&ptr_a.get()).unwrap();
+                            let a_ref = self.tensors.get(&ptr_a.get()).ok_or_else(|| GpuError::Internal(format!("Tensor niet gevonden: {:?}", ptr_a.get())))?;
                             a_ref.clone()
                         };
                         let tensor_b = {
-                            let b_ref = self.tensors.get(&ptr_b.get()).unwrap();
+                            let b_ref = self.tensors.get(&ptr_b.get()).ok_or_else(|| GpuError::Internal(format!("Tensor niet gevonden: {:?}", ptr_b.get())))?;
                             b_ref.clone()
                         };
 

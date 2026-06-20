@@ -81,11 +81,11 @@ pub fn gpu_alloc_tensor_random(m: usize, n: usize) -> Result<usize> {
     stream.memcpy_htod(&host_data, &mut dev_data)?;
     stream.synchronize()?;
 
-    let mut id_counter = NEXT_TENSOR_ID.lock().unwrap();
+    let mut id_counter = NEXT_TENSOR_ID.lock().map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
     let id = *id_counter;
     *id_counter += 1;
 
-    let mut store = TENSOR_STORE.lock().unwrap();
+    let mut store = TENSOR_STORE.lock().map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
     store.insert(id, dev_data);
 
     Ok(id)
@@ -103,11 +103,11 @@ pub fn gpu_alloc_tensor_empty(m: usize, n: usize) -> Result<usize> {
     let elements = m * n;
     let dev_data = stream.alloc_zeros::<f32>(elements)?;
 
-    let mut id_counter = NEXT_TENSOR_ID.lock().unwrap();
+    let mut id_counter = NEXT_TENSOR_ID.lock().map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
     let id = *id_counter;
     *id_counter += 1;
 
-    let mut store = TENSOR_STORE.lock().unwrap();
+    let mut store = TENSOR_STORE.lock().map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
     store.insert(id, dev_data);
 
     Ok(id)
@@ -417,12 +417,12 @@ pub fn gpu_execute_raw_ptx_ids(
             ..Default::default()
         },
     )
-    .unwrap();
+    .map_err(|e| anyhow::anyhow!("NVRTC Compilation Failed: {:?}", e))?;
     let helper_module = dev.load_module(helper_ptx)?;
     let f_cvt = helper_module.load_function("f32_to_f16")?;
 
     let (dev_a, dev_b, mut dev_c) = {
-        let mut store = TENSOR_STORE.lock().unwrap();
+        let mut store = TENSOR_STORE.lock().map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
         let c = store.remove(&id_c).ok_or_else(|| anyhow::anyhow!("C not found"))?;
         let a = store.remove(&id_a).ok_or_else(|| anyhow::anyhow!("A not found"))?;
         let b = store.remove(&id_b).ok_or_else(|| anyhow::anyhow!("B not found"))?;
@@ -509,7 +509,7 @@ pub fn gpu_execute_raw_ptx_ids(
 
     // Put tensors back
     {
-        let mut store = TENSOR_STORE.lock().unwrap();
+        let mut store = TENSOR_STORE.lock().map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
         store.insert(id_a, dev_a);
         store.insert(id_b, dev_b);
         store.insert(id_c, dev_c);
@@ -615,14 +615,14 @@ pub fn gpu_execute_tensor_add(
         options: vec!["-arch=compute_89".to_string(), "-std=c++11".to_string()],
         ..Default::default()
     };
-    let ptx_res = cudarc::nvrtc::compile_ptx_with_opts(ptx_src, opts).unwrap();
+    let ptx_res = cudarc::nvrtc::compile_ptx_with_opts(ptx_src, opts).map_err(|e| anyhow::anyhow!("NVRTC Compilation Failed: {:?}", e))?;
     let module = dev.load_module(ptx_res)?;
     let f = module.load_function("tensor_add_kernel")?;
 
     let elements = m * n;
 
     let (dev_a, dev_b, mut dev_c) = {
-        let mut store = TENSOR_STORE.lock().unwrap();
+        let mut store = TENSOR_STORE.lock().map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
         let c = store.remove(&id_c).ok_or_else(|| anyhow::anyhow!("C not found"))?;
         let a = store.remove(&id_a).ok_or_else(|| anyhow::anyhow!("A not found"))?;
         let b = store.remove(&id_b).ok_or_else(|| anyhow::anyhow!("B not found"))?;
@@ -655,7 +655,7 @@ pub fn gpu_execute_tensor_add(
     let gflops = (elements as f64) / (elapsed * 1e9);
 
     {
-        let mut store = TENSOR_STORE.lock().unwrap();
+        let mut store = TENSOR_STORE.lock().map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
         store.insert(id_a, dev_a);
         store.insert(id_b, dev_b);
         store.insert(id_c, dev_c);
@@ -682,14 +682,14 @@ pub fn gpu_execute_tensor_relu(
         options: vec!["-arch=compute_89".to_string(), "-std=c++11".to_string()],
         ..Default::default()
     };
-    let ptx_res = cudarc::nvrtc::compile_ptx_with_opts(ptx_src, opts).unwrap();
+    let ptx_res = cudarc::nvrtc::compile_ptx_with_opts(ptx_src, opts).map_err(|e| anyhow::anyhow!("NVRTC Compilation Failed: {:?}", e))?;
     let module = dev.load_module(ptx_res)?;
     let f = module.load_function("tensor_relu_kernel")?;
 
     let elements = m * n;
 
     let (dev_a, mut dev_b) = {
-        let mut store = TENSOR_STORE.lock().unwrap();
+        let mut store = TENSOR_STORE.lock().map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
         let b = store.remove(&id_b).ok_or_else(|| anyhow::anyhow!("B not found"))?;
         let a = store.remove(&id_a).ok_or_else(|| anyhow::anyhow!("A not found"))?;
         (a, b)
@@ -717,7 +717,7 @@ pub fn gpu_execute_tensor_relu(
     let gflops = (elements as f64) / (elapsed * 1e9);
 
     {
-        let mut store = TENSOR_STORE.lock().unwrap();
+        let mut store = TENSOR_STORE.lock().map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
         store.insert(id_a, dev_a);
         store.insert(id_b, dev_b);
     }
@@ -746,7 +746,7 @@ pub fn cpu_execute_matmul(
     let mut c_host = vec![0.0f32; m * n];
 
     {
-        let store = TENSOR_STORE.lock().unwrap();
+        let store = TENSOR_STORE.lock().map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
         let dev_a = store
             .get(&id_a)
             .ok_or_else(|| anyhow::anyhow!("A not found"))?;
@@ -783,7 +783,7 @@ pub fn cpu_execute_matmul(
     let gflops = (2.0 * m as f64 * n as f64 * k as f64) / (elapsed * 1e9);
 
     {
-        let mut store = TENSOR_STORE.lock().unwrap();
+        let mut store = TENSOR_STORE.lock().map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
         let mut dev_c = store
             .remove(&id_c)
             .ok_or_else(|| anyhow::anyhow!("C not found"))?;
@@ -817,7 +817,7 @@ pub fn cpu_execute_tensor_add(
     let mut c_host = vec![0.0f32; elements];
 
     {
-        let store = TENSOR_STORE.lock().unwrap();
+        let store = TENSOR_STORE.lock().map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
         let dev_a = store
             .get(&id_a)
             .ok_or_else(|| anyhow::anyhow!("A not found"))?;
@@ -843,7 +843,7 @@ pub fn cpu_execute_tensor_add(
     let gflops = (elements as f64) / (elapsed * 1e9);
 
     {
-        let mut store = TENSOR_STORE.lock().unwrap();
+        let mut store = TENSOR_STORE.lock().map_err(|e| anyhow::anyhow!("Mutex poisoned: {}", e))?;
         let mut dev_c = store
             .remove(&id_c)
             .ok_or_else(|| anyhow::anyhow!("C not found"))?;

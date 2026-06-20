@@ -52,8 +52,8 @@ lazy_static::lazy_static! {
     /// In a real system, this could be persisted or managed by the Package Manager.
     pub static ref SWARM_KEYPAIR: Ed25519KeyPair = {
         let rng = SystemRandom::new();
-        let pkcs8_bytes = Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
-        Ed25519KeyPair::from_pkcs8(pkcs8_bytes.as_ref()).unwrap()
+        let pkcs8_bytes = Ed25519KeyPair::generate_pkcs8(&rng).expect("Systeem RNG niet beschikbaar");
+        Ed25519KeyPair::from_pkcs8(pkcs8_bytes.as_ref()).expect("Generatie van keypair faalde")
     };
 }
 

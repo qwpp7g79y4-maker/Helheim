@@ -56,6 +56,7 @@ async fn test_effect_handle() {
 async fn test_resource_contract_migrate_blocks() {
     let _lock = TEST_MUTEX.lock().await;
     helheim_core::orchestra::tcp_resources::RESOURCE_TABLE.clear();
+    helheim_core::network::hsp_node::SwarmEngine::clear_pool();
 
     // 1. Start a local listener so we can connect
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -93,6 +94,7 @@ async fn test_resource_contract_migrate_blocks() {
 async fn test_resource_reacquisition_migrate_success() {
     let _lock = TEST_MUTEX.lock().await;
     helheim_core::orchestra::tcp_resources::RESOURCE_TABLE.clear();
+    helheim_core::network::hsp_node::SwarmEngine::clear_pool();
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -136,6 +138,7 @@ async fn test_resource_reacquisition_migrate_success() {
 async fn test_concurrent_teleports_stress() {
     let _lock = TEST_MUTEX.lock().await;
     helheim_core::orchestra::tcp_resources::RESOURCE_TABLE.clear();
+    helheim_core::network::hsp_node::SwarmEngine::clear_pool();
 
     let port = 9050;
     let discovery = Arc::new(DiscoveryService::new());
@@ -170,10 +173,11 @@ async fn test_concurrent_teleports_stress() {
     }
     
     for h in handles {
-        let _ = h.await;
+        h.await.expect("Task panicked during execution");
     }
     
     // Also sleep a bit so the SwarmEngine can finish processing all concurrent resumes
+    helheim_core::network::hsp_node::SwarmEngine::clear_pool();
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 }
 
@@ -181,6 +185,7 @@ async fn test_concurrent_teleports_stress() {
 async fn test_resource_reacquisition_migrate_handler_error() {
     let _lock = TEST_MUTEX.lock().await;
     helheim_core::orchestra::tcp_resources::RESOURCE_TABLE.clear();
+    helheim_core::network::hsp_node::SwarmEngine::clear_pool();
 
     let script = r#"
         zet fout_gevangen = "";
@@ -213,6 +218,7 @@ lazy_static::lazy_static! {
 async fn test_resource_reacquisition_migrate_no_handler_clean() {
     let _lock = TEST_MUTEX.lock().await;
     helheim_core::orchestra::tcp_resources::RESOURCE_TABLE.clear();
+    helheim_core::network::hsp_node::SwarmEngine::clear_pool();
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -253,6 +259,7 @@ async fn setup_local_listener() -> std::net::SocketAddr {
 async fn test_concurrent_teleports_stress_with_crash_and_handles() {
     let _lock = TEST_MUTEX.lock().await;
     helheim_core::orchestra::tcp_resources::RESOURCE_TABLE.clear();
+    helheim_core::network::hsp_node::SwarmEngine::clear_pool();
 
     let port = 9051;
     let discovery = Arc::new(DiscoveryService::new());
@@ -318,7 +325,7 @@ async fn test_concurrent_teleports_stress_with_crash_and_handles() {
     }
     
     for h in handles {
-        let _ = h.await;
+        h.await.expect("Task panicked during execution");
     }
     
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
@@ -336,6 +343,8 @@ async fn test_concurrent_teleports_stress_with_crash_and_handles() {
 async fn test_continuation_local_vars_invariant() {
     let _ = tracing_subscriber::fmt::try_init();
     let _lock = TEST_MUTEX.lock().await;
+    helheim_core::orchestra::tcp_resources::RESOURCE_TABLE.clear();
+    helheim_core::network::hsp_node::SwarmEngine::clear_pool();
     
     // We start a local listener to migrate to
     let port = 9053;
@@ -423,4 +432,69 @@ async fn test_gas_exhaustion_infinite_loop() {
     assert!(err_msg.contains("OUT_OF_GAS") || err_msg.contains("gas limit"), "Foute error message: {}", err_msg);
 }
 
+#[tokio::test]
+async fn test_concurrent_stress_mixed_workloads() {
+    let _lock = TEST_MUTEX.lock().await;
+    helheim_core::orchestra::tcp_resources::RESOURCE_TABLE.clear();
+    helheim_core::network::hsp_node::SwarmEngine::clear_pool();
+
+    let port = 9054;
+    let discovery = Arc::new(DiscoveryService::new());
+    let orchestrator = Arc::new(Orchestrator::new(discovery));
+    
+    let _ = helheim_core::network::hsp_node::SwarmEngine::ignite(port, orchestrator.clone()).await;
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    let mut handles = vec![];
+
+    // 1. Launch 50 Teleporting scripts
+    for i in 0..50 {
+        let script = format!(r#"
+            zet my_id = {};
+            handle Migratie {{
+                na_aankomst => {{
+                    zet my_id = my_id + 1000;
+                    hervat("");
+                }}
+            }} in {{
+                perform Swarm.migrate("127.0.0.1", {});
+            }}
+        "#, i, port);
+        
+        let h = tokio::spawn(async move {
+            let engine = run_helheim_script(&script).await;
+            let id: i32 = engine.get_var("my_id").unwrap_or_default().parse().unwrap_or(-1);
+            assert_eq!(id, i); // Sender node keeps the original value
+        });
+        handles.push(h);
+    }
+
+    // 2. Launch 20 Normal compute scripts concurrently
+    for i in 0..20 {
+        let script = format!(r#"
+            zet base = {};
+            zet acc = 0;
+            zet i = 1;
+            zolang i < 6 {{
+                zet acc = acc + i;
+                zet i = i + 1;
+            }}
+            zet res = base + acc;
+        "#, i * 10);
+        
+        let h = tokio::spawn(async move {
+            let engine = run_helheim_script(&script).await;
+            let res: i32 = engine.get_var("res").unwrap_or_default().parse().unwrap_or(-1);
+            assert_eq!(res, (i * 10) + 15); // Sum of 1..5 is 15
+        });
+        handles.push(h);
+    }
+    
+    for h in handles {
+        h.await.expect("Task panicked during execution");
+    }
+    
+    helheim_core::network::hsp_node::SwarmEngine::clear_pool();
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+}
 

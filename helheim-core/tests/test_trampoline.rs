@@ -35,7 +35,7 @@ async fn test_stack_overflow_error_clean() {
         .spawn(|| {
             tokio::runtime::Runtime::new().unwrap().block_on(async {
                 let mut current = CodeTaal::Block { statements: vec![CodeTaal::Return { value: Some(Box::new(CodeTaal::Literal(LiteralValue::String("success".to_string())))) }] };
-                for _ in 0..15000 {
+                for _ in 0..55000 {
                     current = CodeTaal::If {
                         condition: Box::new(CodeTaal::Literal(LiteralValue::String("waar".to_string()))),
                         then: Box::new(current),

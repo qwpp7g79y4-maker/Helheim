@@ -33,7 +33,7 @@ handle Migratie {
     
     // De migratie uitvoeren (effecten gebruiken we met perform)
     probeer {
-        perform Swarm::migrate(target_ip, target_port);
+        perform Swarm.migrate(target_ip, target_port);
         druk_af "Ik ben succesvol gemigreerd!";
     } vang err {
         druk_af "Migratie afgebroken of mislukt: " + err;

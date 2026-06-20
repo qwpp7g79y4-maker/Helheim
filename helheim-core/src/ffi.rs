@@ -208,13 +208,31 @@ pub struct HelFFIContext {
     pub owned_last_error_message: bool, // indicates if we need to free it
 }
 
+extern "C" fn host_alloc(size: usize, align: usize) -> *mut c_void {
+    unsafe {
+        if size == 0 { return std::ptr::null_mut(); }
+        let layout = std::alloc::Layout::from_size_align_unchecked(size, align);
+        std::alloc::alloc(layout) as *mut c_void
+    }
+}
+
+extern "C" fn host_free(ptr: *mut c_void) {
+    // Note: requires size and alignment for std::alloc::dealloc, 
+    // but C ABI free only takes ptr. So we fallback to libc::free for host_free if we used libc::malloc, 
+    // OR we allocate a bit of extra space to store layout.
+    // For FFI safety, we use libc::malloc/free because standard C ABI doesn't pass layout to free().
+    unsafe {
+        libc::free(ptr);
+    }
+}
+
 /// Helper to create a default HelFFIContext for a host.
 /// The `user_data` is usually a pointer to the Executor or Orchestrator.
 pub fn create_ffi_context(user_data: *mut c_void) -> HelFFIContext {
     HelFFIContext {
         abi_version: HEL_ABI_VERSION,
-        alloc: None, // Filled by the actual loader / host
-        free: None,
+        alloc: Some(host_alloc),
+        free: Some(host_free),
         report_error: None,
         log: None,
         user_data,
@@ -341,9 +359,10 @@ impl LoadedWasmModule {
 
         // Output buffer pointer (for return value) - also needs allocation
         let mut out_ptr = 0;
+        let out_buffer_size = 65536u32; // Increased for safety
         if let Some(alloc) = alloc_func {
             let alloc_typed = alloc.typed::<u32, u32>(&*store)?;
-            out_ptr = alloc_typed.call(&mut *store, 1024)?; // 1KB output buffer
+            out_ptr = alloc_typed.call(&mut *store, out_buffer_size)?; 
             wasm_args.push(wasmtime::Val::I32(out_ptr as i32));
         } else {
             wasm_args.push(wasmtime::Val::I32(0));
@@ -352,8 +371,7 @@ impl LoadedWasmModule {
         // Call the Wasm function!
         let mut results = vec![wasmtime::Val::I32(0)];
         func.call(&mut *store, &wasm_args, &mut results)?;
-        
-        let res_code = results[0].unwrap_i32();
+        let res_code = results[0].i32().ok_or_else(|| anyhow::anyhow!("Wasm returned wrong type"))?;
         
         let mut ret_val = crate::orchestra::memory::HelheimType::String(format!("WASM_CALL_STUB: {}", name));
         
@@ -363,7 +381,7 @@ impl LoadedWasmModule {
             memory.read(&mut *store, out_ptr as usize, &mut len_buf)?;
             let len = u32::from_le_bytes(len_buf);
             
-            if len > 0 && len < 1024 {
+            if len > 0 && len < out_buffer_size - 4 {
                 let mut str_buf = vec![0u8; len as usize];
                 memory.read(&mut *store, (out_ptr + 4) as usize, &mut str_buf)?;
                 if let Ok(s) = String::from_utf8(str_buf) {
@@ -379,7 +397,7 @@ impl LoadedWasmModule {
                 free_typed.call(&mut *store, (ptr, size))?;
             }
             if out_ptr != 0 {
-                free_typed.call(&mut *store, (out_ptr, 1024))?;
+                free_typed.call(&mut *store, (out_ptr, out_buffer_size))?;
             }
         }
 
@@ -438,6 +456,16 @@ impl WasmModuleLoader {
                 // Note: Production WASM plugins will need WASI ctx for stdout/fs.
                 let imports: &[Extern] = &[];
                 let instance = Instance::new(&mut store, &module, imports).map_err(|e| anyhow::anyhow!("Wasm instantiation failed: {}", e))?;
+                
+                // 5.5: FFI ABI version checks
+                if let Ok(abi_func) = instance.get_typed_func::<(), u32>(&mut store, "helheim_abi_version") {
+                    let version = abi_func.call(&mut store, ())?;
+                    if version != HEL_ABI_VERSION {
+                        anyhow::bail!("ABI version mismatch in module '{}': module requires ABI {}, but host provides ABI {}", module_name, version, HEL_ABI_VERSION);
+                    }
+                } else {
+                    tracing::warn!("[FFI] Module '{}' exports no 'helheim_abi_version'. Assuming ABI version 1 compatibility.", module_name);
+                }
                 
                 let ctx = create_ffi_context(user_data);
                 

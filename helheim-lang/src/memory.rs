@@ -10,7 +10,7 @@ pub struct MemorySnapshot {
     pub globals: std::collections::BTreeMap<String, HelheimType>,
     pub local_stack: Vec<std::collections::BTreeMap<String, HelheimType>>,
     pub func_store: std::collections::BTreeMap<String, String>,
-    pub ast_funcs: std::collections::BTreeMap<String, (Vec<String>, Box<CodeTaal>, bool)>,
+    pub ast_funcs: std::collections::BTreeMap<String, std::collections::BTreeMap<String, (Vec<String>, Box<CodeTaal>, bool)>>,
     pub model_store: std::collections::BTreeMap<String, Vec<String>>,
 }
 
@@ -142,7 +142,7 @@ pub struct MemoryManager {
     pub globals: Arc<DashMap<String, HelheimType>>,
     pub local_stack: Arc<Mutex<Vec<HashMap<String, HelheimType>>>>,
     pub func_store: Arc<DashMap<String, String>>,
-    pub ast_funcs: Arc<DashMap<String, (Vec<String>, Box<CodeTaal>, bool)>>,
+    pub ast_funcs: Arc<DashMap<String, DashMap<String, (Vec<String>, Box<CodeTaal>, bool)>>>,
     pub model_store: Arc<DashMap<String, Vec<String>>>,
     // For time-travel REPL (Vraag 5)
     history: Arc<Mutex<Vec<MemorySnapshot>>>,
@@ -384,7 +384,16 @@ impl MemoryManager {
     pub fn take_snapshot(&self) -> MemorySnapshot {
         let globals: std::collections::BTreeMap<_, _> = self.globals.iter().map(|e| (e.key().clone(), e.value().clone())).collect();
         let func_store: std::collections::BTreeMap<_, _> = self.func_store.iter().map(|e| (e.key().clone(), e.value().clone())).collect();
-        let ast_funcs: std::collections::BTreeMap<_, _> = self.ast_funcs.iter().map(|e| (e.key().clone(), (e.value().0.clone(), e.value().1.clone(), e.value().2))).collect();
+        
+        let mut ast_funcs = std::collections::BTreeMap::new();
+        for ns_entry in self.ast_funcs.iter() {
+            let mut inner_map = std::collections::BTreeMap::new();
+            for func_entry in ns_entry.value().iter() {
+                inner_map.insert(func_entry.key().clone(), (func_entry.value().0.clone(), func_entry.value().1.clone(), func_entry.value().2));
+            }
+            ast_funcs.insert(ns_entry.key().clone(), inner_map);
+        }
+        
         let model_store: std::collections::BTreeMap<_, _> = self.model_store.iter().map(|e| (e.key().clone(), e.value().clone())).collect();
 
         let mut local_stack = Vec::new();
@@ -439,8 +448,12 @@ impl MemoryManager {
             self.func_store.insert(k.clone(), v.clone());
         }
         self.ast_funcs.clear();
-        for (k, v) in &snap.ast_funcs {
-            self.ast_funcs.insert(k.clone(), (v.0.clone(), v.1.clone(), v.2));
+        for (ns, funcs) in &snap.ast_funcs {
+            let inner_map = DashMap::new();
+            for (k, v) in funcs {
+                inner_map.insert(k.clone(), (v.0.clone(), v.1.clone(), v.2));
+            }
+            self.ast_funcs.insert(ns.clone(), inner_map);
         }
         self.model_store.clear();
         for (k, v) in &snap.model_store {
@@ -460,12 +473,10 @@ impl MemoryManager {
 
     /// Fase C - Qualified name registry (O(1) DashMap lookup zonder string hacks)
     pub fn register_ast_function(&self, ns: Option<&str>, name: String, params: Vec<String>, body: Box<CodeTaal>, is_pub: bool) {
-        let qualified_name = if let Some(namespace) = ns {
-            format!("{}::{}", namespace, name)
-        } else {
-            name
-        };
-        self.ast_funcs.insert(qualified_name, (params, body, is_pub));
+        let namespace = ns.unwrap_or("").to_string();
+        
+        let ns_map = self.ast_funcs.entry(namespace).or_insert_with(|| DashMap::new());
+        ns_map.insert(name, (params, body, is_pub));
     }
 
     pub fn register_model(&self, ns: Option<&str>, name: String, fields: Vec<String>) {

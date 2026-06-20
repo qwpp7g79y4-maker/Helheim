@@ -66,7 +66,7 @@ impl SystemManager {
                 } else {
                     arr.push(serde_json::json!(item));
                 }
-                let new_list = serde_json::to_string(&arr).unwrap();
+                let new_list = serde_json::to_string(&arr)?;
 
                 memory.set_var_native(list_name.clone(), HelheimType::parse(&new_list));
                 return Ok(Some(new_list));
@@ -82,7 +82,7 @@ impl SystemManager {
                 if let Ok(idx) = index_val.parse::<usize>() {
                     if idx < arr.len() {
                         arr.remove(idx);
-                        let new_list = serde_json::to_string(&arr).unwrap();
+                        let new_list = serde_json::to_string(&arr)?;
                         memory.set_var_native(list_name.clone(), HelheimType::parse(&new_list));
                         return Ok(Some(new_list));
                     }
@@ -111,7 +111,7 @@ impl SystemManager {
 
             if let Ok(mut arr) = serde_json::from_str::<Vec<serde_json::Value>>(&list_val) {
                 arr.reverse();
-                let new_list = serde_json::to_string(&arr).unwrap();
+                let new_list = serde_json::to_string(&arr)?;
                 return Ok(Some(new_list));
             }
         }
@@ -223,7 +223,7 @@ impl SystemManager {
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&json_str) {
                 if let Some(val) = parsed.get(&key) {
                     if val.is_string() {
-                        return Ok(Some(val.as_str().unwrap().to_string()));
+                        return Ok(Some(val.as_str().ok_or_else(|| anyhow::anyhow!("Geen string waarde"))?.to_string()));
                     } else {
                         return Ok(Some(val.to_string()));
                     }
@@ -262,11 +262,21 @@ impl SystemManager {
         if name == "bestand.lees" && args.len() == 1 {
             let path = memory.resolve_value(&args[0]).trim_matches('"').to_string();
             if !ctx.is_privileged {
-                if path.contains("../") {
+                if path.contains("../") || path.contains("..\\") {
                     return Err(anyhow::anyhow!("[SECURITY]: Path Traversal gedetecteerd."));
                 }
                 if !path.starts_with("./sandbox/") && !path.starts_with("/var/lib/helheim/sandbox/") {
                     return Err(anyhow::anyhow!("[SECURITY]: Bestandstoegang buiten sandbox geweigerd."));
+                }
+                // Hardened check: verify canonical path is inside sandbox
+                if let Ok(canonical) = std::fs::canonicalize(&path) {
+                    let sandbox1 = std::fs::canonicalize("./sandbox").unwrap_or_default();
+                    let sandbox2 = std::fs::canonicalize("/var/lib/helheim/sandbox").unwrap_or_default();
+                    let is_in_sb1 = !sandbox1.as_os_str().is_empty() && canonical.starts_with(&sandbox1);
+                    let is_in_sb2 = !sandbox2.as_os_str().is_empty() && canonical.starts_with(&sandbox2);
+                    if !is_in_sb1 && !is_in_sb2 {
+                        return Err(anyhow::anyhow!("[SECURITY]: Symlink ontsnapping uit sandbox gedetecteerd."));
+                    }
                 }
             }
             match std::fs::read_to_string(&path) {
@@ -282,11 +292,21 @@ impl SystemManager {
             let content = memory.resolve_value(&args[1]);
             
             if !ctx.is_privileged {
-                if path.contains("../") {
+                if path.contains("../") || path.contains("..\\") {
                     return Err(anyhow::anyhow!("[SECURITY]: Path Traversal gedetecteerd."));
                 }
                 if !path.starts_with("./sandbox/") && !path.starts_with("/var/lib/helheim/sandbox/") {
                     return Err(anyhow::anyhow!("[SECURITY]: Bestandstoegang buiten sandbox geweigerd."));
+                }
+                // Hardened check: verify canonical path is inside sandbox
+                if let Ok(canonical) = std::fs::canonicalize(&path) {
+                    let sandbox1 = std::fs::canonicalize("./sandbox").unwrap_or_default();
+                    let sandbox2 = std::fs::canonicalize("/var/lib/helheim/sandbox").unwrap_or_default();
+                    let is_in_sb1 = !sandbox1.as_os_str().is_empty() && canonical.starts_with(&sandbox1);
+                    let is_in_sb2 = !sandbox2.as_os_str().is_empty() && canonical.starts_with(&sandbox2);
+                    if !is_in_sb1 && !is_in_sb2 {
+                        return Err(anyhow::anyhow!("[SECURITY]: Symlink ontsnapping uit sandbox gedetecteerd."));
+                    }
                 }
             }
 
@@ -306,11 +326,21 @@ impl SystemManager {
         if name == "bestand.lees_binair" && args.len() == 1 {
             let path = memory.resolve_value(&args[0]).trim_matches('"').to_string();
             if !ctx.is_privileged {
-                if path.contains("../") {
+                if path.contains("../") || path.contains("..\\") {
                     return Err(anyhow::anyhow!("[SECURITY]: Path Traversal gedetecteerd."));
                 }
                 if !path.starts_with("./sandbox/") && !path.starts_with("/var/lib/helheim/sandbox/") {
                     return Err(anyhow::anyhow!("[SECURITY]: Bestandstoegang buiten sandbox geweigerd."));
+                }
+                // Hardened check: verify canonical path is inside sandbox
+                if let Ok(canonical) = std::fs::canonicalize(&path) {
+                    let sandbox1 = std::fs::canonicalize("./sandbox").unwrap_or_default();
+                    let sandbox2 = std::fs::canonicalize("/var/lib/helheim/sandbox").unwrap_or_default();
+                    let is_in_sb1 = !sandbox1.as_os_str().is_empty() && canonical.starts_with(&sandbox1);
+                    let is_in_sb2 = !sandbox2.as_os_str().is_empty() && canonical.starts_with(&sandbox2);
+                    if !is_in_sb1 && !is_in_sb2 {
+                        return Err(anyhow::anyhow!("[SECURITY]: Symlink ontsnapping uit sandbox gedetecteerd."));
+                    }
                 }
             }
             match std::fs::read(&path) {
@@ -330,11 +360,21 @@ impl SystemManager {
             let content = memory.resolve_value(&args[1]);
             
             if !ctx.is_privileged {
-                if path.contains("../") {
+                if path.contains("../") || path.contains("..\\") {
                     return Err(anyhow::anyhow!("[SECURITY]: Path Traversal gedetecteerd."));
                 }
                 if !path.starts_with("./sandbox/") && !path.starts_with("/var/lib/helheim/sandbox/") {
                     return Err(anyhow::anyhow!("[SECURITY]: Bestandstoegang buiten sandbox geweigerd."));
+                }
+                // Hardened check: verify canonical path is inside sandbox
+                if let Ok(canonical) = std::fs::canonicalize(&path) {
+                    let sandbox1 = std::fs::canonicalize("./sandbox").unwrap_or_default();
+                    let sandbox2 = std::fs::canonicalize("/var/lib/helheim/sandbox").unwrap_or_default();
+                    let is_in_sb1 = !sandbox1.as_os_str().is_empty() && canonical.starts_with(&sandbox1);
+                    let is_in_sb2 = !sandbox2.as_os_str().is_empty() && canonical.starts_with(&sandbox2);
+                    if !is_in_sb1 && !is_in_sb2 {
+                        return Err(anyhow::anyhow!("[SECURITY]: Symlink ontsnapping uit sandbox gedetecteerd."));
+                    }
                 }
             }
 

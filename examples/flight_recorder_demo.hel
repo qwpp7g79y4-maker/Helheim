@@ -6,26 +6,30 @@
 
 gebruik "Std::IO::Tcp";
 
-functie genereer_traces() {
+functie genereer_traces {
     druk_af "== Start Flight Recorder Demo ==";
     
     // 1. Handmatig een custom trace event loggen.
     // perform Trace::record(TraceKind als integer, node_id, payload)
     // TraceKind 10 = InlineAsm, 12 = MigrateCapture, etc.
     // Laten we kind=11 (LoopIter) simuleren, payload = 42
-    perform Trace::record(11, 9999, 42);
+    zet kind = 11;
+    zet node_id = 9999;
+    zet payload = 42;
+    perform Trace.record(kind, node_id, payload);
     
     // 2. Tracing van netwerk en error propagatie
     // We roepen doelbewust een fout op zodat we de automatische
     // ErrorPropagated (15) trace event zien!
     probeer {
         // Een ongeldige tcp operatie
-        perform Std::IO::Tcp::verbind("invalid_host_no_port");
+        zet s = tcp_verbind "invalid_host_no_port";
     } vang e {
-        druk_af "Gevangen error (zie trace log voor details): " + e;
+        druk_af "Gevangen error (zie trace log voor details): ";
+        druk_af e;
     }
     
     druk_af "== Einde Flight Recorder Demo ==";
 }
 
-roep_aan genereer_traces();
+roep_aan genereer_traces;

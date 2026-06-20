@@ -1,5 +1,9 @@
 // Swarm Killer Demo: Self-Healing & Teleportation
 // Dit script demonstreert hoe Helheim een lopende taak kan bevriezen en migreren over het netwerk.
+//
+// Om dit lokaal te testen:
+// 1. Start een 'doel' node: cargo run --bin helheim-cli -- service 9002
+// 2. Start dit script: cargo run --bin helheim-cli -- script examples/swarm_killer_demo.hel
 
 print "🚀 [NODE 1] Starten van zware berekening...";
 
@@ -17,7 +21,7 @@ print "⚠️ [NODE 1] Kritieke resource limiet bereikt! Initiëren van Nood-Mig
 
 // =====================================================================
 // HIER GEBEURT DE MAGIE:
-// Swarm::migrate is een effect dispatch. Helheim pauzeert onmiddellijk,
+// Swarm.migrate is een effect dispatch. Helheim pauzeert onmiddellijk,
 // pakt de gehele Memory (inclusief `teller`), Registers en resterende AST 
 // in een SerializableContinuation, ondertekent het cryptografisch (Ed25519) 
 // en schiet het over HSP/TCP naar de target node.

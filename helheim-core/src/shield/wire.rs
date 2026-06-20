@@ -10,7 +10,7 @@ impl Wire {
             .map(|_| {
                 let chars = "abcdef0123456789";
                 let idx = rng.random_range(0..chars.len());
-                chars.chars().nth(idx).unwrap()
+                chars.chars().nth(idx).unwrap_or('0')
             })
             .collect()
     }

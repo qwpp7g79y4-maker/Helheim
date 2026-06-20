@@ -410,7 +410,7 @@ fn evaluate_actor_statement<'a>(
             if let Some(HelheimType::String(ast_str)) = memory.get_var_native(&handler_var) {
                 if let Ok(handler_ast) = serde_json::from_str::<CodeTaal>(&ast_str) {
                     // Create true continuation capture
-                    let continuation = capture_continuation(stmt, memory.as_ref(), effect, &executor.distributed)?;
+                    let continuation = capture_continuation(stmt, memory.as_ref(), effect, &executor.distributed, ctx.is_privileged)?;
                     
                     // Bind continuation to scope as Base64 to prevent injection
                     let _guard = ScopeGuard::new(memory.as_ref());
@@ -515,7 +515,7 @@ fn evaluate_actor_statement<'a>(
                             let port_str = executor.evaluate_ast_expr(&args[1], ctx.clone()).await.unwrap_or_default().trim_matches('"').to_string();
                             let port: u16 = port_str.parse().unwrap_or(8080);
                             
-                            let continuation = crate::orchestra::continuation::capture_continuation(stmt, memory.as_ref(), effect, &executor.distributed)?;
+                            let continuation = crate::orchestra::continuation::capture_continuation(stmt, memory.as_ref(), effect, &executor.distributed, ctx.is_privileged)?;
                             let wrapper = serde_json::json!({
                                 "type": "TeleportContinuation",
                                 "continuation": continuation

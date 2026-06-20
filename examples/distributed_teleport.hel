@@ -1,0 +1,66 @@
+// =========================================================================
+// Voorbeeld: Gedistribueerde Teleportatie (distributed_teleport.hel)
+//
+// Dit script demonstreert hoe een lopende taak naadloos kan overstappen
+// (teleporteren) van één fysieke node naar een andere, zonder dat de
+// variabelen, de programmastatus (Call Stack / AST), of de logica verloren
+// gaat.
+// =========================================================================
+
+print "[NODE A] Initiëren van gedistribueerde taak...";
+
+// We stellen een lokaal getal in op Node A
+zet belangrijke_data = 1337;
+
+// Start een loop op Node A
+zet teller = 1;
+zolang teller < 4 {
+    print "⏳ [NODE A] Bezig met data-voorbereiding... stap:";
+    print teller;
+    zet teller = teller + 1;
+}
+
+print "🚀 [NODE A] Data voorbereid. Klaar voor Quantum Teleportatie naar poort 9050...";
+
+// =====================================================================
+// TELEPORT EFFECT: perform Swarm.migrate(ip, port)
+//
+// Helheim onderbreekt hier de executie. De runtime maakt een snapshot
+// van alle geheugen-variabelen (`belangrijke_data`, `teller`, etc.) en 
+// het punt waar de code was gebleven, en verstuurt dit via de HSP TCP 
+// connectie naar de doelserver (in dit voorbeeld localhost poort 9050).
+// =====================================================================
+
+probeer {
+    perform Swarm.migrate("127.0.0.1", 9050);
+} vang err {
+    print "❌ [NODE A] Teleportatie gefaald. Is er wel een ontvanger op poort 9050?";
+    print err;
+    // We stoppen de operatie hier
+    gooi "MigratieError";
+}
+
+// =====================================================================
+// VANAF HIER ZITTEN WE OP NODE B (Target Server)
+// =====================================================================
+
+print "✨ [NODE B] Ontwaakt op doellocatie! State succesvol hersteld.";
+
+// We controleren of onze data de reis heeft overleefd:
+print "📊 [NODE B] Heeft de data de oversteek gered?";
+print belangrijke_data;
+
+als belangrijke_data == 1337 dan {
+    print "✅ [NODE B] Ja! Variabele `belangrijke_data` is intact.";
+} anders {
+    print "❌ [NODE B] Nee, er is iets misgegaan met de variabelen...";
+}
+
+// We zetten het werk gewoon voort:
+zolang teller < 6 {
+    print "⏳ [NODE B] Verder met werk... stap:";
+    print teller;
+    zet teller = teller + 1;
+}
+
+print "🎉 [NODE B] Teleportatie en verwerking 100% succesvol voltooid!";

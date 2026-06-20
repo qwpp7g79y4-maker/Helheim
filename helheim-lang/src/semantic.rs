@@ -90,15 +90,17 @@ impl SymbolTable {
     }
 
     pub fn define(&mut self, name: &str, ty: TypeInfo) -> Result<(), SemanticError> {
-        let current_scope = self.scopes.last_mut().unwrap();
-        current_scope.insert(name.to_string(), SymbolInfo { name: name.to_string(), ty });
+        if let Some(current_scope) = self.scopes.last_mut() {
+            current_scope.insert(name.to_string(), SymbolInfo { name: name.to_string(), ty });
+        }
         Ok(())
     }
 
     pub fn register_qualified(&mut self, ns: &str, name: &str, ty: TypeInfo) -> Result<(), SemanticError> {
         let qualified_name = format!("{}::{}", ns, name);
-        let current_scope = self.scopes.first_mut().unwrap(); // Namespaces always go to global scope
-        current_scope.insert(qualified_name.clone(), SymbolInfo { name: qualified_name, ty });
+        if let Some(current_scope) = self.scopes.first_mut() {
+            current_scope.insert(qualified_name.clone(), SymbolInfo { name: qualified_name, ty });
+        }
         Ok(())
     }
 
