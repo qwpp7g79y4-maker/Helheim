@@ -1,6 +1,6 @@
 # Helheim
 
-Helheim is a high-performance native execution environment designed for the Antigravity Cluster. It provides a bilingual domain-specific language (CodeTaal) that combines natural language syntax with direct access to low-level execution modes, including unsafe blocks, inline assembly, and manual memory management.
+Helheim is a high-performance native execution environment designed for high-performance distributed execution. It provides a bilingual domain-specific language (CodeTaal) that combines natural language syntax with direct access to low-level execution modes, including unsafe blocks, inline assembly, and manual memory management.
 
 ## Key Features
 
@@ -49,4 +49,4 @@ helheim build mijn_script.hel    # Compileren naar PTX
 Helheim is in active development. Contributions welcome from developers with experience in systems programming, Rust, or CUDA.
 
 ---
-*Created by Pepijn (Bitvader) & Antigravity — 2026*
+*Created by Pepijn (Bitvader) — 2026*
