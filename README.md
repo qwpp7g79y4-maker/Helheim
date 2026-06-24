@@ -10,6 +10,28 @@
 
 *English below*
 
+## Hoe ziet het eruit?
+
+```helheim
+# Een actor die berichten verwerkt
+actor verwerkings_node {
+    bij bericht(taak) {
+        zet resultaat = bereken(taak)
+        stuur resultaat naar coordinator
+    }
+}
+
+# Migreer een proces naar een andere machine
+perform Swarm::migrate "node-02.local"
+
+# Directe GPU toegang
+hel {
+    matmul 4096
+}
+```
+
+
+
 ---
 
 ## Nederlands (Dutch)
