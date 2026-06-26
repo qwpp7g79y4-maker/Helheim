@@ -21,7 +21,7 @@ pub enum Commands {
     Script { path: String },
     /// Compileer een Helheim script naar native PTX machinecode
     Build { path: String },
-    /// Start de Helheim Node listener (Antigravity Cluster)
+    /// Start de Helheim Node listener (gedistribueerd netwerk)
     Listen {
         #[arg(short, long, default_value_t = 8080)]
         port: u16,
