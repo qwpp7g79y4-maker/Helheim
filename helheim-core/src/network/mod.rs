@@ -7,7 +7,7 @@ use crate::common::probe::NodeCapabilities;
 use crate::shield::HelheimShield;
 use anyhow::Result;
 
-/// Antigravity Discovery: Houdt bij welke nodes in het netwerk zijn.
+/// Node Discovery: Houdt bij welke nodes in het netwerk zijn.
 pub struct DiscoveryService {
     pub peers: Arc<Mutex<HashMap<String, NodeCapabilities>>>,
 }
@@ -76,7 +76,7 @@ impl DiscoveryService {
                         let ip = addr.ip().to_string();
                         if !p.contains_key(&ip) {
                             tracing::debug!(
-                                "✨ Antigravity Node ontdekt: {} (Score: {:.2})",
+                                "✨ Helheim Node ontdekt: {} (Score: {:.2})",
                                 ip, caps.estimated_cpu_gflops
                             );
                             if caps.gpu_count > 0 {
