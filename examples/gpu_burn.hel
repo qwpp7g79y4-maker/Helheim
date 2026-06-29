@@ -1,0 +1,27 @@
+// [A·C1·AF] gpu_burn.hel
+// GPU volledig laden — 4M threads, 2M iteraties FMA per thread
+// volatile voorkomt dat de compiler de loop wegoptimaliseert
+// Vereist: cuda feature
+
+druk_af "=== GPU Burn ===";
+druk_af "4096 blocks x 1024 threads x 2.000.000 iteraties FMA";
+
+zet run = 0;
+zolang run < 5 {
+    druk_af run;
+    hel {
+        extern "C" __global__ void custom_kernel(float* data) {
+            int idx = threadIdx.x + blockIdx.x * blockDim.x;
+            volatile float x = idx * 0.000001f;
+            int i = 0;
+            while (i < 2000000) {
+                x = x * 1.00001f + 0.00001f;
+                i = i + 1;
+            }
+            data[idx] = x;
+        }
+    }
+    zet run = run + 1;
+}
+
+druk_af "=== Klaar ===";

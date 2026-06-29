@@ -1,0 +1,27 @@
+// MAX GPU BURN - MAXIMUM THERMAL LOAD
+// 4096 blocks x 1024 threads x 50.000.000 iteraties FMA
+// Dit script laat je GPU krijsen.
+
+druk_af "=== 🚀 MAX GPU BURN INITIATED 🚀 ===";
+druk_af "Grid: 4096, Block: 1024";
+druk_af "Threads: 4 Miljoen, Iters: 50 Miljoen FMA per thread";
+
+zet run = 0;
+zolang run < 100 {
+    druk_af run;
+    hel {
+        extern "C" __global__ void custom_kernel(float* data) {
+            int idx = threadIdx.x + blockIdx.x * blockDim.x;
+            volatile float x = idx * 0.000001f;
+            int i = 0;
+            while (i < 50000000) {
+                x = x * 1.00001f + 0.00001f;
+                i = i + 1;
+            }
+            data[idx] = x;
+        }
+    }
+    zet run = run + 1;
+}
+
+druk_af "=== 🛑 BURN COMPLETE ===";

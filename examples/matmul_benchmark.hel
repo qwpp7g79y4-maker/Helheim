@@ -1,0 +1,16 @@
+// [A·C1·AF] matmul_benchmark.hel
+// Matrix vermenigvuldiging benchmark: 1024x1024 en 4096x4096
+// Vereist: cuda feature + NVIDIA GPU
+
+druk_af "=== Helheim MatMul Benchmark ===";
+druk_af "";
+
+druk_af "--- Ronde 1: 1024x1024 ---";
+matmul 1024;
+
+druk_af "";
+druk_af "--- Ronde 2: 4096x4096 ---";
+matmul 4096;
+
+druk_af "";
+druk_af "=== Benchmark klaar ===";

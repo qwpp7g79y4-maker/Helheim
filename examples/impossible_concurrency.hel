@@ -1,0 +1,59 @@
+// impossible_concurrency.hel
+// Dit is een puur rekenintensief script: Het zoeken naar priemgetallen via brute-force recursie.
+// In Python (met de Global Interpreter Lock) kan je dit NIET tegelijkertijd draaien op meerdere cores 
+// tenzij je zware C-wrappers of multiprocessing (met IPC overhead) gebruikt.
+// Helheim verdeelt dit AST-natively over alle beschikbare CPU-threads in 1 block.
+
+druk_af "--- START HELHEIM PURE COMPUTE BENCHMARK ---";
+druk_af "Brute-force berekenen van priemgetallen (rekenintensief).";
+
+functie zoek_priem met grens {
+    zet getal = 2;
+    zet totaal_priem = 0;
+    
+    // Een zware, trage, geneste loop (Puur om de CPU te laten zweten)
+    zolang getal < grens {
+        zet is_priem = 1;
+        zet deler = 2;
+        
+        zolang deler < getal {
+            zet rest = getal % deler;
+            als rest == 0 dan {
+                zet is_priem = 0;
+            }
+            zet deler = deler + 1;
+        }
+        
+        als is_priem == 1 dan {
+            zet totaal_priem = totaal_priem + 1;
+        }
+        zet getal = getal + 1;
+    }
+    
+    geef_terug totaal_priem;
+}
+
+druk_af "Lanceren van 10 MASSIVE parallelle zoektochten zonder GIL lock...";
+
+// In Python zou dit script domweg single-threaded draaien en de GIL blokkeren.
+// Helheim ontketent Tokio async futures voor native multi-threading.
+probeer {
+    tegelijkertijd {
+        roep_aan zoek_priem 800;
+        roep_aan zoek_priem 850;
+        roep_aan zoek_priem 900;
+        roep_aan zoek_priem 950;
+        roep_aan zoek_priem 1000;
+        roep_aan zoek_priem 1050;
+        roep_aan zoek_priem 1100;
+        roep_aan zoek_priem 1150;
+        roep_aan zoek_priem 1200;
+        roep_aan zoek_priem 1250;
+    }
+    druk_af "[SUCCES]: Alle 10 cores hebben onafhankelijk en tegelijkertijd hun berekening afgerond!";
+} vang err {
+    druk_af "Fout:";
+    druk_af err;
+}
+
+druk_af "--- EINDE BENCHMARK ---";

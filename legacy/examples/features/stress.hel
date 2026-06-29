@@ -1,0 +1,11 @@
+// Helheim HIVE Thermal Swarm Loop (Phase 8)
+// Dit script plaatst het gehele 3-node cluster onder een oneindige workload.
+
+zet WACHTIJD = 1;
+zet GROOTTE = 150000;
+
+zolang waar {
+    print "🔥 Starten van HIVE Thermische Inslag (Size: 150000)...";
+    hive work 150000;
+    wacht 1;
+}

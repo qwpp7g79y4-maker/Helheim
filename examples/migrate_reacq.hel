@@ -1,0 +1,50 @@
+// Dit script demonstreert Helheim's netwerk-teleportatie functionaliteit (Migratie)
+// en het correct her-acquireren van resources op de doellocatie.
+// 
+// Om dit lokaal te testen:
+// 1. Start een 'doel' node: cargo run --bin helheim-gateway -- --port 9055
+// 2. Start dit script: cargo run --bin helheim-cli -- run examples/migrate_reacq.hel
+
+gebruik "Std::IO::Tcp";
+
+zet doel_ip = "127.0.0.1";
+zet doel_poort = 9055;
+
+// We binden een resource aan een poort
+// In dit geval maken we eerst een lokale connectie om de state te mocken
+// (Normaal zou je naar een database verbinden of een bestand openen)
+zet tcp_sock = "";
+
+druk_af "== HELHEIM MIGRATIE DEMO ==";
+druk_af "Ik ben momenteel actief op Node A.";
+
+probeer {
+    handle Migratie {
+        voor_vertrek => {
+            druk_af "[Migratie Handler] Node A: Sluite resources voor vertrek...";
+            als tcp_sock != "" dan {
+                // native IO functies roepen we aan via roep_aan
+                roep_aan Std::IO::Tcp::sluit(tcp_sock);
+                zet tcp_sock = "";
+            }
+            hervat("ok");
+        }
+        na_aankomst => {
+            druk_af "[Migratie Handler] Node B: Aangekomen! Heropen resources...";
+            // We heropenen onze (fictieve of echte) verbinding op de nieuwe node via roep_aan
+            // zet tcp_sock = roep_aan Std::IO::Tcp::verbind("192.168.1.100");
+            druk_af "Resources succesvol heropend.";
+            hervat("ok");
+        }
+    } in {
+        druk_af "Start teleportatie naar 127.0.0.1:9055...";
+        
+        // Dit triggert het serialize & stuur proces
+        perform Swarm.migrate(doel_ip, doel_poort);
+        
+        // Vanaf hier zijn we 'fysiek' (in het netwerk) aanwezig op de nieuwe node!
+        druk_af "Hallo vanaf Node B! Ik ben succesvol geteleporteerd en mijn state is hersteld.";
+    }
+} vang err {
+    druk_af "[FOUT] Migratie mislukt: " + err;
+}

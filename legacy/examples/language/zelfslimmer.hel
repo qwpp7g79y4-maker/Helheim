@@ -1,0 +1,34 @@
+// ==========================================
+// ZELFSLIMMER - Leuk zelfherstartend script
+// dat steeds slimmer wordt
+// ==========================================
+
+functie bereken_score met basis {
+    als basis > 10 dan {
+        retourneer basis * 2;
+    } anders {
+        retourneer basis + 5;
+    }
+}
+
+zet ervaring = 20;
+zet score = roep_aan bereken_score ervaring;
+
+zet nieuwe_ervaring = ervaring + 3;
+zet nieuwe_score = roep_aan bereken_score nieuwe_ervaring;
+
+zet rapport = "=== ZELFSLIMMER ===";
+zet rapport2 = "Huidige ervaring:";
+zet rapport3 = ervaring;
+zet rapport4 = "Score:";
+zet rapport5 = score;
+zet rapport6 = "Na herstart ervaring:";
+zet rapport7 = nieuwe_ervaring;
+zet rapport8 = "Nieuwe score:";
+zet rapport9 = nieuwe_score;
+zet rapport10 = "Ik word slimmer!";
+
+zet msg1 = "Herstart commando:";
+zet msg2 = "./target/debug/helheim-cli script examples/language/zelfslimmer.hel";
+
+zet tip = "Verhoog ervaring en herstart om slimmer te zien worden!";

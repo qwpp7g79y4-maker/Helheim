@@ -1,0 +1,19 @@
+[Unit]
+Description=Helheim Swarm Engine (Antigravity Cluster)
+Documentation=https://antigravity.dev/helheim
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# %u expands to user name. But we install to local.
+# We assume deployment via install.sh to ~/.local/bin/helheim
+ExecStart=%h/.local/bin/helheim service --port 9001
+Restart=always
+RestartSec=5
+StartLimitInterval=0
+StandardOutput=null
+StandardError=journal
+
+[Install]
+WantedBy=default.target

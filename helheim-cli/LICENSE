@@ -1,0 +1,35 @@
+# HELHEIM INDUSTRIAL LICENSE (HIL) v1.0
+
+Copyright (c) 2026 Pieter & The Silicon Hive Distributed Industrial Network.
+
+## 1. PREAMBLE
+Helheim is a high-performance distribution and orchestration system designed for industrial-grade computational workloads. It is built to be accessible to the entire community ("Open Access") while maintaining the highest precision and safety standards. By using this software, you agree to the terms of responsible orchestration below.
+
+## 2. PROFESSIONAL USE ONLY
+This software is provided for industrial, scientific, and research purposes. It is NOT a consumer product or a game. Usage requires technical proficiency in hardware management and thermal monitoring.
+
+## 3. LIABILITY & HARDWARE SAFETY
+**LIMITATION OF LIABILITY**: THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+*   **Thermal Responsibility**: The User is 100% responsible for the physical safety of their hardware. This includes, but is not limited to, cooling systems, electrical supply, and component longevity.
+*   **No Damages**: In no event shall the authors or copyright holders be liable for any hardware failure, data loss, or secondary damages resulting from the use of the Native Execution Layer (NEL) or high-load benchmark runes (`KETS`, `GALLOP`, etc.).
+
+## 4. THE ORCHESTRATOR PROTOCOL
+By running the Helheim Orchestrator, you consent to:
+*   **Distributed Compute**: Allowing the node to participate in verified, ephemeral mathematical workloads shared within the Silicon Hive.
+*   **Privacy**: Nodes process mathematical buffers only. No access to the host's personal data or filesystem is permitted by the protocol.
+
+## 5. MODIFICATION & REDISTRIBUTION
+Redistribution of the binary is permitted only with this license file included. Modification of the Native Execution Layer (NEL) is reserved for Tier 3 "Alchemists" and authorized industrial partners.
+
+## 6. ETHICAL USAGE & NON-ABUSE
+Helheim is a tool for progress, not for harm.
+*   **Prohibition of Misuse**: Any use of the Native Execution Layer (NEL) or the Orchestrator Network for malicious purposes—including but not limited to cyber-attacks, data theft, or any activity intended to cause harm to individuals or infrastructure—is strictly prohibited.
+*   **Zero Tolerance**: Misuse of the software results in the immediate and permanent revocation of the node's credentials and access to the Silicon Hive.
+*   **Fair Use**: We encourage open experimentation and community growth, provided that such activities remain within the boundaries of ethical computing.
+
+## 7. TERMINATION
+Failure to comply with thermal safety standards, ethical usage guidelines, or participation in unauthorized cluster activity will result in the immediate revocation of the node's Tiered Qualification.
+
+---
+*Empowering the world's silicon, one node at a time - Responsibly.*
+**THE SILICON HIVE.**

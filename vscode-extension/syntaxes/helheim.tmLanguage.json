@@ -1,0 +1,119 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Helheim",
+  "scopeName": "source.helheim",
+  "fileTypes": ["hel"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#function-definition" },
+    { "include": "#keywords" },
+    { "include": "#lists" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#booleans" },
+    { "include": "#function-calls" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.number-sign.helheim",
+          "match": "#.*$"
+        }
+      ]
+    },
+    "function-definition": {
+      "patterns": [
+        {
+          "name": "meta.function.helheim",
+          "match": "\\b(functie|fn|func)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.control.helheim" },
+            "2": { "name": "entity.name.function.helheim" }
+          }
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.helheim",
+          "match": "\\b(zet|let|set|zolang|while|repeat|als|if|anders|else|retourneer|return|roep_aan|invoke|probeer|try|vang|catch|tegelijkertijd|achtergrond|gebruik|model|nieuw)\\b"
+        },
+        {
+          "name": "keyword.other.helheim",
+          "match": "\\b(met|with|dan|then|do|elke|each|in)\\b"
+        }
+      ]
+    },
+    "lists": {
+      "patterns": [
+        {
+          "name": "meta.array.helheim",
+          "begin": "\\[",
+          "end": "\\]",
+          "beginCaptures": {
+            "0": { "name": "punctuation.definition.array.begin.helheim" }
+          },
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.array.end.helheim" }
+          },
+          "patterns": [
+            { "include": "#lists" },
+            { "include": "#strings" },
+            { "include": "#numbers" },
+            { "include": "#booleans" },
+            { "include": "#keywords" },
+            { "match": ",", "name": "punctuation.separator.array.helheim" }
+          ]
+        }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.helheim",
+      "begin": "\"",
+      "end": "\"",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.string.begin.helheim" }
+      },
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.string.end.helheim" }
+      },
+      "patterns": [
+        { "name": "constant.character.escape.helheim", "match": "\\\\." },
+        { "name": "variable.other.interpolated.helheim", "match": "\\{[^}]+\\}" },
+        { "name": "variable.other.interpolated.helheim", "match": "\\$[A-Za-z_][A-Za-z0-9_]*" }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        { "name": "constant.numeric.integer.helheim", "match": "\\b\\d+\\b" },
+        { "name": "constant.numeric.float.helheim", "match": "\\b\\d+\\.\\d+\\b" }
+      ]
+    },
+    "booleans": {
+      "patterns": [
+        { "name": "constant.language.boolean.helheim", "match": "\\b(waar|onwaar|true|false)\\b" }
+      ]
+    },
+    "function-calls": {
+      "patterns": [
+        {
+          "name": "entity.name.function.helheim",
+          "match": "\\b(roep_aan|invoke)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.other.helheim" },
+            "2": { "name": "entity.name.function.helheim" }
+          }
+        },
+        {
+          "name": "entity.name.function.helheim",
+          "match": "([A-Za-z_][A-Za-z0-9_]*)\\s*\\(",
+          "captures": {
+            "1": { "name": "entity.name.function.helheim" }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,36 @@
+// [A·C1·AF] matmul_stress.hel
+// GPU stress test — aanhoudende belasting om fans te laten draaien
+
+druk_af "=== GPU Stress Test ===";
+
+// Fase 1: opwarmen
+druk_af "Fase 1: opwarmen 4096x4096";
+matmul 4096;
+
+// Fase 2: zwaar — 8192x8192 in een loop
+druk_af "Fase 2: 8192x8192 sustained loop (10x)";
+zet i = 0;
+zolang i < 10 {
+    druk_af i;
+    matmul 8192;
+    zet i = i + 1;
+}
+
+// Fase 3: parallel — meerdere 4096 tegelijk
+druk_af "Fase 3: concurrent 4x 4096";
+concurrent {
+    matmul 4096;
+    matmul 4096;
+    matmul 4096;
+    matmul 4096;
+}
+
+// Fase 4: maximaal — 16384x16384
+druk_af "Fase 4: 16384x16384 (3x)";
+zet j = 0;
+zolang j < 3 {
+    matmul 16384;
+    zet j = j + 1;
+}
+
+druk_af "=== Klaar ===";

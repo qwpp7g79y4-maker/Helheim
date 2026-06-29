@@ -1,0 +1,4 @@
+# Eenvoudige state voor zelfslimmer (wordt overschreven)
+zet gen = 0
+zet kennis = 1
+zet beste_score = 0

@@ -1,0 +1,96 @@
+{
+  "Functie (Helheim)": {
+    "prefix": ["func", "functie", "fn"],
+    "body": [
+      "functie ${1:naam} met ${2:param1} ${3:param2} {",
+      "\t${4:// body}",
+      "\tretourneer ${5:waarde};",
+      "}"
+    ],
+    "description": "Maak een nieuwe Helheim functie"
+  },
+  "Als-dan (Helheim)": {
+    "prefix": ["als", "if"],
+    "body": [
+      "als ${1:conditie} dan {",
+      "\t${2:// dan blok}",
+      "}${3: anders {",
+      "\t${4:// anders blok}",
+      "}}"
+    ],
+    "description": "Als ... dan { } (met optioneel anders)"
+  },
+  "Zolang loop (Helheim)": {
+    "prefix": ["zolang", "while"],
+    "body": [
+      "zolang (${1:conditie}) {",
+      "\t${2:// body}",
+      "}"
+    ],
+    "description": "Zolang / while loop"
+  },
+  "Probeer / Vang (Helheim)": {
+    "prefix": ["probeer", "try"],
+    "body": [
+      "probeer {",
+      "\t${1:// probeer blok}",
+      "} vang ${2:err} {",
+      "\t${3:// vang blok}",
+      "}"
+    ],
+    "description": "Probeer ... vang (try/catch)"
+  },
+  "Model definitie (Helheim)": {
+    "prefix": ["model"],
+    "body": [
+      "model ${1:Naam} { ${2:veld1}, ${3:veld2} }"
+    ],
+    "description": "Definieer een model/struct"
+  },
+  "Model + Nieuw instantie (Helheim)": {
+    "prefix": ["modelnieuw", "model + nieuw"],
+    "body": [
+      "model ${1:Naam} { ${2:veld1}, ${3:veld2} }",
+      "",
+      "zet ${4:instance} = nieuw ${1:Naam}(${5:waarden})"
+    ],
+    "description": "Model definitie + nieuwe instantie in één keer"
+  },
+  "Tegelijkertijd (Helheim)": {
+    "prefix": ["tegelijk", "tegelijkertijd", "concurrent"],
+    "body": [
+      "tegelijkertijd {",
+      "\t${1:// parallelle taken}",
+      "}"
+    ],
+    "description": "Parallelle / gelijktijdige uitvoering"
+  },
+  "Roep aan (Helheim)": {
+    "prefix": ["roep", "roep_aan", "call"],
+    "body": [
+      "roep_aan ${1:functie} ${2:arg1} ${3:arg2}"
+    ],
+    "description": "Roep een functie aan"
+  },
+  "Retourneer (Helheim)": {
+    "prefix": ["ret", "retourneer", "return"],
+    "body": [
+      "retourneer ${1:waarde};"
+    ],
+    "description": "Retourneer een waarde"
+  },
+  "Zet variabele (Helheim)": {
+    "prefix": ["zet", "let"],
+    "body": [
+      "zet ${1:naam} = ${2:waarde}"
+    ],
+    "description": "Declareer een variabele"
+  },
+  "Gebruik module (Helheim)": {
+    "prefix": ["gebruik"],
+    "body": [
+      "gebruik \"${1:pad/naar/module.hel}\""
+    ],
+    "description": "Importeer een ander Helheim bestand"
+  }
+}

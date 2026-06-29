@@ -1,0 +1,6 @@
+functie categorie score {
+    als score >= 90 dan {
+        druk_af "Uitstekend";
+    }
+}
+roep_aan categorie 95;

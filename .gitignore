@@ -1,0 +1,90 @@
+# Build artifacts
+target/
+**/target/
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+Cargo.lock
+
+# Logs, history, AI creation traces (nooit in public taal repo)
+history.txt
+scan_log.txt
+helheim-logs/
+*.log
+audit.log*
+helheim-log-*.md
+log-update.sh
+
+# Interne AI/creatie docs & junk (niet voor public "programmeertaal")
+Optimization_Plan.md
+Helheim_Language_Spec.md
+DRAWBACKS.md
+GITHUB_PREFLIGHT_AUDIT.md
+*PLAN*.md
+*PLAN_FOR_ANTIGRAVITY.md
+LANGUAGE_COMPLETION_CHECKLIST.md
+ARTISJOK_REMOVAL_LOG.md
+last_actions.md
+task.md
+docs/MOTOR_CORTEX.md
+*.snn_backup
+.codegraph/
+experiments/
+vscode-helheim/
+ai_archive/
+runestones/
+deploy/
+
+# Persoonlijke data & paden
+/home/bitboi/
+**/*bitboi*
+
+# Secrets
+.env
+*.env
+*.pem
+*.key
+id_rsa*
+
+# IDE & OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Test & temp (curate goede in examples/)
+test_*.hel
+*.tmp
+*.bak
+.audit-junk/
+
+# Lokale conceptbestanden (niet voor publieke repo)
+CONCEPTS/
+
+# Backup bestanden
+*.bak
+*.bak.*
+*.orig
+*.old
+
+# Specific Internal Documents (do not export)
+HELHEIM_VERBETERINGEN.md
+GROK_BUILD_SYSTEM_PROMPT.md
+HANDOFF.md
+HELHEIM_ROADMAP_v2.md
+helheim-cli/helheim-logs/
+audit_trail.jsonl
+*.sqlite
+zis6cXhp
+
+# Lokale bestanden — niet naar GitHub
+GROK_BUILD_SYSTEM_PROMPT.md
+HANDOFF.md
+audit_trail.jsonl
+HELHEIM_VERBETERINGEN.md
+HELHEIM_SPECIFICATIONS.md

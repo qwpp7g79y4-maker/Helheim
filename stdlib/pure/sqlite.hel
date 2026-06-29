@@ -1,0 +1,20 @@
+// sqlite.hel
+// Thin, namespaced bridge to the libhelheim_sqlite native plugin
+
+functie sqlite::open met path {
+    // The runtime resolves "sqlite::open" to the C-ABI entry point in libhelheim_sqlite.so
+    zet handle = roep_aan sqlite::open path;
+    geef_terug handle;
+}
+
+functie sqlite::exec met db statement {
+    // Zero-copy string passing to FFI
+    zet result = roep_aan sqlite::exec db statement;
+    geef_terug result;
+}
+
+// Higher-level ergonomic API built on top
+functie sqlite::query met db sql {
+    zet rows = roep_aan sqlite::exec db sql;
+    geef_terug rows;
+}

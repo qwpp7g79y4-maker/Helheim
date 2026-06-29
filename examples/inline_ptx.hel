@@ -1,0 +1,16 @@
+// Dit voorbeeld demonstreert het gebruik van Inline Assembly voor de NVIDIA PTX hardware.
+// Het stelt gebruikers in staat om handmatig geoptimaliseerde PTX instructies in te voegen.
+
+zet a = 10;
+zet b = 20;
+zet c = 0;
+
+// Blok met inline PTX en I/O bindingen
+asm ptx {
+    "add.u32 %0, %1, %2;"
+} in(a, b) out(c) clobber("memory");
+
+druk_af "Resultaat van inline PTX add.u32: " + c;
+
+// Het is mogelijk om ook complexe bit-manipulaties of custom warp-synchronisaties uit te voeren
+// die anders in Helheim's standaard operatoren niet beschikbaar zijn.

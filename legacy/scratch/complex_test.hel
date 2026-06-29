@@ -1,0 +1,26 @@
+gebruik "math";
+
+zet banner = "=== WELKOM IN DE HELHEIM CORE ===";
+druk_af banner;
+
+// Functie definitie (Pure logica)
+functie bereken_energie met massa {
+    zet c = 299792458;
+    zet energie = massa * c * c;
+    geef_terug energie;
+}
+
+// Probeer / Vang blok voor veilige executie
+probeer {
+    zet e = roep_aan bereken_energie 10;
+    druk_af "Energie berekend: ";
+    druk_af e;
+} vang err {
+    druk_af "Er ging iets mis in de fysica engine.";
+}
+
+// Een echte GPU acceleratie command via CodeTaal!
+druk_af "Starten van GPU Matrix Vermenigvuldiging (Tensor Cores)...";
+matmul 4096;
+
+druk_af "Test script voltooid! Helheim draait perfect op de achtergrond.";

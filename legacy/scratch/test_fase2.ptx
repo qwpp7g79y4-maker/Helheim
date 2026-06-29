@@ -1,0 +1,69 @@
+.version 7.0
+.target sm_80
+.address_size 64
+
+.func (.reg .f64 %ret) is_even (.reg .f64 %f0, .reg .f64 %f1, .reg .f64 %f2) {
+    .reg .f64 %f<1024>;
+    .reg .pred %p<1024>;
+    mov.f64 %f3, 0f4000000000000000;
+    add.f64 %f4, %f1, %f3;
+    mov.f64 %f5, 0f0000000000000000;
+    setp.eq.f64 %p0, %f4, %f5;
+    selp.f64 %f6, 0f3ff0000000000000, 0f0000000000000000, %p0;
+    mov.f64 %ret, %f6;
+    ret;
+    mov.f64 %ret, 0f0000000000000000;
+    ret;
+}
+
+.func (.reg .f64 %ret) bereken (.reg .f64 %f0, .reg .f64 %f1) {
+    .reg .f64 %f<1024>;
+    .reg .pred %p<1024>;
+    mul.f64 %f2, %f0, %f1;
+    mov.f64 %f3, 0f4024000000000000;
+    add.f64 %f4, %f2, %f3;
+    mov.f64 %f5, %f4;
+    mov.f64 %f6, 0f4049000000000000;
+    setp.gt.f64 %p0, %f5, %f6;
+    selp.f64 %f7, 0f3ff0000000000000, 0f0000000000000000, %p0;
+    setp.ne.f64 %p1, %f7, 0f0000000000000000;
+    @%p1 bra then_0;
+    bra else_1;
+then_0:
+        mov.f64 %f8, 0f4014000000000000;
+        sub.f64 %f9, %f5, %f8;
+        mov.f64 %f10, %f9;
+    bra endif_2;
+else_1:
+endif_2:
+    mov.f64 %ret, %f10;
+    ret;
+    mov.f64 %ret, 0f0000000000000000;
+    ret;
+}
+
+extern "C" .entry main() {
+    .reg .f64 %f<1024>;
+    .reg .pred %p<1024>;
+    mov.f64 %f0, 0f400921f9f01b866e;
+    mov.f64 %f1, %f0;
+    mov.f64 %f2, 0f0000000000000000;
+    mov.f64 %f3, %f2;
+    mov.f64 %f4, 0f3ff0000000000000;
+    mov.f64 %f5, %f4;
+loop_3:
+    mov.f64 %f6, 0f4014000000000000;
+    setp.lt.f64 %p0, %f3, %f6;
+    selp.f64 %f7, 0f3ff0000000000000, 0f0000000000000000, %p0;
+    setp.eq.f64 %p1, %f7, 0f0000000000000000;
+    @%p1 bra loop_end_4;
+        mov.f64 %f8, 0f4000000000000000;
+        call (%f9), bereken, (%f5, %f8);
+        mov.f64 %f10, %f9;
+        mov.f64 %f11, 0f3ff0000000000000;
+        add.f64 %f12, %f3, %f11;
+        mov.f64 %f13, %f12;
+    bra loop_3;
+loop_end_4:
+    ret;
+}

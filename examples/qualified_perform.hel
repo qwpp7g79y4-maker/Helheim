@@ -1,0 +1,21 @@
+// Dit voorbeeld demonstreert het gebruik van gekwalificeerde 'perform' statements.
+// Door effecten te namespacen voorkomen we globale effect-botsingen, vergelijkbaar met modules.
+
+gebruik "Std::IO::Console";
+gebruik "Std::Network::Http";
+
+// Handler voor Console output
+handle Std::IO::Console {
+    druk_af => {
+        // Hier onderscheppen we de Std::IO::Console.druk_af perform
+        druk_af "[INTERCEPTED CONSOLE]: Intercepted druk_af effect!";
+        hervat("");
+    }
+} in {
+    // Deze perform is gekwalificeerd en wordt dus precies gematcht met de handler
+    perform Std::IO::Console.druk_af("Hallo gekwalificeerde wereld!");
+
+    // Als er geen handler is, probeert de executor een native module aan te roepen,
+    // of de operatie valt in de leegte als het effect onbekend is.
+    perform Std::Network::Http.haal("http://example.com");
+}

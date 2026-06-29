@@ -1,0 +1,53 @@
+// stdlib/pure/net.hel
+// Standard TCP/Networking primitives wrapper
+
+effect Net {
+    luister,
+    accepteer,
+    stuur,
+    ontvang,
+    sluit
+}
+
+// ==========================================
+// LOW-LEVEL NETWERK FUNCTIES
+// ==========================================
+
+functie luister_start(poort) {
+    // Evalueert naar een listener handle
+    geef_terug tcp_luister "127.0.0.1:" + text(poort);
+}
+
+functie accepteer_verbinding(listener) {
+    // Evalueert naar een socket handle
+    geef_terug tcp_accepteer listener;
+}
+
+functie verzend_data(socket, data) {
+    tcp_stuur socket, data;
+}
+
+functie lees_data(socket, max_bytes) {
+    geef_terug tcp_ontvang socket, max_bytes;
+}
+
+functie sluit_verbinding(socket) {
+    tcp_sluit socket;
+}
+
+// ==========================================
+// HIGH-LEVEL HELPER FUNCTIES
+// ==========================================
+
+// Een handige TCP Server loop die elke inkomende verbinding afhandelt via het Net effect
+functie server_loop(poort) {
+    let listener = perform Net.luister(poort);
+    print "[Net] Server luistert op poort " + text(poort);
+
+    zolang waar {
+        let socket = perform Net.accepteer(listener);
+        print "[Net] Nieuwe verbinding geaccepteerd!";
+        
+        // Return socket voor de gebruiker, delegatie via effecten
+    }
+}

@@ -1,0 +1,64 @@
+// distributed_teleport.hel
+// P2P Continuation Teleportation Demo met Resource Re-acquisition
+
+// Deze demo toont aan dat een zware berekening in Helheim
+// halverwege gestopt kan worden, en via een Swarm-socket (ECDH geëncrypteerd)
+// naar een andere node gestuurd kan worden om daar exact verder te gaan.
+// Nieuw: Het demonstreert ook hoe resources (zoals een open connectie) netjes
+// afgesloten en hersteld worden tijdens deze migratie!
+
+functie data_pipeline(start_waarde) {
+    print "  -> [PIPELINE] Lokaal gestart op Node A.";
+    print "  -> [PIPELINE] Input waarde: " + text(start_waarde);
+    
+    // We openen een fictieve database connectie of file handle
+    zet mijn_connectie = "Database_Connectie_Open";
+    
+    let lokaal_verwerkt = start_waarde * 5;
+    print "  -> [PIPELINE] Lokale voorverwerking klaar. Waarde = " + text(lokaal_verwerkt);
+    
+    print "  -> [PIPELINE] ❄️ Ik bevries nu en spring over de Swarm!";
+    
+    // Dit verplaatst ons proces over het netwerk.
+    // De executor pauzeert hier, serialiseert de stack, voert `voor_vertrek` uit,
+    // en stuurt zichzelf weg. Op Node B wordt `na_aankomst` uitgevoerd en 
+    // gaat dit script direct ná deze regel verder!
+    perform Swarm::migrate("127.0.0.1", 9001);
+    
+    // ALLES HIERONDER GEBEURT OP NODE B!
+    print "  -> [PIPELINE] 🔥 Wauw! Ik ben wakker op Node B!";
+    
+    // Bewijs dat lokale variabelen behouden zijn:
+    let cloud_verwerkt = lokaal_verwerkt * 10;
+    print "  -> [PIPELINE] Cloud berekening klaar. Eindresultaat: " + text(cloud_verwerkt);
+    print "  -> [PIPELINE] Mijn connectie status: " + mijn_connectie;
+    
+    retourneer cloud_verwerkt;
+}
+
+print "=================================================";
+print "🚀 HELHEIM DISTRIBUTED TELEPORTATION DEMO 🚀";
+print "=================================================";
+
+// De Handler voor Resource Lifecycle tijdens migratie
+handle Migratie {
+    voor_vertrek => {
+        print "[HANDLER] Effect 'voor_vertrek' aangeroepen!";
+        print "[HANDLER] We sluiten netjes open resources af (bijv. " + mijn_connectie + ")...";
+        zet mijn_connectie = "Database_Connectie_Gesloten";
+        
+        hervat(""); // Geef toestemming voor de fysieke teleport
+    }
+    na_aankomst => {
+        print "[HANDLER] Effect 'na_aankomst' aangeroepen op de NIEUWE node!";
+        print "[HANDLER] Herstellen van resources (bijv. opnieuw verbinden)...";
+        zet mijn_connectie = "Database_Connectie_Open (Hersteld)";
+        
+        hervat(""); // Ga door met de normale code!
+    }
+} in {
+    let resultaat = data_pipeline(42);
+    // Let op: Node A zal dit print statement NOOIT bereiken als de migratie slaagt.
+    // Node B print dit nadat de functie `data_pipeline` returned.
+    print "Klaar met de script executie. Status: " + text(resultaat);
+}

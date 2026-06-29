@@ -1,0 +1,12 @@
+[package]
+name = "helheim-math-plugin"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# No dependencies — pure FFI example. All C types are defined locally
+# so this crate can be built completely standalone.
+[workspace]

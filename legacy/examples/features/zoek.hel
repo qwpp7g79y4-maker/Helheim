@@ -1,0 +1,7 @@
+print "=== HELHEIM ZOEKER ===";
+zet TERM = vraag "Zoekterm:";
+print "Bestanden met deze naam:";
+voer uit find /opt -name TERM -type f 2>/dev/null;
+print "Bestanden die dit bevatten:";
+voer uit grep -rl TERM /opt/project --include=*.rs --include=*.py --include=*.md 2>/dev/null;
+print "Klaar.";

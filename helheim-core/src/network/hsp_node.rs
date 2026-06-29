@@ -1,0 +1,406 @@
+use anyhow::Result;
+use colored::*;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
+use base64::engine::general_purpose::STANDARD as B64;
+use base64::Engine;
+
+use dashmap::DashMap;
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct NexusHspHeader {
+    pub magic: u32,          // 0x5053584E = 'NXSP'
+    pub version: u8,
+    pub payload_type: u8,    // 0=spike_batch, 2=dream_event (LTD deltas), 1=chi_boundary, 5=astro_mood_sync
+    pub sender_id: u16,
+    pub tick: u64,
+    pub num_items: u32,
+    pub _padding: u32,
+    pub ts: u64,
+    pub nonce: u64,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct AstrocyteMoodSync {
+    pub fatigue: f32,
+    pub arousal: f32,
+    pub irritability: f32,
+    pub valence: f32,
+    pub c_mean_slow: f32,
+    pub _padding: [u8; 12],
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct ChiBoundarySync {
+    pub module_id: u32,
+    pub _padding: u32,
+    pub chi_vector: [f32; 16],
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct DreamEventSync {
+    pub rv: f32,
+    pub _padding: [u32; 3],
+}
+
+pub struct SwarmEngine;
+
+lazy_static::lazy_static! {
+    static ref CONNECTIONS: DashMap<String, (tokio::net::TcpStream, [u8; 32])> = DashMap::new();
+    static ref LAST_SEEN_LAMPORT: DashMap<String, u64> = DashMap::new();
+}
+
+impl SwarmEngine {
+    pub fn clear_pool() {
+        CONNECTIONS.clear();
+        LAST_SEEN_LAMPORT.clear();
+    }
+    /// Start de Async Swarm Listener (TCP)
+    /// Non-blocking, draait op de achtergrond.
+    pub async fn ignite(
+        port: u16,
+        orchestrator: std::sync::Arc<crate::orchestra::Orchestrator>,
+    ) -> Result<()> {
+        let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
+        tracing::debug!(
+            "{}",
+            format!("[SWARM]: HSP Node Active on port {}", port)
+                .green()
+                .bold()
+        );
+
+        tokio::spawn(async move {
+            loop {
+                match listener.accept().await {
+                    Ok((mut socket, addr)) => {
+                        tracing::debug!("⚡ Persistente Swarm Verbinding geaccepteerd: {}", addr);
+                        let orchestrator_clone = orchestrator.clone();
+                        tokio::spawn(async move {
+                            // --- ECDH HANDSHAKE (Server-side) ---
+                            let mut ecdh = crate::shield::EcdhSession::new();
+                            let mut peer_pub = [0u8; 32];
+                            if socket.read_exact(&mut peer_pub).await.is_err() {
+                                tracing::debug!("❌ Swarm ECDH gefaald: kon public key niet lezen van {}", addr);
+                                return;
+                            }
+                            if socket.write_all(&ecdh.public_key).await.is_err() {
+                                return;
+                            }
+                            let session_key = match ecdh.derive_shared_key(&peer_pub) {
+                                Ok(k) => k,
+                                Err(e) => {
+                                    tracing::debug!("❌ Swarm ECDH gefaald (Sleutel afleiding): {}", e);
+                                    return;
+                                }
+                            };
+                            tracing::debug!("[SWARM-ECDH]: 🔐 Sessiesleutel succesvol overeengekomen met {}", addr);
+
+                            let mut buf = vec![0; 1024 * 1024]; // 1MB buffer
+
+                            loop {
+                                // 1. Read Payload (timeout per-iteratie)
+                                let read_fut = socket.read(&mut buf);
+                                let read_res = tokio::time::timeout(std::time::Duration::from_secs(30), read_fut).await;
+                                
+                                match read_res {
+                                    Ok(Ok(n)) if n == 0 => {
+                                        tracing::debug!("💤 Swarm Node losgekoppeld: {}", addr);
+                                        return; // Connection gracefully closed
+                                    }
+                                    Ok(Ok(n)) => {
+                                        let raw_payload = String::from_utf8_lossy(&buf[..n]);
+
+                                        // [HSP] Decryptie Layer met Session Key
+                                        match crate::shield::HelheimShield::decrypt_packet_with_key(
+                                            &raw_payload,
+                                            &session_key
+                                        ) {
+                                            Ok(decrypted) => {
+                                                tracing::debug!(
+                                                    "[HSP]: 🔓 Payload ontsleuteld via Ephemeral Key ({} bytes)",
+                                                    decrypted.len()
+                                                );
+
+                                                let ctx = crate::common::context::ExecutionContext::sandbox();
+                                                let mut execution_script = decrypted.as_str();
+
+                                                // C-3: Geen remote privilege escalation meer toegestaan, zelfs niet met handtekening (voorkomt replay attacks).
+                                                // Alle inkomende netwerk-executies zijn strict Sandbox mode.
+                                                if decrypted.starts_with("SIGNED: ") {
+                                                    tracing::warn!("SIGNED request genegeerd. Remote execution is altijd Sandbox.");
+                                                    if let Some((_, script_part)) = decrypted[8..].split_once(" | ") {
+                                                        execution_script = script_part;
+                                                    }
+                                                } else {
+                                                    tracing::debug!("[SWARM]: 🛡️ Executie in Sandbox Mode.");
+                                                }
+
+                                                // Intercept TeleportContinuation VOOR process_command
+                                                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&decrypted) {
+                                                    if json.get("type").and_then(|v| v.as_str()) == Some("TeleportContinuation") {
+                                                        if let Some(cont_json) = json.get("continuation") {
+                                                            if let Ok(mut cont) = serde_json::from_value::<crate::orchestra::continuation::SerializableContinuation>(cont_json.clone()) {
+                                                                // Verifieer SwarmSigner signature (replay protection)
+                                                                let mut valid_signature = false;
+                                                                if let Some(sig_str) = cont.signature.take() {
+                                                                    use base64::Engine;
+                                                                    if let Ok(sig_bytes) = base64::engine::general_purpose::STANDARD.decode(&sig_str) {
+                                                                        if let Ok(json_without_sig) = serde_json::to_string(&cont) {
+                                                                            if let Some(pub_key) = &cont.source_pubkey {
+                                                                                if crate::shield::crypto::SwarmSigner::verify_peer(pub_key, json_without_sig.as_bytes(), &sig_bytes).is_ok() {
+                                                                                    valid_signature = true;
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                                
+                                                                if valid_signature {
+                                                                    let mut is_replay = false;
+                                                                    if let Some(pub_key) = &cont.source_pubkey {
+                                                                        let peer_id = hex::encode(pub_key);
+                                                                        if let Some(mut last_seen) = LAST_SEEN_LAMPORT.get_mut(&peer_id) {
+                                                                            if cont.lamport <= *last_seen {
+                                                                                is_replay = true;
+                                                                            } else {
+                                                                                *last_seen = cont.lamport;
+                                                                            }
+                                                                        } else {
+                                                                            LAST_SEEN_LAMPORT.insert(peer_id, cont.lamport);
+                                                                        }
+                                                                    }
+
+                                                                    if is_replay {
+                                                                        tracing::error!("TeleportContinuation geweigerd: Replay attack (oude lamport clock)!");
+                                                                        let payload = crate::shield::HelheimShield::encrypt_packet_with_key("SWARM_ERR_REPLAY", &session_key);
+                                                                        let _ = socket.write_all(payload.as_bytes()).await;
+                                                                        continue;
+                                                                    }
+
+                                                                    tracing::debug!("[SWARM]: 🌟 Geldige TeleportContinuation ontvangen van {}. Hervatten...", cont.source_node);
+                                                                    
+                                                                    let isolated_memory = helheim_lang::memory::MemoryManager::spawn_isolated(&cont.captured_memory);
+                                                                    let resume_ctx = if cont.is_privileged {
+                                                                        crate::common::context::ExecutionContext::default_privileged()
+                                                                    } else {
+                                                                        crate::common::context::ExecutionContext::sandbox()
+                                                                    };
+                                                                    let isolated_executor = crate::orchestra::executor::Executor::new(
+                                                                        isolated_memory,
+                                                                        orchestrator_clone.discovery.clone(),
+                                                                        orchestrator_clone.distributed.clone(),
+                                                                    );
+                                                                    use base64::Engine;
+                                                                    let b64_cont = match serde_json::to_string(&cont) {
+                                                                        Ok(json_str) => base64::engine::general_purpose::STANDARD.encode(json_str),
+                                                                        Err(e) => {
+                                                                            tracing::error!("TeleportContinuation serialisatie gefaald: {}", e);
+                                                                            let payload = crate::shield::HelheimShield::encrypt_packet_with_key("SWARM_ERR_INTERNAL", &session_key);
+                                                                            let _ = socket.write_all(payload.as_bytes()).await;
+                                                                            continue;
+                                                                        }
+                                                                    };
+                                                                    let resume_stmt = helheim_lang::ast::CodeTaal::Resume {
+                                                                        continuation: Box::new(helheim_lang::ast::CodeTaal::Literal(helheim_lang::ast::LiteralValue::String(format!("\"{}\"", b64_cont)))),
+                                                                        value: Box::new(helheim_lang::ast::CodeTaal::Literal(helheim_lang::ast::LiteralValue::String(String::new()))),
+                                                                    };
+                                                                    // Run completely isolated, concurrent from main host
+                                                                    let _ = Box::pin(isolated_executor.execute_ast(vec![resume_stmt], resume_ctx)).await;
+                                                                    
+                                                                    let payload = crate::shield::HelheimShield::encrypt_packet_with_key("SWARM_ACK_TELEPORT", &session_key);
+                                                                    let _ = socket.write_all(payload.as_bytes()).await;
+                                                                    continue;
+                                                                } else {
+                                                                    tracing::error!("TeleportContinuation ongeldige handtekening!");
+                                                                    let payload = crate::shield::HelheimShield::encrypt_packet_with_key("SWARM_ERR_SIG", &session_key);
+                                                                    let _ = socket.write_all(payload.as_bytes()).await;
+                                                                    continue;
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
+                                                // Intercept NEXUS Binary payload (bijv. astro_mood_sync)
+                                                if execution_script.starts_with("NEXUS:") {
+                                                    let b64_data = &execution_script[6..];
+                                                    if let Ok(blob) = B64.decode(b64_data) {
+                                                        if blob.len() >= std::mem::size_of::<NexusHspHeader>() {
+                                                            let header: NexusHspHeader = *bytemuck::from_bytes(&blob[..std::mem::size_of::<NexusHspHeader>()]);
+                                                            if header.magic == 0x5053584E {
+                                                                if header.payload_type == 5 { // astro_mood_sync
+                                                                    let sync_size = std::mem::size_of::<AstrocyteMoodSync>();
+                                                                    let offset = std::mem::size_of::<NexusHspHeader>();
+                                                                    if blob.len() >= offset + sync_size {
+                                                                        let sync: AstrocyteMoodSync = *bytemuck::from_bytes(&blob[offset..offset+sync_size]);
+                                                                        
+                                                                        // Expose to memory for Nexus Brain (test_bridge) to pick up
+                                                                        orchestrator_clone.memory.set_var_native("distributed_mood_fatigue".to_string(), crate::orchestra::memory::HelheimType::Float(sync.fatigue as f64));
+                                                                        orchestrator_clone.memory.set_var_native("distributed_mood_c_mean".to_string(), crate::orchestra::memory::HelheimType::Float(sync.c_mean_slow as f64));
+                                                                        
+                                                                        tracing::debug!("[HIVE]: 🧠 Gedeelde astrocyt-stemming ontvangen: fatigue={:.2}, c_mean={:.2}", sync.fatigue, sync.c_mean_slow);
+                                                                    }
+                                                                } else if header.payload_type == 1 { // chi_boundary
+                                                                    let sync_size = std::mem::size_of::<ChiBoundarySync>();
+                                                                    let offset = std::mem::size_of::<NexusHspHeader>();
+                                                                    if blob.len() >= offset + sync_size {
+                                                                        let sync: ChiBoundarySync = *bytemuck::from_bytes(&blob[offset..offset+sync_size]);
+                                                                        let var_name = format!("chi_boundary_{}", sync.module_id);
+                                                                        let arr_str = sync.chi_vector.iter().map(|f| f.to_string()).collect::<Vec<_>>().join(",");
+                                                                        orchestrator_clone.memory.set_var(var_name, arr_str);
+                                                                        tracing::debug!("[HIVE]: 🔮 Boundary Tensor ontvangen voor module {}", sync.module_id);
+                                                                    }
+                                                                } else if header.payload_type == 2 { // dream_event
+                                                                    let sync_size = std::mem::size_of::<DreamEventSync>();
+                                                                    let offset = std::mem::size_of::<NexusHspHeader>();
+                                                                    if blob.len() >= offset + sync_size {
+                                                                        let sync: DreamEventSync = *bytemuck::from_bytes(&blob[offset..offset+sync_size]);
+                                                                        orchestrator_clone.memory.set_var_native("distributed_dream_rv".to_string(), crate::orchestra::memory::HelheimType::Float(sync.rv as f64));
+                                                                        tracing::debug!("[HIVE]: 🌙 Distributed Dream Event ontvangen: R_v={:.3}", sync.rv);
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    let payload = crate::shield::HelheimShield::encrypt_packet_with_key("SWARM_ACK_SUCCESS", &session_key);
+                                                    let _ = socket.write_all(payload.as_bytes()).await;
+                                                    continue;
+                                                }
+
+                                                // Actively process the command via the Orchestrator
+                                                let exec_result = orchestrator_clone
+                                                    .process_command(execution_script, ctx)
+                                                    .await;
+
+                                                let (ack, _secure_resp) = match exec_result {
+                                                    Ok(_) => ("SWARM_ACK_SUCCESS", "Success"),
+                                                    Err(e) => {
+                                                        tracing::error!("Remote execution gefaald: {}",
+                                                            e
+                                                        );
+                                                        ("SWARM_ACK_ERROR", "Error")
+                                                    }
+                                                };
+
+                                                let payload =
+                                                    crate::shield::HelheimShield::encrypt_packet_with_key(
+                                                        ack,
+                                                        &session_key
+                                                    );
+                                                let _ = socket.write_all(payload.as_bytes()).await;
+                                            }
+                                            Err(e) => tracing::debug!(
+                                                "[HSP]: ⚠️  Ongeldig pakket geweigerd. Error: {}",
+                                                e
+                                            ),
+                                        }
+                                    }
+                                    Ok(Err(e)) => {
+                                        tracing::error!("Stream Error: {}", e);
+                                        return;
+                                    }
+                                    Err(_) => {
+                                        tracing::error!("Swarm Node iteratie timeout (30s) overschreden: {}", addr);
+                                        return;
+                                    }
+                                }
+                            }
+                        });
+                    }
+                    Err(e) => tracing::error!("Accept Error: {}", e),
+                }
+            }
+        });
+        Ok(())
+    }
+
+    /// Telepathische dispatch naar een andere node (SECURED + PERSISTENT)
+    pub async fn dispatch(target_ip: &str, port: u16, command: &str) -> Result<String> {
+        let addr = format!("{}:{}", target_ip, port);
+
+        // Helper voor connectie + ECDH Handshake (Client)
+        async fn connect_and_handshake(addr: &str) -> Result<(TcpStream, [u8; 32])> {
+            let stream_future = TcpStream::connect(addr);
+            let mut stream = tokio::time::timeout(std::time::Duration::from_secs(5), stream_future)
+                .await
+                .map_err(|_| anyhow::anyhow!("Timeout connecting to {}", addr))?
+                .map_err(|e| anyhow::anyhow!("Connection Failed: {}", e))?;
+                
+            let mut ecdh = crate::shield::EcdhSession::new();
+            stream.write_all(&ecdh.public_key).await?;
+            
+            let mut peer_pub = [0u8; 32];
+            stream.read_exact(&mut peer_pub).await?;
+            
+            let session_key = ecdh.derive_shared_key(&peer_pub)?;
+            Ok((stream, session_key))
+        }
+
+        // Setup Persistent Socket
+        let (mut stream, session_key) = match CONNECTIONS.remove(&addr) {
+            Some((_, s)) => s, // Grab from pool
+            None => {
+                tracing::debug!("{}", format!("[SWARM]: 🆕 Nieuwe Persistente TCP Verbinding naar {}...", addr).cyan());
+                connect_and_handshake(&addr).await?
+            }
+        };
+
+        // 1. [HSP] Encrypt Payload met Ephemeral Key
+        let protected = crate::shield::HelheimShield::encrypt_packet_with_key(command, &session_key);
+
+        // Network I/O
+        let (mut final_stream, final_key) = match stream.write_all(protected.as_bytes()).await {
+            Ok(_) => (stream, session_key),
+            Err(_) => {
+                // Pool socket died, reconnect once
+                tracing::debug!("{}", format!("[SWARM]: ⚠️ Socket timeout op {}. Herstellen en nieuwe ECDH...", addr).yellow());
+                let (mut new_stream, new_key) = connect_and_handshake(&addr).await?;
+                let new_protected = crate::shield::HelheimShield::encrypt_packet_with_key(command, &new_key);
+                new_stream.write_all(new_protected.as_bytes()).await?;
+                (new_stream, new_key)
+            }
+        };
+
+        // Await ACK/Response
+        let mut buf = vec![0; 1024 * 1024]; // 1MB buffer
+        let n = final_stream.read(&mut buf).await.unwrap_or(0);
+        if n == 0 {
+            return Err(anyhow::anyhow!("Connection closed by peer during dispatch"));
+        }
+        let raw_response = String::from_utf8_lossy(&buf[..n]);
+
+        // Save back to Pool only if it's healthy
+        CONNECTIONS.insert(addr, (final_stream, final_key));
+
+        // [HSP] Decrypt Response
+        let decrypted_response = crate::shield::HelheimShield::decrypt_packet_with_key(&raw_response, &final_key)?;
+
+        Ok(decrypted_response)
+    }
+
+    /// Dispatch SNN Phase 11 Hive-Mind Binary Payload
+    pub async fn dispatch_nexus_binary(target_ip: &str, port: u16, header: &NexusHspHeader, data: &[u8], signed: bool) -> Result<String> {
+        let mut blob = bytemuck::bytes_of(header).to_vec();
+        blob.extend_from_slice(data);
+        
+        let b64 = B64.encode(&blob);
+        let inner = format!("NEXUS:{}", b64);
+        
+        let payload = if signed {
+            // For privileged plasticity events (R_v LTD), wrap it in SIGNED
+            // Here we use SwarmSigner to sign the payload as expected by Helheim Core.
+            // Assuming SwarmSigner can sign bytes and encode.
+            let sig_bytes = crate::shield::crypto::SwarmSigner::sign(inner.as_bytes());
+            let b64sig = B64.encode(&sig_bytes);
+            format!("SIGNED: {} | {}", b64sig, inner)
+        } else {
+            inner
+        };
+        
+        Self::dispatch(target_ip, port, &payload).await
+    }
+}
